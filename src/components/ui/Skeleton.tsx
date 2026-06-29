@@ -1,0 +1,72 @@
+import React, { useEffect, useRef } from 'react';
+import { View, Animated, StyleSheet, ViewStyle, Platform } from 'react-native';
+import { Colors } from '../../constants/colors';
+
+interface SkeletonProps {
+  width?: number | string;
+  height?: number;
+  borderRadius?: number;
+  style?: ViewStyle;
+}
+
+export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style }: SkeletonProps) {
+  const opacity = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, {
+          toValue: 0.7,
+          duration: 700,
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+        Animated.timing(opacity, {
+          toValue: 0.3,
+          duration: 700,
+          useNativeDriver: Platform.OS !== 'web',
+        }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [opacity]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.skeleton,
+        { width: width as any, height, borderRadius, opacity },
+        style,
+      ]}
+    />
+  );
+}
+
+export function SkeletonCard({ lines = 3 }: { lines?: number }) {
+  return (
+    <View style={styles.card}>
+      <Skeleton height={20} width="60%" borderRadius={6} style={{ marginBottom: 12 }} />
+      {Array.from({ length: lines }).map((_, i) => (
+        <Skeleton
+          key={i}
+          height={14}
+          width={i === lines - 1 ? '40%' : '100%'}
+          borderRadius={4}
+          style={{ marginBottom: 8 }}
+        />
+      ))}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  skeleton: {
+    backgroundColor: Colors.border,
+  },
+  card: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+  },
+});
