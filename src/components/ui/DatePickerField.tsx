@@ -4,6 +4,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { format } from 'date-fns';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
+import { BorderRadius } from '../../constants/theme';
 
 interface DatePickerFieldProps {
   label: string;
@@ -14,16 +15,8 @@ interface DatePickerFieldProps {
   maxDate?: Date;
 }
 
-export function DatePickerField({
-  label,
-  value,
-  onChange,
-  error,
-  minDate,
-  maxDate,
-}: DatePickerFieldProps) {
+export function DatePickerField({ label, value, onChange, error, minDate, maxDate }: DatePickerFieldProps) {
   const [show, setShow] = useState(false);
-
   const parsedDate = value ? new Date(value + 'T00:00:00') : new Date();
 
   const handleChange = (_: DateTimePickerEvent, selected?: Date) => {
@@ -37,13 +30,13 @@ export function DatePickerField({
       <TouchableOpacity
         style={[styles.field, !!error && styles.fieldError]}
         onPress={() => setShow(true)}
-        activeOpacity={0.75}
+        activeOpacity={0.8}
       >
-        <MaterialCommunityIcons name="calendar-outline" size={18} color={Colors.textMuted} />
+        <MaterialCommunityIcons name="calendar-outline" size={18} color={Colors.primary} />
         <Text style={[styles.value, !value && styles.placeholder]}>
           {value ? format(parsedDate, 'dd MMM yyyy') : 'Select date'}
         </Text>
-        <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.textMuted} />
+        <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.outline} />
       </TouchableOpacity>
       {error && <Text style={styles.error}>{error}</Text>}
       {show && (
@@ -90,13 +83,13 @@ export function TimePickerField({ label, value, onChange, error }: TimePickerFie
       <TouchableOpacity
         style={[styles.field, !!error && styles.fieldError]}
         onPress={() => setShow(true)}
-        activeOpacity={0.75}
+        activeOpacity={0.8}
       >
-        <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.textMuted} />
+        <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.primary} />
         <Text style={[styles.value, !value && styles.placeholder]}>
           {value || 'Select time'}
         </Text>
-        <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.textMuted} />
+        <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.outline} />
       </TouchableOpacity>
       {error && <Text style={styles.error}>{error}</Text>}
       {show && (
@@ -113,28 +106,28 @@ export function TimePickerField({ label, value, onChange, error }: TimePickerFie
 }
 
 const styles = StyleSheet.create({
-  container: { marginBottom: 16 },
+  container: { marginBottom: 14 },
   label: {
     color: Colors.textSecondary,
     fontSize: 13,
     fontWeight: '600',
     marginBottom: 6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    marginLeft: 4,
+    letterSpacing: 0.3,
   },
   field: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     backgroundColor: Colors.bgInput,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: Colors.outlineVariant,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: 14,
     paddingVertical: 13,
   },
-  fieldError: { borderColor: Colors.statusRed },
+  fieldError: { borderColor: Colors.error },
   value: { color: Colors.textPrimary, fontSize: 15, flex: 1 },
-  placeholder: { color: Colors.textMuted },
-  error: { color: Colors.statusRed, fontSize: 12, marginTop: 4 },
+  placeholder: { color: Colors.outline },
+  error: { color: Colors.error, fontSize: 12, marginTop: 4, marginLeft: 4 },
 });

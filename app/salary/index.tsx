@@ -47,7 +47,7 @@ export default function SalarySlipsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgDark },
+  safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 32 },
   center: { flex: 1 },
 });

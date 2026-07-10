@@ -43,7 +43,9 @@ api.interceptors.request.use(async (config) => {
   if (token) config.headers.Authorization = `Bearer ${token}`;
 
   // Convert request body keys to snake_case so Django can read them
-  if (config.data && typeof config.data === 'object') {
+  // (skip FormData — its fields aren't plain enumerable properties, and
+  // decamelizing it would silently collapse the body to `{}`)
+  if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
     config.data = decamelizeKeys(config.data);
   }
 

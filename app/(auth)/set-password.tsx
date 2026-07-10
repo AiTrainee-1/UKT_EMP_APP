@@ -162,7 +162,7 @@ export default function SetPasswordScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: Colors.bgDark,
+    backgroundColor: Colors.bgLight,
   },
   container: {
     flexGrow: 1,

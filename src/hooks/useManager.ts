@@ -4,7 +4,19 @@ import api from '../lib/api';
 export interface ManagerProfile {
   isManager: boolean;
   canSubmitLeave: boolean;
+  canApproveLeaves?: boolean;
+  canApprovePermissions?: boolean;
+  canApproveResignations?: boolean;
+  canApproveCasualLeave?: boolean;
+  canApproveAttendance?: boolean;
+  canApproveShifts?: boolean;
   pendingApprovalsCount: number;
+  pendingLeavesCount?: number;
+  pendingPermissionsCount?: number;
+  pendingResignationsCount?: number;
+  pendingCasualLeavesCount?: number;
+  pendingAttendanceCount?: number;
+  pendingShiftsCount?: number;
 }
 
 export interface TeamLeaveRequest {
@@ -41,9 +53,62 @@ export interface TeamPermissionRequest {
   createdAt?: string;
 }
 
+export interface TeamResignationRequest {
+  id: number;
+  employeeName: string;
+  employeeCode: string;
+  departmentName: string;
+  reason: string;
+  lastWorkingDate: string | null;
+  surveyQ1Answer: string | null;
+  surveyQ2Answer: string | null;
+  surveyQ3Answer: string | null;
+  status: 'pending' | 'dept_approved' | 'approved' | 'rejected';
+  createdAt: string;
+}
+
+export interface TeamCasualLeaveRequest {
+  id: number;
+  employeeName?: string;
+  employeeCode?: string;
+  employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
+  date: string;
+  reason: string;
+  status: string;
+  createdAt?: string;
+}
+
+export interface TeamAttendanceRequest {
+  id: number;
+  employeeName?: string;
+  employeeCode?: string;
+  employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
+  date: string;
+  requestedStatus?: string;
+  reason: string;
+  status: string;
+  createdAt?: string;
+}
+
+export interface TeamShiftApproval {
+  id: number;
+  employeeName?: string;
+  employeeCode?: string;
+  employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
+  shiftName?: string;
+  effectiveFrom?: string;
+  approvalStatus: string;
+  approvalComment?: string | null;
+  createdAt?: string;
+}
+
 export interface PendingRequests {
   leaveRequests: TeamLeaveRequest[];
   permissionRequests: TeamPermissionRequest[];
+  resignations: TeamResignationRequest[];
+  casualLeaves: TeamCasualLeaveRequest[];
+  attendanceRequests: TeamAttendanceRequest[];
+  shiftApprovals: TeamShiftApproval[];
 }
 
 export function useManagerProfile(enabled = true) {
@@ -68,8 +133,15 @@ export function usePendingRequests(enabled = true) {
     queryKey: ['pending-requests'],
     queryFn: async (): Promise<PendingRequests> => {
       const res = await api.get('/manager/pending-requests');
-      console.log('[pending-requests] raw:', JSON.stringify(res.data));
-      return res.data;
+      const raw = res.data;
+      return {
+        leaveRequests: raw.leaveRequests ?? [],
+        permissionRequests: raw.permissionRequests ?? raw.permissions ?? [],
+        resignations: raw.resignations ?? [],
+        casualLeaves: raw.casualLeaves ?? [],
+        attendanceRequests: raw.attendanceRequests ?? [],
+        shiftApprovals: raw.shiftApprovals ?? [],
+      };
     },
     enabled,
     refetchInterval: 30000,
@@ -111,6 +183,70 @@ export function useApprovePermission() {
       comment?: string;
     }) => {
       const res = await api.patch(`/manager/permissions/${id}/status`, { status, comment });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+  });
+}
+
+export function useResignationAction() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      action,
+      comment,
+    }: {
+      id: number;
+      action: 'approve' | 'reject';
+      comment?: string;
+    }) => {
+      const res = await api.patch(`/manager/resignations/${id}/action`, { action, comment });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+  });
+}
+
+export function useApproveCasualLeave() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
+      const res = await api.patch(`/manager/casual-leaves/${id}/status`, { status, comment });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+  });
+}
+
+export function useApproveAttendance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
+      const res = await api.patch(`/manager/attendance-requests/${id}/status`, { status, comment });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+  });
+}
+
+export function useApproveShift() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, action, comment }: { id: number; action: 'approve' | 'reject'; comment?: string }) => {
+      const res = await api.patch(`/shift-assignments/${id}/approve`, { action, comment });
       return res.data;
     },
     onSuccess: () => {

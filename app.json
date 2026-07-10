@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "UKTextiles",
-    "slug": "uktextiles-employee-app",
+    "name": "uktextiles",
+    "slug": "ukt-team",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "light",
     "scheme": "uktextiles",
     "experiments": {
       "typedRoutes": true
@@ -13,11 +13,14 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0f172a"
+      "backgroundColor": "#f6fafe"
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "net.uktex.employee"
+      "bundleIdentifier": "net.uktex.employee",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -38,7 +41,21 @@
       "expo-router",
       "expo-secure-store",
       "@react-native-community/datetimepicker",
-      ["expo-notifications", { "icon": "./assets/icon.png", "color": "#f97316" }]
-    ]
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#f97316"
+        }
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7f7e04ee-a8f5-4b9d-9c89-bba03424952c"
+      }
+    },
+    "owner": "aitraineeukts-team"
   }
 }

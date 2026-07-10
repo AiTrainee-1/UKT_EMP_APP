@@ -41,7 +41,7 @@ export function useDashboard(employeeId: number | null) {
     const pendingRequests = d.pendingRequests > 0
       ? d.pendingRequests
       : (leaveRequests.data?.filter((r) => r.status === 'Pending').length ?? 0) +
-        (permissions.data?.filter((r) => r.status === 'Pending').length ?? 0);
+        (permissions.data?.items?.filter((r) => r.status === 'Pending').length ?? 0);
 
     return {
       presentDays: d.presentDays ?? 0,

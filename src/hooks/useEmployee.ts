@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 
 export interface Employee {
@@ -9,21 +9,24 @@ export interface Employee {
   phone: string;
   dateOfBirth: string;
   gender: string;
+  bloodGroup?: string | null;
+  emergencyContact?: string | null;
   fatherName: string;
   motherName: string;
-  employmentType: string;
+  employmentType: 'staff' | 'production' | string;
+  role?: string;
   joinDate: string;
-  department: string;
-  designation: string;
+  departmentName: string;
+  designationTitle: string;
   bankName: string;
-  accountNumber: string;
-  ifscCode: string;
+  bankAccount: string;
+  bankIfsc: string;
   pfNumber: string;
   esiNumber: string;
   uanNumber: string;
   address: string;
   status: string;
-  photo?: string;
+  photoUrl?: string | null;
 }
 
 export function useEmployee(employeeId: number | null) {
@@ -34,5 +37,26 @@ export function useEmployee(employeeId: number | null) {
       return res.data as Employee;
     },
     enabled: !!employeeId,
+  });
+}
+
+export function useUpdateProfilePhoto(employeeId: number | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (localUri: string) => {
+      const form = new FormData();
+      const filename = localUri.split('/').pop() || 'photo.jpg';
+      const ext = filename.split('.').pop()?.toLowerCase();
+      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+      form.append('photo', { uri: localUri, name: filename, type: mime } as any);
+
+      const res = await api.patch('/my/profile', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data as Employee;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['employee', employeeId] });
+    },
   });
 }

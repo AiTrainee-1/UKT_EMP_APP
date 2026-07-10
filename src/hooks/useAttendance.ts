@@ -3,7 +3,7 @@ import api from '../lib/api';
 
 export interface AttendanceRecord {
   date: string;
-  status: 'Present' | 'Absent' | 'Late' | 'On Leave' | 'Holiday' | 'Weekend';
+  status: 'Present' | 'Absent' | 'Late' | 'On Leave' | 'Holiday' | 'Weekend' | 'Half Shift';
   firstIn?: string;
   lastOut?: string;
   punchCount?: number;
@@ -15,14 +15,16 @@ export interface AttendanceSummary {
   absent: number;
   late: number;
   onLeave: number;
+  halfShift: number;
   records: AttendanceRecord[];
 }
 
 // Backend now returns all days of the month with an explicit `status` string.
-// Status values (lowercase from Django): "present", "absent", "on_leave", "holiday", "future"
+// Status values (lowercase from Django): "present", "half_shift", "absent", "on_leave", "holiday", "future"
 // Summary is nested under `summary` key: { present, absent, late, onLeave }
 const STATUS_MAP: Record<string, AttendanceRecord['status']> = {
   present: 'Present',
+  half_shift: 'Half Shift',
   absent: 'Absent',
   late: 'Late',
   on_leave: 'On Leave',
@@ -50,6 +52,8 @@ function transformAttendance(raw: any): AttendanceSummary {
     absent: s.absent ?? raw.totalAbsent ?? raw.absent ?? 0,
     late: s.late ?? raw.totalLate ?? raw.late ?? 0,
     onLeave: s.onLeave ?? s.on_leave ?? raw.totalOnLeave ?? raw.onLeave ?? 0,
+    halfShift: s.halfShift ?? s.half_shift ?? raw.totalHalfShift
+      ?? records.filter((r) => r.status === 'Half Shift').length,
     records,
   };
 }

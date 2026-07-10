@@ -1,32 +1,69 @@
+// UKTextiles — Claymorphism Light Design System
 export const Colors = {
-  primary: '#f97316',
-  primaryLight: '#fb923c',
-  primaryDark: '#ea580c',
+  // ─── Brand / Primary ───────────────────────────────────
+  primary: '#006496',
+  primaryLight: '#5dbbff',
+  primaryFixed: '#cce5ff',
+  onPrimary: '#ffffff',
+  onPrimaryContainer: '#004970',
 
-  bgDark: '#0f172a',
-  bgCard: '#1e293b',
-  bgInput: '#0f172a',
+  // ─── Secondary (golden) ────────────────────────────────
+  secondary: '#735c00',
+  secondaryContainer: '#fed65b',
+  secondaryFixed: '#ffe088',
+  onSecondaryContainer: '#745c00',
 
-  textPrimary: '#f8fafc',
-  textSecondary: '#94a3b8',
-  textMuted: '#64748b',
+  // ─── Tertiary (amber) ──────────────────────────────────
+  tertiary: '#815600',
+  tertiaryContainer: '#eba62e',
 
-  border: '#334155',
+  // ─── Backgrounds (light) ───────────────────────────────
+  bgLight: '#f6fafe',
+  bgCard: '#ffffff',
+  bgSurface: '#f6fafe',
+  bgSurfaceLow: '#f0f4f8',
+  bgSurfaceMid: '#eaeef2',
+  bgSurfaceHigh: '#e4e9ed',
+  bgSurfaceHighest: '#dfe3e7',
+  bgInput: '#f0f4f8',
 
-  statusGreen: '#22c55e',
-  statusRed: '#ef4444',
-  statusYellow: '#f59e0b',
-  statusBlue: '#3b82f6',
-  statusGrey: '#475569',
+  // ─── Text ──────────────────────────────────────────────
+  textPrimary: '#171c1f',
+  textSecondary: '#3f4850',
+  textMuted: '#6f7881',
 
-  badgeGreenBg: '#dcfce7',
-  badgeGreenText: '#16a34a',
-  badgeRedBg: '#fee2e2',
-  badgeRedText: '#dc2626',
-  badgeYellowBg: '#fef9c3',
-  badgeYellowText: '#ca8a04',
-  badgePendingBg: '#fef3c7',
-  badgePendingText: '#d97706',
-  badgeBlueBg: '#dbeafe',
-  badgeBlueText: '#2563eb',
+  // ─── Status (clay pastel) ──────────────────────────────
+  clayGreen: '#a5d6a7',
+  clayRed: '#ef9a9a',
+  clayYellow: '#ffe082',
+  clayBlue: '#90caf9',
+
+  // ─── Status (vivid, for badges/icons) ─────────────────
+  statusGreen: '#2e7d32',
+  statusRed: '#c62828',
+  statusYellow: '#f57f17',
+  statusBlue: '#006496',
+  statusGrey: '#546e7a',
+
+  // ─── Badge backgrounds ─────────────────────────────────
+  badgeGreenBg: '#a5d6a7',
+  badgeGreenText: '#1b5e20',
+  badgeRedBg: '#ef9a9a',
+  badgeRedText: '#b71c1c',
+  badgeYellowBg: '#ffe082',
+  badgeYellowText: '#e65100',
+  badgePendingBg: '#fed65b',
+  badgePendingText: '#745c00',
+  badgeBlueBg: '#cce5ff',
+  badgeBlueText: '#004970',
+
+  // ─── Error ─────────────────────────────────────────────
+  error: '#ba1a1a',
+  errorContainer: '#ffdad6',
+  onErrorContainer: '#93000a',
+
+  // ─── Borders ───────────────────────────────────────────
+  border: '#bfc7d2',
+  outline: '#6f7881',
+  outlineVariant: '#dfe3e7',
 };

@@ -1,17 +1,17 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   StyleSheet,
   Modal,
-  Animated,
-  TouchableWithoutFeedback,
+  Pressable,
   Dimensions,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { BorderRadius } from '../../constants/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -23,6 +23,10 @@ interface BottomSheetProps {
   maxHeight?: number;
 }
 
+// Deliberately no Animated transforms here: native-driver translateY inside a
+// Modal desyncs from Fabric's hit-testing tree on Android, so taps aimed at
+// the sheet (e.g. a TextInput) can land on the backdrop and close the sheet.
+// Modal's own fade + a static layout is glitch-free on both architectures.
 export function BottomSheet({
   visible,
   onClose,
@@ -30,70 +34,39 @@ export function BottomSheet({
   children,
   maxHeight = SCREEN_HEIGHT * 0.85,
 }: BottomSheetProps) {
-  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-  const backdropOpacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.spring(slideAnim, {
-          toValue: 0,
-          tension: 65,
-          friction: 11,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: 1,
-          duration: 200,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-      ]).start();
-    } else {
-      Animated.parallel([
-        Animated.timing(slideAnim, {
-          toValue: SCREEN_HEIGHT,
-          duration: 250,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-        Animated.timing(backdropOpacity, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-      ]).start();
-    }
-  }, [visible]);
-
   return (
-    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <TouchableWithoutFeedback onPress={onClose}>
-          <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]} />
-        </TouchableWithoutFeedback>
-        <Animated.View
-          style={[
-            styles.sheet,
-            { maxHeight, transform: [{ translateY: slideAnim }] },
-          ]}
+    <Modal
+      transparent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <View style={styles.container}>
+        {/* Backdrop is a sibling *behind* the sheet — a tap can only reach it
+            when it genuinely lands outside the sheet. */}
+        <Pressable style={styles.backdrop} onPress={onClose} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          pointerEvents="box-none"
         >
-          <View style={styles.handle} />
-          {title && (
-            <View style={styles.header}>
-              <Text style={styles.title}>{title}</Text>
-            </View>
-          )}
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.content}
-            keyboardShouldPersistTaps="handled"
-          >
-            {children}
-          </ScrollView>
-        </Animated.View>
-      </KeyboardAvoidingView>
+          <View style={[styles.sheet, { maxHeight }]}>
+            <View style={styles.handle} />
+            {title && (
+              <View style={styles.header}>
+                <Text style={styles.title}>{title}</Text>
+              </View>
+            )}
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.content}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -109,18 +82,27 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(15, 30, 45, 0.5)',
   },
   sheet: {
     backgroundColor: Colors.bgCard,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    borderTopLeftRadius: BorderRadius.xxl,
+    borderTopRightRadius: BorderRadius.xxl,
     minHeight: 200,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#006496',
+        shadowOffset: { width: 0, height: -6 },
+        shadowOpacity: 0.14,
+        shadowRadius: 20,
+      },
+      android: { elevation: 16 },
+    }),
   },
   handle: {
-    width: 40,
+    width: 36,
     height: 4,
-    backgroundColor: Colors.border,
+    backgroundColor: Colors.outlineVariant,
     borderRadius: 2,
     alignSelf: 'center',
     marginTop: 12,
@@ -128,8 +110,9 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
+    paddingTop: 8,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: Colors.outlineVariant,
   },
   title: {
     color: Colors.textPrimary,

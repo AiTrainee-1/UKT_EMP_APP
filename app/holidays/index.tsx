@@ -45,6 +45,11 @@ export default function HolidaysScreen() {
 
   const upcoming = (data || []).filter((h) => !isPast(parseISO(h.date)));
   const sections = groupByMonth(data || []);
+  const now = new Date();
+  const thisMonthCount = (data || []).filter((h) => {
+    const d = parseISO(h.date);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  }).length;
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -58,6 +63,15 @@ export default function HolidaysScreen() {
           <MaterialCommunityIcons name="chevron-right" size={24} color={Colors.textPrimary} />
         </TouchableOpacity>
       </View>
+
+      {!isLoading && !!data?.length && (
+        <View style={styles.monthStatRow}>
+          <MaterialCommunityIcons name="calendar-month-outline" size={15} color={Colors.primary} />
+          <Text style={styles.monthStatText}>
+            {thisMonthCount} holiday{thisMonthCount === 1 ? '' : 's'} this month
+          </Text>
+        </View>
+      )}
 
       {isLoading ? (
         <View style={styles.pad}>
@@ -112,7 +126,7 @@ export default function HolidaysScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgDark },
+  safe: { flex: 1, backgroundColor: Colors.bgLight },
   yearNav: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -125,6 +139,15 @@ const styles = StyleSheet.create({
   },
   navBtn: { padding: 8 },
   yearLabel: { color: Colors.textPrimary, fontSize: 18, fontWeight: '700' },
+  monthStatRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.primaryFixed,
+  },
+  monthStatText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
   pad: { padding: 16, paddingBottom: 32 },
   nextHoliday: {
     backgroundColor: Colors.primary,

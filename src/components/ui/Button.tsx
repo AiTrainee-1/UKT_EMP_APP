@@ -8,17 +8,21 @@ import {
   ViewStyle,
   TextStyle,
   Platform,
+  View,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/colors';
+import { ClayElevation, BorderRadius } from '../../constants/theme';
 
 interface ButtonProps {
   title: string;
   onPress: () => void;
   loading?: boolean;
   disabled?: boolean;
-  variant?: 'primary' | 'outline' | 'ghost';
+  variant?: 'primary' | 'outline' | 'ghost' | 'secondary';
   style?: ViewStyle;
   textStyle?: TextStyle;
+  icon?: React.ReactNode;
 }
 
 export function Button({
@@ -29,53 +33,53 @@ export function Button({
   variant = 'primary',
   style,
   textStyle,
+  icon,
 }: ButtonProps) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 0.97,
-      useNativeDriver: Platform.OS !== 'web',
-    }).start();
+    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: Platform.OS !== 'web' }).start();
   };
-
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, {
-      toValue: 1,
-      useNativeDriver: Platform.OS !== 'web',
-    }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: Platform.OS !== 'web' }).start();
   };
 
-  const buttonStyle = [
-    styles.button,
-    variant === 'primary' && styles.primary,
-    variant === 'outline' && styles.outline,
-    variant === 'ghost' && styles.ghost,
-    (disabled || loading) && styles.disabled,
-    style,
-  ];
-
-  const labelStyle = [
-    styles.text,
-    variant === 'outline' && styles.outlineText,
-    variant === 'ghost' && styles.ghostText,
-    textStyle,
-  ];
+  const inner = loading ? (
+    <ActivityIndicator color={variant === 'primary' ? '#fff' : Colors.primary} size="small" />
+  ) : (
+    <View style={styles.row}>
+      {icon && <View style={styles.iconWrap}>{icon}</View>}
+      <Text style={[styles.text, variant !== 'primary' && styles.textDark, textStyle]}>{title}</Text>
+    </View>
+  );
 
   return (
-    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+    <Animated.View style={[{ transform: [{ scale: scaleAnim }] }, style]}>
       <TouchableOpacity
-        style={buttonStyle}
         onPress={onPress}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         disabled={disabled || loading}
         activeOpacity={1}
+        style={[
+          styles.touchable,
+          variant === 'outline' && styles.outline,
+          variant === 'ghost' && styles.ghost,
+          variant === 'secondary' && styles.secondary,
+          (disabled || loading) && styles.disabled,
+        ]}
       >
-        {loading ? (
-          <ActivityIndicator color="#fff" size="small" />
+        {variant === 'primary' ? (
+          <LinearGradient
+            colors={['#006496', '#0080bf']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.gradient, ...(ClayElevation.button ? [ClayElevation.button as ViewStyle] : [])]}
+          >
+            {inner}
+          </LinearGradient>
         ) : (
-          <Text style={labelStyle}>{title}</Text>
+          <View style={styles.inner}>{inner}</View>
         )}
       </TouchableOpacity>
     </Animated.View>
@@ -83,37 +87,58 @@ export function Button({
 }
 
 const styles = StyleSheet.create({
-  button: {
-    borderRadius: 12,
+  touchable: {
+    borderRadius: BorderRadius.full,
+    overflow: 'visible',
+  },
+  gradient: {
+    borderRadius: BorderRadius.full,
     paddingVertical: 14,
-    paddingHorizontal: 24,
+    paddingHorizontal: 28,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 50,
   },
-  primary: {
-    backgroundColor: Colors.primary,
+  inner: {
+    borderRadius: BorderRadius.full,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 50,
   },
   outline: {
-    backgroundColor: 'transparent',
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: Colors.primary,
+    backgroundColor: '#fff',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#006496',
+        shadowOffset: { width: 3, height: 4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+      },
+      android: { elevation: 2 },
+    }),
   },
   ghost: {
-    backgroundColor: 'transparent',
+    backgroundColor: Colors.bgSurfaceLow,
   },
-  disabled: {
-    opacity: 0.5,
+  secondary: {
+    backgroundColor: Colors.secondaryContainer,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#735c00',
+        shadowOffset: { width: 3, height: 4 },
+        shadowOpacity: 0.12,
+        shadowRadius: 8,
+      },
+      android: { elevation: 4 },
+    }),
   },
-  text: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  outlineText: {
-    color: Colors.primary,
-  },
-  ghostText: {
-    color: Colors.primary,
-  },
+  disabled: { opacity: 0.5 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconWrap: { marginRight: 2 },
+  text: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
+  textDark: { color: Colors.textPrimary },
 });

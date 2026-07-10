@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet, ViewStyle, Platform } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { BorderRadius } from '../../constants/theme';
 
 interface SkeletonProps {
   width?: number | string;
@@ -10,21 +11,13 @@ interface SkeletonProps {
 }
 
 export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style }: SkeletonProps) {
-  const opacity = useRef(new Animated.Value(0.3)).current;
+  const opacity = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
     const animation = Animated.loop(
       Animated.sequence([
-        Animated.timing(opacity, {
-          toValue: 0.7,
-          duration: 700,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-        Animated.timing(opacity, {
-          toValue: 0.3,
-          duration: 700,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
+        Animated.timing(opacity, { toValue: 0.8, duration: 700, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(opacity, { toValue: 0.4, duration: 700, useNativeDriver: Platform.OS !== 'web' }),
       ])
     );
     animation.start();
@@ -33,11 +26,7 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style 
 
   return (
     <Animated.View
-      style={[
-        styles.skeleton,
-        { width: width as any, height, borderRadius, opacity },
-        style,
-      ]}
+      style={[styles.skeleton, { width: width as any, height, borderRadius, opacity }, style]}
     />
   );
 }
@@ -61,12 +50,21 @@ export function SkeletonCard({ lines = 3 }: { lines?: number }) {
 
 const styles = StyleSheet.create({
   skeleton: {
-    backgroundColor: Colors.border,
+    backgroundColor: Colors.bgSurfaceMid,
   },
   card: {
     backgroundColor: Colors.bgCard,
-    borderRadius: 16,
+    borderRadius: BorderRadius.xl,
     padding: 16,
     marginBottom: 12,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#006496',
+        shadowOffset: { width: 4, height: 6 },
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+      },
+      android: { elevation: 3 },
+    }),
   },
 });

@@ -13,6 +13,8 @@ if (!isExpoGo) {
       shouldShowAlert: true,
       shouldPlaySound: true,
       shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
     }),
   });
 }
@@ -42,8 +44,8 @@ export async function showNotification(title: string, body: string) {
 }
 
 export function useNotificationObserver(onTap?: (notification: Notifications.Notification) => void) {
-  const receivedRef = useRef<Notifications.EventSubscription>();
-  const responseRef = useRef<Notifications.EventSubscription>();
+  const receivedRef = useRef<Notifications.EventSubscription | null>(null);
+  const responseRef = useRef<Notifications.EventSubscription | null>(null);
 
   useEffect(() => {
     if (isExpoGo) return;

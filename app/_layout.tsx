@@ -1,12 +1,13 @@
-import React, { useState, useEffect, Component, ReactNode } from 'react';
+import React, { useState, useEffect, Component, ReactNode, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
-import { AuthContext, AuthUser, checkAuth } from '../src/hooks/useAuth';
+import { AuthContext, AuthUser, checkAuth, useAuth } from '../src/hooks/useAuth';
 import { clearAuth } from '../src/lib/auth';
 import { router } from 'expo-router';
 import { Colors } from '../src/constants/colors';
+import { useMyResignation } from '../src/hooks/useResignation';
 
 // expo-notifications is NOT imported here because its push-token side effect
 // throws an unrecoverable error in Expo Go SDK 53+. Use the Toast component
@@ -57,6 +58,28 @@ const queryClient = new QueryClient({
 });
 
 // ---------------------------------------------------------------------------
+// Resignation Guard — polls /api/my/resignation; deactivates on approval
+// ---------------------------------------------------------------------------
+function ResignationGuard() {
+  const { user, setUser } = useAuth();
+  const handledRef = useRef(false);
+  const { data } = useMyResignation(user?.employeeId ?? null);
+
+  useEffect(() => {
+    if (data?.status === 'approved' && !handledRef.current) {
+      handledRef.current = true;
+      clearAuth().then(() => {
+        setUser(null);
+        queryClient.clear();
+        router.replace('/resignation/deactivated');
+      });
+    }
+  }, [data?.status]);
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Root Layout
 // ---------------------------------------------------------------------------
 export default function RootLayout() {
@@ -84,7 +107,8 @@ export default function RootLayout() {
       <QueryClientProvider client={queryClient}>
         <AuthContext.Provider value={{ user, isLoading, login, logout, setUser }}>
           <StatusBar style="light" />
-          <Stack screenOptions={{ headerShown: false }}>
+          <ResignationGuard />
+          <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
@@ -93,6 +117,9 @@ export default function RootLayout() {
             <Stack.Screen name="requests" />
             <Stack.Screen name="settlement" />
             <Stack.Screen name="holidays" />
+            <Stack.Screen name="resignation" />
+            <Stack.Screen name="idcard" />
+            <Stack.Screen name="chat" />
           </Stack>
         </AuthContext.Provider>
       </QueryClientProvider>

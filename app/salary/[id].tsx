@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,13 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useSalarySlip } from '../../src/hooks/useSalarySlips';
+import { useSalarySlip, downloadAndShareSalarySlip } from '../../src/hooks/useSalarySlips';
 import { Badge } from '../../src/components/ui/Badge';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
@@ -46,6 +47,19 @@ function currency(n: number) {
 export default function SalarySlipDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: slip, isLoading } = useSalarySlip(Number(id));
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    if (!slip) return;
+    setDownloading(true);
+    try {
+      await downloadAndShareSalarySlip(slip);
+    } catch {
+      Alert.alert('Download failed', 'Could not generate the PDF right now. Please try again later.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -120,13 +134,18 @@ export default function SalarySlipDetail() {
           <Text style={styles.netValue}>{currency(slip.netSalary)}</Text>
         </View>
 
-        {/* Download */}
+        {/* Download / Share */}
         <TouchableOpacity
-          style={styles.downloadBtn}
-          onPress={() => Alert.alert('Info', 'Contact HR for a physical copy of your salary slip.')}
+          style={[styles.downloadBtn, downloading && styles.downloadBtnDisabled]}
+          onPress={handleDownload}
+          disabled={downloading}
         >
-          <MaterialCommunityIcons name="download-outline" size={20} color={Colors.primary} />
-          <Text style={styles.downloadText}>Download PDF</Text>
+          {downloading ? (
+            <ActivityIndicator size="small" color={Colors.primary} />
+          ) : (
+            <MaterialCommunityIcons name="download-outline" size={20} color={Colors.primary} />
+          )}
+          <Text style={styles.downloadText}>{downloading ? 'Preparing PDF…' : 'Download / Share PDF'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -134,7 +153,7 @@ export default function SalarySlipDetail() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgDark },
+  safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 40, gap: 12 },
   headerCard: {
     backgroundColor: Colors.bgCard,
@@ -198,5 +217,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: Colors.primary,
   },
+  downloadBtnDisabled: { opacity: 0.6 },
   downloadText: { color: Colors.primary, fontSize: 15, fontWeight: '600' },
 });

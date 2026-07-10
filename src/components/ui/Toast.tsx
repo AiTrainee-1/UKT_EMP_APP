@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
 
 interface ToastProps {
@@ -8,6 +9,12 @@ interface ToastProps {
   visible: boolean;
 }
 
+const typeConfig = {
+  success: { bg: '#e8f5e9', border: '#a5d6a7', text: '#1b5e20', icon: 'check-circle-outline' as const, iconColor: '#2e7d32' },
+  error:   { bg: '#ffebee', border: '#ef9a9a', text: '#b71c1c', icon: 'alert-circle-outline' as const, iconColor: '#c62828' },
+  info:    { bg: Colors.primaryFixed, border: Colors.primaryLight, text: Colors.onPrimaryContainer, icon: 'information-outline' as const, iconColor: Colors.primary },
+};
+
 export function Toast({ message, type = 'success', visible }: ToastProps) {
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
@@ -15,8 +22,8 @@ export function Toast({ message, type = 'success', visible }: ToastProps) {
   useEffect(() => {
     if (visible) {
       Animated.parallel([
-        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
-        Animated.timing(translateY, { toValue: 0, duration: 200, useNativeDriver: true }),
+        Animated.spring(opacity, { toValue: 1, tension: 80, friction: 10, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, tension: 80, friction: 10, useNativeDriver: true }),
       ]).start();
     } else {
       Animated.parallel([
@@ -26,17 +33,18 @@ export function Toast({ message, type = 'success', visible }: ToastProps) {
     }
   }, [visible]);
 
-  const bg =
-    type === 'success' ? Colors.statusGreen
-    : type === 'error' ? Colors.statusRed
-    : Colors.statusBlue;
+  const cfg = typeConfig[type];
 
   return (
     <Animated.View
-      style={[styles.toast, { backgroundColor: bg, opacity, transform: [{ translateY }] }]}
+      style={[
+        styles.toast,
+        { backgroundColor: cfg.bg, borderColor: cfg.border, opacity, transform: [{ translateY }] },
+      ]}
       pointerEvents="none"
     >
-      <Text style={styles.text}>{message}</Text>
+      <MaterialCommunityIcons name={cfg.icon} size={20} color={cfg.iconColor} />
+      <Text style={[styles.text, { color: cfg.text }]}>{message}</Text>
     </Animated.View>
   );
 }
@@ -47,15 +55,26 @@ const styles = StyleSheet.create({
     bottom: 100,
     left: 16,
     right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 16,
+    borderWidth: 1.5,
     zIndex: 9999,
-    elevation: 10,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#006496',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 12,
+      },
+      android: { elevation: 8 },
+    }),
   },
   text: {
-    color: '#fff',
+    flex: 1,
     fontSize: 14,
     fontWeight: '600',
-    textAlign: 'center',
   },
 });

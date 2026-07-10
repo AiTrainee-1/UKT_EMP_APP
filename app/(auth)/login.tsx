@@ -7,17 +7,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
+  StatusBar,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { Colors } from '../../src/constants/colors';
+import { BorderRadius } from '../../src/constants/theme';
 import { useAuth } from '../../src/hooks/useAuth';
 import { loginRequest } from '../../src/hooks/useAuth';
 
@@ -37,11 +41,7 @@ export default function LoginScreen() {
     visible: false,
   });
 
-  const {
-    control,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<FormData>({
+  const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
   });
 
@@ -66,10 +66,16 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+
+      {/* Decorative circles — anchored to the screen, not scroll content,
+          so they don't jump when the keyboard opens and content re-centers */}
+      <View pointerEvents="none" style={styles.decorWrap}>
+        <View style={styles.decorCircle1} />
+        <View style={styles.decorCircle2} />
+      </View>
+
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
@@ -77,17 +83,27 @@ export default function LoginScreen() {
         >
           {/* Logo */}
           <View style={styles.logoSection}>
-            <View style={styles.logoCircle}>
-              <Text style={styles.logoText}>UK</Text>
+            <UKTLogo size={72} />
+            <View style={styles.brandRow}>
+              <Text style={styles.brand}>uk</Text>
+              <Text style={styles.brandTail}>textiles</Text>
             </View>
-            <Text style={styles.appName}>UKTextiles</Text>
-            <Text style={styles.tagline}>Employee Portal</Text>
+            <View style={styles.taglineRow}>
+              <View style={styles.taglineDot} />
+              <Text style={styles.tagline}>Employee Self-Service Portal</Text>
+              <View style={styles.taglineDot} />
+            </View>
           </View>
 
-          {/* Form */}
+          {/* Welcome chip */}
+          <View style={styles.chip}>
+            <MaterialCommunityIcons name="hand-wave-outline" size={15} color={Colors.onSecondaryContainer} />
+            <Text style={styles.chipText}>Welcome back! Please sign in</Text>
+          </View>
+
+          {/* Form card */}
           <View style={styles.card}>
-            <Text style={styles.heading}>Employee Login</Text>
-            <Text style={styles.sub}>Enter your credentials to continue</Text>
+            <Text style={styles.heading}>Sign In</Text>
 
             <Controller
               control={control}
@@ -102,6 +118,7 @@ export default function LoginScreen() {
                   onBlur={onBlur}
                   error={errors.identifier?.message}
                   returnKeyType="next"
+                  leftIconName="badge-account-outline"
                 />
               )}
             />
@@ -120,22 +137,21 @@ export default function LoginScreen() {
                   error={errors.password?.message}
                   returnKeyType="done"
                   onSubmitEditing={handleSubmit(onSubmit)}
+                  leftIconName="lock-outline"
                 />
               )}
             />
 
-            <Button
-              title="Login"
-              onPress={handleSubmit(onSubmit)}
-              loading={loading}
-              style={styles.loginBtn}
-            />
+            <View style={styles.btnWrap}>
+              <Button title="Sign In" onPress={handleSubmit(onSubmit)} loading={loading} />
+            </View>
           </View>
 
           {/* Footer */}
           <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} style={styles.link}>
+            <MaterialCommunityIcons name="key-outline" size={14} color={Colors.textMuted} />
             <Text style={styles.linkText}>
-              First time?{' '}
+              First time?{'  '}
               <Text style={styles.linkAccent}>Set your password</Text>
             </Text>
           </TouchableOpacity>
@@ -148,76 +164,71 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: Colors.bgDark,
+  safe: { flex: 1, backgroundColor: Colors.bgLight },
+  container: { flexGrow: 1, padding: 24, justifyContent: 'center', gap: 20 },
+  decorWrap: { position: 'absolute', top: -40, right: -30, zIndex: 0 },
+  decorCircle1: {
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: Colors.primaryFixed,
+    opacity: 0.5,
   },
-  container: {
-    flexGrow: 1,
-    padding: 24,
-    justifyContent: 'center',
-    gap: 24,
+  decorCircle2: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: Colors.secondaryFixed,
+    opacity: 0.6,
+    position: 'absolute',
+    bottom: -10,
+    right: 30,
   },
-  logoSection: {
+  logoSection: { alignItems: 'center', gap: 10, zIndex: 1 },
+  brandRow: { flexDirection: 'row', alignItems: 'baseline' },
+  brand: { color: Colors.primary, fontSize: 27, fontWeight: '900', letterSpacing: 0.5 },
+  brandTail: { color: Colors.textPrimary, fontSize: 27, fontWeight: '700', letterSpacing: 0.5 },
+  taglineRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  taglineDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.secondaryContainer },
+  tagline: { color: Colors.textMuted, fontSize: 11, letterSpacing: 0.8 },
+  chip: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    alignSelf: 'center',
+    backgroundColor: Colors.secondaryFixed,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: BorderRadius.full,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#735c00',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.10,
+        shadowRadius: 8,
+      },
+      android: { elevation: 3 },
+    }),
   },
-  logoCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  logoText: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '900',
-  },
-  appName: {
-    color: Colors.textPrimary,
-    fontSize: 26,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  tagline: {
-    color: Colors.textMuted,
-    fontSize: 14,
-    letterSpacing: 2,
-    textTransform: 'uppercase',
-  },
+  chipText: { color: Colors.onSecondaryContainer, fontSize: 13, fontWeight: '600' },
   card: {
     backgroundColor: Colors.bgCard,
-    borderRadius: 20,
+    borderRadius: BorderRadius.xxl,
     padding: 24,
-    gap: 4,
+    gap: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#006496',
+        shadowOffset: { width: 6, height: 10 },
+        shadowOpacity: 0.12,
+        shadowRadius: 20,
+      },
+      android: { elevation: 6 },
+    }),
   },
-  heading: {
-    color: Colors.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-    marginBottom: 4,
-  },
-  sub: {
-    color: Colors.textMuted,
-    fontSize: 13,
-    marginBottom: 20,
-  },
-  loginBtn: {
-    marginTop: 8,
-  },
-  link: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  linkText: {
-    color: Colors.textMuted,
-    fontSize: 14,
-  },
-  linkAccent: {
-    color: Colors.primary,
-    fontWeight: '600',
-  },
+  heading: { color: Colors.textPrimary, fontSize: 22, fontWeight: '800', marginBottom: 14 },
+  btnWrap: { marginTop: 10 },
+  link: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 8 },
+  linkText: { color: Colors.textMuted, fontSize: 14 },
+  linkAccent: { color: Colors.primary, fontWeight: '700' },
 });

@@ -28,7 +28,7 @@ export default function SplashScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.bgDark,
+    backgroundColor: Colors.bgLight,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,

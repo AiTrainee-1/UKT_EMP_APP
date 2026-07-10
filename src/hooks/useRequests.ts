@@ -11,12 +11,24 @@ export interface PermissionRequest {
   appliedOn: string;
 }
 
-export function usePermissions(employeeId: number | null) {
+export interface PermissionsResult {
+  items: PermissionRequest[];
+  monthlyUsed: number;
+  monthlyLimit: number;
+}
+
+export function usePermissions(employeeId: number | null, month?: number, year?: number) {
   return useQuery({
-    queryKey: ['permissions', employeeId],
-    queryFn: async () => {
-      const res = await api.get('/permissions', { params: { employeeId } });
-      return res.data as PermissionRequest[];
+    queryKey: ['permissions', employeeId, month, year],
+    queryFn: async (): Promise<PermissionsResult> => {
+      const res = await api.get('/permissions', { params: { employeeId, month, year } });
+      const raw = res.data;
+      const items: PermissionRequest[] = Array.isArray(raw) ? raw : (raw?.items ?? raw?.results ?? []);
+      return {
+        items,
+        monthlyUsed: raw?.monthlyUsed ?? items.filter((r) => r.status !== 'Rejected').length,
+        monthlyLimit: raw?.monthlyLimit ?? 3,
+      };
     },
     enabled: !!employeeId,
   });
