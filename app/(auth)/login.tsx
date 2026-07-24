@@ -57,7 +57,14 @@ export default function LoginScreen() {
       setUser({ employeeId: result.employeeId, name: result.name, role: result.role });
       router.replace('/(tabs)/home');
     } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.response?.data?.message || 'Invalid credentials. Please try again.';
+      // Backend error responses are always { error: "..." } (see views.py::_error)
+      // — .detail/.message never exist, so checking only those silently
+      // discarded the real reason (wrong password vs unregistered vs no
+      // password set yet vs an unrelated server error) and always showed
+      // this same generic fallback.
+      const msg =
+        err?.response?.data?.error || err?.response?.data?.detail || err?.response?.data?.message ||
+        (err?.message === 'Network Error' ? 'Could not reach the server. Check your connection and try again.' : 'Invalid credentials. Please try again.');
       showToast(msg, 'error');
     } finally {
       setLoading(false);

@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { UKTLogo } from './UKTLogo';
 import { Avatar } from './ui/Avatar';
 import { useEmployee } from '../hooks/useEmployee';
+import { useGeoPunchStatus } from '../hooks/useGeoAttendance';
 import { Colors } from '../constants/colors';
 import { BorderRadius } from '../constants/theme';
 
@@ -35,11 +36,15 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { icon: 'home-outline', label: 'Home', route: '/(tabs)/home', color: Colors.primary },
   { icon: 'calendar-check-outline', label: 'Attendance', route: '/(tabs)/attendance', color: '#27ae60' },
+  { icon: 'map-marker-radius-outline', label: 'Attendance Request', route: '/geo-punch', color: '#0891b2' },
+  { icon: 'briefcase-outline', label: 'On-Duty', route: '/on-duty', color: '#815600' },
+  { icon: 'crosshairs-gps', label: 'Live Tracking', route: '/geo-tracking', color: '#0891b2' },
   { icon: 'cash-multiple', label: 'Salary Slips', route: '/salary', color: '#8e44ad' },
   { icon: 'umbrella-outline', label: 'Leave', route: '/(tabs)/leave', color: '#2980b9', staffOnly: true },
   { icon: 'hand-wave-outline', label: 'Permissions', route: '/requests', color: '#e67e22', staffOnly: true },
   { icon: 'clock-outline', label: 'My Shift', route: '/shift', color: '#16a085' },
   { icon: 'card-account-details-outline', label: 'Digital ID Card', route: '/idcard', color: '#2c3e50' },
+  { icon: 'folder-outline', label: 'My Documents', route: '/documents', color: '#00897b' },
   { icon: 'flag-outline', label: 'Holidays', route: '/holidays', color: '#c0392b' },
   { icon: 'bank-transfer', label: 'Advances', route: '/settlement', color: '#7f8c8d' },
   { icon: 'chat-outline', label: 'Chat', route: '/chat', color: '#0984e3' },
@@ -56,8 +61,16 @@ interface SideDrawerProps {
 export function SideDrawer({ visible, onClose, user, onLogout, notificationCount = 0 }: SideDrawerProps) {
   const insets = useSafeAreaInsets();
   const { data: employee } = useEmployee(user?.employeeId ?? null);
+  const { data: geoStatus } = useGeoPunchStatus();
   const isProduction = employee?.employmentType === 'production';
-  const visibleNavItems = NAV_ITEMS.filter((item) => !item.staffOnly || !isProduction);
+  const onDutySessionStatus = geoStatus?.onDutySession?.status;
+  const onDutyBadge =
+    onDutySessionStatus === 'pending_hod' || onDutySessionStatus === 'pending_hr' || onDutySessionStatus === 'active'
+      ? 1
+      : 0;
+  const visibleNavItems = NAV_ITEMS
+    .filter((item) => !item.staffOnly || !isProduction)
+    .map((item) => (item.route === '/on-duty' ? { ...item, badge: onDutyBadge || undefined } : item));
   const slideX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
 
@@ -198,6 +211,19 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
               <MaterialCommunityIcons name="account-circle-outline" size={20} color={Colors.primary} />
             </View>
             <Text style={styles.navLabel}>My Profile</Text>
+            <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
+          </TouchableOpacity>
+
+          {/* Company */}
+          <TouchableOpacity
+            style={styles.navItem}
+            onPress={() => navigate('/company')}
+            activeOpacity={0.75}
+          >
+            <View style={[styles.navIcon, { backgroundColor: `${Colors.primary}15` }]}>
+              <MaterialCommunityIcons name="office-building-outline" size={20} color={Colors.primary} />
+            </View>
+            <Text style={styles.navLabel}>About Company</Text>
             <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
           </TouchableOpacity>
 

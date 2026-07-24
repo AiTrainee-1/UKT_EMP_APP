@@ -8,10 +8,15 @@ import { clearAuth } from '../src/lib/auth';
 import { router } from 'expo-router';
 import { Colors } from '../src/constants/colors';
 import { useMyResignation } from '../src/hooks/useResignation';
+import { registerPushToken } from '../src/hooks/usePushToken';
+import { useEmployee } from '../src/hooks/useEmployee';
+import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
+import * as Location from 'expo-location';
 
-// expo-notifications is NOT imported here because its push-token side effect
-// throws an unrecoverable error in Expo Go SDK 53+. Use the Toast component
-// for in-app notifications instead. Push notifications require a dev build.
+// registerPushToken() (src/hooks/usePushToken.ts) guards internally against
+// Expo Go, where the push-token APIs throw an unrecoverable error on SDK
+// 53+ — it no-ops there and only actually registers a token in a real EAS
+// build. Safe to call unconditionally below.
 
 // ---------------------------------------------------------------------------
 // Error Boundary
@@ -80,6 +85,59 @@ function ResignationGuard() {
 }
 
 // ---------------------------------------------------------------------------
+// Push Token Registrar — registers this device once per login session
+// ---------------------------------------------------------------------------
+function PushTokenRegistrar() {
+  const { user } = useAuth();
+  const registeredRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (user?.employeeId && registeredRef.current !== user.employeeId) {
+      registeredRef.current = user.employeeId;
+      registerPushToken();
+    }
+  }, [user?.employeeId]);
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Live Location Tracker — auto-RESUMES pinging (never auto-PROMPTS) while
+// the employee's own profile has locationTrackingEnabled=true (an HR-only
+// toggle, off by default). The actual permission dialog only ever appears
+// from the dedicated Live Tracking screen (app/geo-tracking), tied to a
+// real button tap — requesting it from a background effect like this one
+// used to mean the OS prompt could be silently skipped/deferred on some
+// Android builds, which is why tracking looked "broken" even after HR
+// enabled it. This component only checks (never requests) permission: if
+// the employee already granted it in an earlier visit to that screen,
+// tracking resumes here automatically on every app open; if not, it stays
+// idle until they visit the screen once.
+// ---------------------------------------------------------------------------
+function LiveLocationTracker() {
+  const { user } = useAuth();
+  const { data: emp } = useEmployee(user?.employeeId ?? null);
+  const { data: geoStatus } = useGeoPunchStatus(!!user?.employeeId);
+  const enabled = !!emp?.locationTrackingEnabled || geoStatus?.onDutySession?.status === 'active';
+
+  useEffect(() => {
+    if (!enabled) {
+      stopLiveTracking();
+      return;
+    }
+    let cancelled = false;
+    Location.getForegroundPermissionsAsync().then((perm) => {
+      if (!cancelled && perm.granted) startLiveTracking();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Root Layout
 // ---------------------------------------------------------------------------
 export default function RootLayout() {
@@ -96,6 +154,7 @@ export default function RootLayout() {
   const login = async (_id: string, _pw: string) => {};
 
   const logout = async () => {
+    stopLiveTracking();
     await clearAuth();
     setUser(null);
     queryClient.clear();
@@ -108,18 +167,25 @@ export default function RootLayout() {
         <AuthContext.Provider value={{ user, isLoading, login, logout, setUser }}>
           <StatusBar style="light" />
           <ResignationGuard />
+          <PushTokenRegistrar />
+          <LiveLocationTracker />
           <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="salary" />
             <Stack.Screen name="shift" />
+            <Stack.Screen name="documents" />
             <Stack.Screen name="requests" />
             <Stack.Screen name="settlement" />
             <Stack.Screen name="holidays" />
             <Stack.Screen name="resignation" />
             <Stack.Screen name="idcard" />
             <Stack.Screen name="chat" />
+            <Stack.Screen name="company" />
+            <Stack.Screen name="geo-punch" />
+            <Stack.Screen name="geo-tracking" />
+            <Stack.Screen name="on-duty" />
           </Stack>
         </AuthContext.Provider>
       </QueryClientProvider>

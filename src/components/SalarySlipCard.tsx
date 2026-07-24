@@ -27,8 +27,8 @@ export function SalarySlipCard({ slip, onPress }: Props) {
       </View>
       <View style={styles.right}>
         <Badge
-          label={slip.status}
-          variant={slip.status === 'Paid' ? 'paid' : 'generated'}
+          label={slip.emailedAt ? 'Emailed' : 'Generated'}
+          variant={slip.emailedAt ? 'paid' : 'generated'}
         />
         <MaterialCommunityIcons
           name="chevron-right"

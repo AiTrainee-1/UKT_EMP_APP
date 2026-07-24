@@ -21,6 +21,7 @@ import { useAppNotifications } from '../../src/hooks/useAppNotifications';
 import { useMobileHomeSummary, useLiveFeed } from '../../src/hooks/useHomeSummary';
 import { useIdCard } from '../../src/hooks/useIdCard';
 import { useEmployee } from '../../src/hooks/useEmployee';
+import { useGeoPunchStatus } from '../../src/hooks/useGeoAttendance';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { UKTLogo } from '../../src/components/UKTLogo';
 import { Avatar } from '../../src/components/ui/Avatar';
@@ -31,6 +32,7 @@ import { SkeletonCard } from '../../src/components/ui/Skeleton';
 
 const QUICK_ACTIONS = [
   { label: 'Attendance', icon: 'calendar-check-outline', route: '/(tabs)/attendance' as const, color: Colors.primary },
+  { label: 'Attendance Request', icon: 'map-marker-radius-outline', route: '/geo-punch' as const, color: '#0891b2' },
   { label: 'Salary Slips', icon: 'cash-multiple', route: '/salary' as const, color: '#27ae60' },
   { label: 'Apply Leave', icon: 'umbrella-outline', route: '/(tabs)/leave' as const, color: '#8e44ad' },
   { label: 'My Shift', icon: 'clock-outline', route: '/shift' as const, color: '#e67e22' },
@@ -113,6 +115,7 @@ export default function HomeScreen() {
   const { data: liveFeed } = useLiveFeed();
   const { data: idCard } = useIdCard(user?.employeeId ?? null);
   const { data: emp } = useEmployee(user?.employeeId ?? null);
+  const { data: geoStatus } = useGeoPunchStatus();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const today = format(new Date(), 'EEEE, d MMMM yyyy');
   const unreadCount = notifs?.filter(n => !n.isRead).length ?? 0;
@@ -193,6 +196,40 @@ export default function HomeScreen() {
             </View>
           </View>
         )}
+
+        {/* ─── Location Punch widget ─── */}
+        {(() => {
+          const onDutySession = geoStatus?.onDutySession;
+          const isOnDuty = onDutySession != null && (onDutySession.status === 'pending_hod' || onDutySession.status === 'pending_hr' || onDutySession.status === 'active');
+          return (
+            <TouchableOpacity style={styles.geoCard} onPress={() => router.push(isOnDuty ? '/on-duty' : '/geo-punch')} activeOpacity={0.85}>
+              <View style={styles.geoIconWrap}>
+                <MaterialCommunityIcons
+                  name={isOnDuty ? 'briefcase-outline' : 'map-marker-radius-outline'}
+                  size={20}
+                  color={isOnDuty ? Colors.tertiary : Colors.primary}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.geoTitle}>{isOnDuty ? 'On-Duty' : 'Attendance Request'}</Text>
+                <Text style={styles.geoSubtitle}>
+                  {onDutySession?.status === 'pending_hod'
+                    ? 'Awaiting Department Head approval'
+                    : onDutySession?.status === 'pending_hr'
+                      ? 'Awaiting HR approval'
+                      : onDutySession?.status === 'active'
+                        ? geoStatus?.nextPunchNumber == null
+                          ? 'Active — all 4 punches recorded'
+                          : `Active — next: Punch ${geoStatus?.nextPunchNumber} · ${geoStatus?.nextPunchType === 'IN' ? 'Check-In' : 'Check-Out'}`
+                        : geoStatus?.nextPunchNumber == null
+                          ? 'All 4 punches recorded for today'
+                          : `Next: Punch ${geoStatus?.nextPunchNumber} · ${geoStatus?.nextPunchType === 'IN' ? 'Check-In' : 'Check-Out'}`}
+                </Text>
+              </View>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          );
+        })()}
 
         {/* ─── Summary banner ─── */}
         <LinearGradient
@@ -427,6 +464,28 @@ const styles = StyleSheet.create({
   },
   todayNum: { fontSize: 15, fontWeight: '900' },
   todayLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
+
+  // Location Punch widget
+  geoCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    padding: 14,
+    marginBottom: 16,
+    ...Platform.select({
+      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
+      android: { elevation: 3 },
+    }),
+  },
+  geoIconWrap: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: Colors.badgeBlueBg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  geoTitle: { color: Colors.textPrimary, fontSize: 13, fontWeight: '800' },
+  geoSubtitle: { color: Colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2 },
 
   // Digital ID Card mini
   idCardMini: { borderRadius: BorderRadius.xl, overflow: 'hidden', marginBottom: 24 },

@@ -27,6 +27,7 @@ export interface Employee {
   address: string;
   status: string;
   photoUrl?: string | null;
+  locationTrackingEnabled?: boolean;
 }
 
 export function useEmployee(employeeId: number | null) {

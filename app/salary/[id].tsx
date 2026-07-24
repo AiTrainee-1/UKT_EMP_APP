@@ -80,10 +80,13 @@ export default function SalarySlipDetail() {
         <View style={styles.headerCard}>
           <View>
             <Text style={styles.empName}>{slip.employeeName}</Text>
-            <Text style={styles.empMeta}>{slip.employeeCode} · {slip.department}</Text>
+            <Text style={styles.empMeta}>{slip.employeeCode} · {slip.departmentName}</Text>
             <Text style={styles.period}>{MONTHS[slip.month]} {slip.year}</Text>
           </View>
-          <Badge label={slip.status} variant={slip.status === 'Paid' ? 'paid' : 'generated'} />
+          <Badge
+            label={slip.emailedAt ? 'Emailed' : 'Generated'}
+            variant={slip.emailedAt ? 'paid' : 'generated'}
+          />
         </View>
 
         {/* Working Days */}
@@ -105,12 +108,12 @@ export default function SalarySlipDetail() {
 
         {/* Earnings */}
         <Section title="Earnings">
-          <Row label="Basic Salary" value={currency(slip.basicSalary)} />
+          <Row label="Basic Salary" value={currency(slip.basic)} />
           <Row label="HRA" value={currency(slip.hra)} />
           <Row label="Allowances" value={currency(slip.allowances)} />
           <Row
             label="Total Earnings"
-            value={currency(slip.basicSalary + slip.hra + slip.allowances)}
+            value={currency(slip.basic + slip.hra + slip.allowances)}
             highlight
           />
         </Section>
@@ -119,11 +122,11 @@ export default function SalarySlipDetail() {
         <Section title="Deductions">
           <Row label="Provident Fund (PF)" value={currency(slip.pfDeduction)} />
           <Row label="ESI" value={currency(slip.esiDeduction)} />
-          <Row label="Advance Recovered" value={currency(slip.advanceRecovered)} />
-          <Row label="Late Deductions" value={currency(slip.lateDeductions)} />
+          <Row label="Advance Recovered" value={currency(slip.advanceDeduction)} />
+          <Row label="Other Deductions" value={currency(slip.otherDeductions)} />
           <Row
             label="Total Deductions"
-            value={currency(slip.pfDeduction + slip.esiDeduction + slip.advanceRecovered + slip.lateDeductions)}
+            value={currency(slip.totalDeductions)}
             highlight
           />
         </Section>

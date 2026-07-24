@@ -10,9 +10,15 @@ export interface Advance {
   id: number;
   amount: number;
   purpose: string;
-  dateTaken: string;
+  // Backend field is "createdAt" (see settlement_views.py::advance_json) —
+  // was "dateTaken" here, which doesn't exist in the response, so this was
+  // always undefined at runtime (rendered as "Invalid Date").
+  createdAt: string;
   totalRepaid: number;
-  remainingBalance: number;
+  // Backend field is "outstanding" — was "remainingBalance" here, which
+  // doesn't exist in the response, so this was always undefined at runtime
+  // (crashed the screen: undefined.toLocaleString() throws).
+  outstanding: number;
   repayments: RepaymentEntry[];
 }
 

@@ -12,6 +12,9 @@ export interface DailyShiftLog {
 export interface ShiftStatsSummary {
   shiftDeductions: number;
   salaryDeductionAmount: number;
+  billableLateCount: number;
+  permissionsUsed: number;
+  permissionOverageCount: number;
   totalEffectiveShifts?: number;
   halfShiftDays?: number;
   absentDays?: number;
@@ -34,15 +37,22 @@ export function useShiftStats(month: number, year: number) {
       try {
         const res = await api.get('/attendance/employee-shift-stats', { params: { month, year } });
         const d = res.data ?? {};
+        // shiftDeductions / salaryDeductionAmount / totalEffectiveShifts come
+        // back as strings (Decimal fields serialized with str() on the
+        // backend) — Number() them so the `number` types here are actually
+        // true at runtime, not just at compile time.
         return {
           totalLateCount: d.totalLateCount ?? 0,
           halfShiftDays: d.halfShiftDays ?? d.summary?.halfShiftDays ?? 0,
-          totalEffectiveShifts: d.totalEffectiveShifts ?? d.summary?.totalEffectiveShifts ?? 0,
+          totalEffectiveShifts: Number(d.totalEffectiveShifts ?? d.summary?.totalEffectiveShifts ?? 0),
           absentDays: d.absentDays ?? d.summary?.absentDays ?? 0,
           summary: {
-            shiftDeductions: d.summary?.shiftDeductions ?? 0,
-            salaryDeductionAmount: d.summary?.salaryDeductionAmount ?? 0,
-            totalEffectiveShifts: d.summary?.totalEffectiveShifts,
+            shiftDeductions: Number(d.summary?.shiftDeductions ?? 0),
+            salaryDeductionAmount: Number(d.summary?.salaryDeductionAmount ?? 0),
+            billableLateCount: d.summary?.billableLateCount ?? 0,
+            permissionsUsed: d.summary?.permissionsUsed ?? 0,
+            permissionOverageCount: d.summary?.permissionOverageCount ?? 0,
+            totalEffectiveShifts: d.summary?.totalEffectiveShifts != null ? Number(d.summary.totalEffectiveShifts) : undefined,
             halfShiftDays: d.summary?.halfShiftDays,
             absentDays: d.summary?.absentDays,
           },

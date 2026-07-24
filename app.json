@@ -48,7 +48,20 @@
           "color": "#f97316"
         }
       ],
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "UKTextiles uses your location to verify attendance punches at your branch, and — only if HR enables it for your account — to show your live location on the HR dashboard while you're on duty."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "UKTextiles needs camera access to take the two verification photos required when you punch attendance from outside your branch's location.",
+          "microphonePermission": false
+        }
+      ]
     ],
     "extra": {
       "router": {},

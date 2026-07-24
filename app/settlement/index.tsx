@@ -26,15 +26,15 @@ function AdvanceCard({ advance }: { advance: Advance }) {
         <View style={styles.cardLeft}>
           <Text style={styles.amount}>₹{advance.amount.toLocaleString('en-IN')}</Text>
           <Text style={styles.purpose} numberOfLines={1}>{advance.purpose}</Text>
-          <Text style={styles.date}>{format(new Date(advance.dateTaken), 'dd MMM yyyy')}</Text>
+          <Text style={styles.date}>{format(new Date(advance.createdAt), 'dd MMM yyyy')}</Text>
         </View>
         <View style={styles.cardRight}>
           <Text style={styles.remainingLabel}>Remaining</Text>
           <Text style={[
             styles.remaining,
-            advance.remainingBalance > 0 ? styles.remainingAlert : styles.remainingClear,
+            advance.outstanding > 0 ? styles.remainingAlert : styles.remainingClear,
           ]}>
-            ₹{advance.remainingBalance.toLocaleString('en-IN')}
+            ₹{advance.outstanding.toLocaleString('en-IN')}
           </Text>
           <Text style={styles.repaid}>₹{advance.totalRepaid.toLocaleString('en-IN')} repaid</Text>
         </View>

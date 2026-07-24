@@ -18,6 +18,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useAttendance } from '../../src/hooks/useAttendance';
 import { useShift } from '../../src/hooks/useShift';
 import { AttendanceCalendar } from '../../src/components/AttendanceCalendar';
+import { GeoPunchCard } from '../../src/components/GeoPunchCard';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { BorderRadius } from '../../src/constants/theme';
@@ -97,6 +98,8 @@ export default function AttendanceScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
+        <GeoPunchCard />
+
         {/* Assigned shift */}
         {shift && (
           <TouchableOpacity style={styles.shiftBanner} onPress={() => router.push('/shift')} activeOpacity={0.8}>

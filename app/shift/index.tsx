@@ -158,6 +158,53 @@ export default function ShiftScreen() {
           </View>
         )}
 
+        {/* Permission usage & deduction impact — every employee gets 3 free
+            lates/permissions a month (combined pool); each additional 3
+            beyond that costs a ¼ shift. Same numbers HR sees on Report Log. */}
+        {stats && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Permission Usage & Deductions</Text>
+            <Text style={styles.deductionNote}>
+              3 free lates/permissions per month (combined). Every 3 beyond that costs a ¼ shift
+              deduction from salary.
+            </Text>
+            <View style={styles.statsGrid}>
+              {[
+                {
+                  label: 'Permissions Used', value: `${stats.summary.permissionsUsed}/3`,
+                  icon: 'hand-back-left-outline', color: Colors.primary, bg: Colors.primaryFixed,
+                },
+                {
+                  label: 'Billable', value: stats.summary.billableLateCount,
+                  icon: 'alert-circle-outline',
+                  color: stats.summary.billableLateCount > 0 ? Colors.statusRed : Colors.statusGreen,
+                  bg: stats.summary.billableLateCount > 0 ? Colors.badgeRedBg : Colors.badgeGreenBg,
+                },
+                {
+                  label: 'Shift Deductions', value: stats.summary.shiftDeductions,
+                  icon: 'minus-circle-outline',
+                  color: stats.summary.shiftDeductions > 0 ? Colors.statusRed : Colors.statusGreen,
+                  bg: stats.summary.shiftDeductions > 0 ? Colors.badgeRedBg : Colors.badgeGreenBg,
+                },
+              ].map(({ label, value, icon, color, bg }) => (
+                <View key={label} style={styles.statBox}>
+                  <View style={[styles.statIconWrap, { backgroundColor: bg }]}>
+                    <MaterialCommunityIcons name={icon as any} size={16} color={color} />
+                  </View>
+                  <Text style={styles.statValue}>{value}</Text>
+                  <Text style={styles.statLbl}>{label}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={styles.totalShiftsRow}>
+              <Text style={styles.totalShiftsLabel}>Salary Impact</Text>
+              <Text style={[styles.totalShiftsValue, stats.summary.salaryDeductionAmount > 0 && { color: Colors.statusRed }]}>
+                ₹{stats.summary.salaryDeductionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {/* Weekly Schedule */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Weekly Schedule</Text>
@@ -242,6 +289,7 @@ const styles = StyleSheet.create({
     }),
   },
   cardTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800', marginBottom: 8 },
+  deductionNote: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, marginBottom: 8 },
   detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

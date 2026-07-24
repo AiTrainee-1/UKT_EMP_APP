@@ -40,6 +40,7 @@ function NotifIcon({ type }: { type?: string }) {
     salary: { icon: 'cash', bg: Colors.secondaryFixed, color: Colors.secondary },
     reminder: { icon: 'bell-ring', bg: Colors.badgeYellowBg, color: Colors.statusYellow },
     announcement: { icon: 'bullhorn-outline', bg: Colors.secondaryFixed, color: Colors.secondary },
+    geo_punch: { icon: 'map-marker-radius', bg: Colors.badgeBlueBg, color: Colors.primary },
   };
   const cfg = map[type ?? ''] ?? { icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary };
   return (

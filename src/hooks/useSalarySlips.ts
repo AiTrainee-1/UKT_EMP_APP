@@ -4,26 +4,35 @@ import * as Sharing from 'expo-sharing';
 import api from '../lib/api';
 import { getToken } from '../lib/auth';
 
+// Field names here must match salary_slip_views.py::slip_json exactly — this
+// interface previously declared several fields (basicSalary, department,
+// advanceRecovered, lateDeductions, status) that don't exist in the actual
+// response, so they were silently undefined at runtime (Basic Salary/Total
+// Earnings/Total Deductions all rendered as ₹0 instead of the real amounts).
 export interface SalarySlip {
   id: number;
   month: number;
   year: number;
   netSalary: number;
-  status: 'Generated' | 'Paid';
-  basicSalary: number;
+  basic: number;
   hra: number;
   allowances: number;
   pfDeduction: number;
   esiDeduction: number;
-  advanceRecovered: number;
-  lateDeductions: number;
+  advanceDeduction: number;
+  otherDeductions: number;
+  totalDeductions: number;
   workingDays: number;
   presentDays: number;
   absentDays: number;
   lateDays: number;
   employeeName: string;
   employeeCode: string;
-  department: string;
+  departmentName: string | null;
+  // No "status" field exists on the backend — there's no Paid/Generated
+  // distinction tracked. emailedAt is the one real, meaningful signal:
+  // present once HR has emailed the slip out.
+  emailedAt: string | null;
 }
 
 export function useSalarySlips() {
