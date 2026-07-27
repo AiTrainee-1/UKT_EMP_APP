@@ -42,6 +42,7 @@ const NAV_ITEMS: NavItem[] = [
   { icon: 'cash-multiple', label: 'Salary Slips', route: '/salary', color: '#8e44ad' },
   { icon: 'umbrella-outline', label: 'Leave', route: '/(tabs)/leave', color: '#2980b9', staffOnly: true },
   { icon: 'hand-wave-outline', label: 'Permissions', route: '/requests', color: '#e67e22', staffOnly: true },
+  { icon: 'fingerprint', label: 'Missing Punch', route: '/missing-punch', color: '#5e35b1' },
   { icon: 'clock-outline', label: 'My Shift', route: '/shift', color: '#16a085' },
   { icon: 'card-account-details-outline', label: 'Digital ID Card', route: '/idcard', color: '#2c3e50' },
   { icon: 'folder-outline', label: 'My Documents', route: '/documents', color: '#00897b' },
@@ -129,7 +130,7 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
       >
         {/* Header */}
         <LinearGradient
-          colors={['#006496', '#0090d0']}
+          colors={Colors.gradientPrimary}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.drawerHeader}

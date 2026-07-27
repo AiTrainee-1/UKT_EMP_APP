@@ -7,6 +7,7 @@ import * as Location from 'expo-location';
 
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
+import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
 import {
@@ -37,7 +38,7 @@ function StepDots({ labels, current }: { labels: string[]; current: number }) {
 }
 
 export default function GeoPunchScreen() {
-  const { data: status, refetch: refetchStatus } = useGeoPunchStatus();
+  const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useGeoPunchStatus();
   const precheckMutation = useGeoPunchPrecheck();
   const punchMutation = useGeoPunch();
 
@@ -134,7 +135,12 @@ export default function GeoPunchScreen() {
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
-        {onDutyBlocking ? (
+        {statusLoading ? (
+          <View style={{ gap: Spacing.base }}>
+            <SkeletonCard lines={2} />
+            <SkeletonCard lines={4} />
+          </View>
+        ) : onDutyBlocking ? (
           <View style={[CardStyle.clay, styles.gateCard]}>
             <MaterialCommunityIcons name="briefcase-outline" size={32} color={Colors.tertiary} style={styles.gateIcon} />
             <Text style={styles.gateTitle}>You have an On-Duty session in progress</Text>

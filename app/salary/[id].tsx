@@ -16,6 +16,7 @@ import { useSalarySlip, downloadAndShareSalarySlip } from '../../src/hooks/useSa
 import { Badge } from '../../src/components/ui/Badge';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { BorderRadius, Spacing, ClayElevation } from '../../src/constants/theme';
 
 const MONTHS = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -157,23 +158,25 @@ export default function SalarySlipDetail() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
-  pad: { padding: 16, paddingBottom: 40, gap: 12 },
+  pad: { padding: Spacing.base, paddingBottom: 40, gap: Spacing.md },
   headerCard: {
     backgroundColor: Colors.bgCard,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.base,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    ...ClayElevation.low,
   },
   empName: { color: Colors.textPrimary, fontSize: 18, fontWeight: '800' },
   empMeta: { color: Colors.textMuted, fontSize: 13, marginTop: 2 },
   period: { color: Colors.primary, fontSize: 14, fontWeight: '600', marginTop: 4 },
   section: {
     backgroundColor: Colors.bgCard,
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.base,
     gap: 2,
+    ...ClayElevation.low,
   },
   sectionTitle: {
     color: Colors.textSecondary,
@@ -202,11 +205,12 @@ const styles = StyleSheet.create({
   rowHighlight: { color: Colors.primary, fontWeight: '700' },
   netCard: {
     backgroundColor: Colors.primary,
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    ...ClayElevation.low,
   },
   netLabel: { color: '#fff', fontSize: 16, fontWeight: '600' },
   netValue: { color: '#fff', fontSize: 28, fontWeight: '900' },
@@ -216,7 +220,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     padding: 14,
-    borderRadius: 12,
+    borderRadius: BorderRadius.md,
     borderWidth: 1.5,
     borderColor: Colors.primary,
   },

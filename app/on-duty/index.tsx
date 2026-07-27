@@ -10,6 +10,7 @@ import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { TextArea } from '../../src/components/ui/TextArea';
 import { Badge } from '../../src/components/ui/Badge';
+import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
 import {
@@ -32,7 +33,7 @@ function statusBadgeVariant(status: string): 'pending' | 'approved' | 'rejected'
 }
 
 export default function OnDutyScreen() {
-  const { data: status, refetch: refetchStatus } = useOnDutySessionStatus();
+  const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useOnDutySessionStatus();
   const { data: geoStatus } = useGeoPunchStatus();
   const submitRequestMutation = useSubmitOnDutySessionRequest();
   const completeMutation = useCompleteOnDutySession();
@@ -165,7 +166,12 @@ export default function OnDutyScreen() {
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} refreshControl={undefined}>
 
-        {showRequestForm ? (
+        {statusLoading ? (
+          <View style={{ gap: Spacing.base }}>
+            <SkeletonCard lines={3} />
+            <SkeletonCard lines={4} />
+          </View>
+        ) : showRequestForm ? (
           <View style={[CardStyle.clay, { gap: Spacing.sm }]}>
             <View style={styles.introRow}>
               <MaterialCommunityIcons name="briefcase-outline" size={22} color={Colors.tertiary} />

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import type { MissingPunchSlot } from './useRequests';
 
 export interface ManagerProfile {
   isManager: boolean;
@@ -9,14 +10,14 @@ export interface ManagerProfile {
   canApproveResignations?: boolean;
   canApproveCasualLeave?: boolean;
   canApproveAttendance?: boolean;
-  canApproveShifts?: boolean;
+  canApproveMissingPunch?: boolean;
   pendingApprovalsCount: number;
   pendingLeavesCount?: number;
   pendingPermissionsCount?: number;
   pendingResignationsCount?: number;
   pendingCasualLeavesCount?: number;
   pendingAttendanceCount?: number;
-  pendingShiftsCount?: number;
+  pendingMissingPunchCount?: number;
 }
 
 export interface TeamLeaveRequest {
@@ -90,15 +91,17 @@ export interface TeamAttendanceRequest {
   createdAt?: string;
 }
 
-export interface TeamShiftApproval {
+export interface TeamMissingPunchRequest {
   id: number;
   employeeName?: string;
   employeeCode?: string;
   employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
-  shiftName?: string;
-  effectiveFrom?: string;
-  approvalStatus: string;
-  approvalComment?: string | null;
+  date: string;
+  punchTime: string;
+  punchType: 'IN' | 'OUT';
+  punchSlot?: MissingPunchSlot | null;
+  reason: string;
+  status: string;
   createdAt?: string;
 }
 
@@ -108,7 +111,7 @@ export interface PendingRequests {
   resignations: TeamResignationRequest[];
   casualLeaves: TeamCasualLeaveRequest[];
   attendanceRequests: TeamAttendanceRequest[];
-  shiftApprovals: TeamShiftApproval[];
+  missingPunchRequests: TeamMissingPunchRequest[];
 }
 
 export function useManagerProfile(enabled = true) {
@@ -140,7 +143,7 @@ export function usePendingRequests(enabled = true) {
         resignations: raw.resignations ?? [],
         casualLeaves: raw.casualLeaves ?? [],
         attendanceRequests: raw.attendanceRequests ?? [],
-        shiftApprovals: raw.shiftApprovals ?? [],
+        missingPunchRequests: raw.missingPunchRequests ?? [],
       };
     },
     enabled,
@@ -242,11 +245,11 @@ export function useApproveAttendance() {
   });
 }
 
-export function useApproveShift() {
+export function useApproveMissingPunch() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, action, comment }: { id: number; action: 'approve' | 'reject'; comment?: string }) => {
-      const res = await api.patch(`/shift-assignments/${id}/approve`, { action, comment });
+    mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
+      const res = await api.patch(`/manager/missing-punch-requests/${id}/status`, { status, comment });
       return res.data;
     },
     onSuccess: () => {

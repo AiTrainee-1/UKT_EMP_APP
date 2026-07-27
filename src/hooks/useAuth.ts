@@ -37,6 +37,14 @@ export async function loginRequest(identifier: string, password: string) {
   return { token, employeeId, name, role };
 }
 
+/** Shared by first-time password setup (app/(auth)/set-password.tsx) and the
+ * change-password flow (app/(tabs)/profile.tsx) — both hit the same
+ * endpoint with the same payload, so neither should call `api.post` directly. */
+export async function setPasswordRequest(identifier: string, password: string) {
+  const res = await api.post('/auth/set-password', { identifier, password });
+  return res.data;
+}
+
 export async function checkAuth(): Promise<AuthUser | null> {
   const token = await getToken();
   if (!token) return null;

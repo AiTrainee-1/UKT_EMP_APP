@@ -8,6 +8,7 @@ import { SalarySlipCard } from '../../src/components/SalarySlipCard';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { Spacing } from '../../src/constants/theme';
 
 export default function SalarySlipsScreen() {
   const { data, isLoading, refetch, isRefetching } = useSalarySlips();
@@ -48,6 +49,6 @@ export default function SalarySlipsScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
-  pad: { padding: 16, paddingBottom: 32 },
+  pad: { padding: Spacing.base, paddingBottom: Spacing.xxl },
   center: { flex: 1 },
 });

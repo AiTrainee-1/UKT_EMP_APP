@@ -18,7 +18,7 @@ import { Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
-import api from '../../src/lib/api';
+import { setPasswordRequest } from '../../src/hooks/useAuth';
 
 const schema = z
   .object({
@@ -55,10 +55,7 @@ export default function SetPasswordScreen() {
   const onSubmit = async (data: FormData) => {
     setLoading(true);
     try {
-      await api.post('/auth/set-password', {
-        identifier: data.identifier,
-        password: data.password,
-      });
+      await setPasswordRequest(data.identifier, data.password);
       showToast('Password set successfully! Please login.', 'success');
       setTimeout(() => router.replace('/(auth)/login'), 1500);
     } catch (err: any) {

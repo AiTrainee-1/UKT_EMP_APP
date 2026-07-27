@@ -177,6 +177,7 @@ export default function RootLayout() {
             <Stack.Screen name="shift" />
             <Stack.Screen name="documents" />
             <Stack.Screen name="requests" />
+            <Stack.Screen name="missing-punch" />
             <Stack.Screen name="settlement" />
             <Stack.Screen name="holidays" />
             <Stack.Screen name="resignation" />

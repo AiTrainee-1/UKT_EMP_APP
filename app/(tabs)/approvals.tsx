@@ -24,14 +24,15 @@ import {
   useResignationAction,
   useApproveCasualLeave,
   useApproveAttendance,
-  useApproveShift,
+  useApproveMissingPunch,
   TeamLeaveRequest,
   TeamPermissionRequest,
   TeamResignationRequest,
   TeamCasualLeaveRequest,
   TeamAttendanceRequest,
-  TeamShiftApproval,
+  TeamMissingPunchRequest,
 } from '../../src/hooks/useManager';
+import { PUNCH_SLOT_LABEL } from '../../src/hooks/useRequests';
 import { useManagerProfile } from '../../src/hooks/useManager';
 import { useAuth } from '../../src/hooks/useAuth';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
@@ -42,15 +43,15 @@ import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
 import { BorderRadius } from '../../src/constants/theme';
 
-type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'shift';
-type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest;
+type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch';
+type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest;
 type SelectedRequest =
   | { kind: 'leave'; item: TeamLeaveRequest }
   | { kind: 'permission'; item: TeamPermissionRequest }
   | { kind: 'resignation'; item: TeamResignationRequest }
   | { kind: 'casualLeave'; item: TeamCasualLeaveRequest }
   | { kind: 'attendance'; item: TeamAttendanceRequest }
-  | { kind: 'shift'; item: TeamShiftApproval };
+  | { kind: 'missingPunch'; item: TeamMissingPunchRequest };
 
 function empName(item: GenericItem): string {
   return item.employeeName || item.employee?.name || '—';
@@ -84,7 +85,7 @@ const TAB_META: Record<Tab, { label: string; icon: string; iconOutline: string; 
   resignation: { label: 'Resignations', icon: 'file-sign', iconOutline: 'file-outline', color: Colors.badgeRedText, bg: Colors.badgeRedBg },
   casualLeave: { label: 'Casual Leave', icon: 'calendar-star', iconOutline: 'calendar-star', color: Colors.secondary, bg: Colors.secondaryFixed },
   attendance: { label: 'Attendance', icon: 'calendar-edit', iconOutline: 'calendar-edit', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-  shift: { label: 'Shift', icon: 'clock-check', iconOutline: 'clock-check-outline', color: '#16a085', bg: '#d5f5ec' },
+  missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: '#5e35b1', bg: '#ede7f6' },
 };
 
 function itemTypeLabel(tab: Tab, item: GenericItem): string {
@@ -94,6 +95,10 @@ function itemTypeLabel(tab: Tab, item: GenericItem): string {
   if (tab === 'attendance') {
     const req = (item as TeamAttendanceRequest).requestedStatus;
     return req ? `Mark as ${req}` : 'Attendance Override';
+  }
+  if (tab === 'missingPunch') {
+    const p = item as TeamMissingPunchRequest;
+    return p.punchSlot ? PUNCH_SLOT_LABEL[p.punchSlot] : (p.punchType === 'IN' ? 'Check-In' : 'Check-Out');
   }
   return '—';
 }
@@ -111,6 +116,10 @@ function itemDateLabel(tab: Tab, item: GenericItem): string {
   if (tab === 'permission') {
     const p = item as TeamPermissionRequest;
     return `${format(new Date(p.date + 'T00:00:00'), 'dd MMM yyyy')} · ${p.time}`;
+  }
+  if (tab === 'missingPunch') {
+    const p = item as TeamMissingPunchRequest;
+    return `${format(new Date(p.date + 'T00:00:00'), 'dd MMM yyyy')} · ${p.punchTime}`;
   }
   if (tab === 'casualLeave' || tab === 'attendance') {
     const d = (item as any).date;
@@ -136,12 +145,12 @@ export default function ApprovalsScreen() {
   const resignationAction = useResignationAction();
   const approveCasualLeave = useApproveCasualLeave();
   const approveAttendance = useApproveAttendance();
-  const approveShift = useApproveShift();
+  const approveMissingPunch = useApproveMissingPunch();
 
   const canApproveResignations = manager?.canApproveResignations ?? false;
   const canApproveCasualLeave = manager?.canApproveCasualLeave ?? false;
   const canApproveAttendance = manager?.canApproveAttendance ?? false;
-  const canApproveShifts = manager?.canApproveShifts ?? false;
+  const canApproveMissingPunch = manager?.canApproveMissingPunch ?? false;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
@@ -151,7 +160,7 @@ export default function ApprovalsScreen() {
   const closeSheet = () => { setSelected(null); setComment(''); };
 
   const handleGenericAction = async (status: 'approved' | 'rejected') => {
-    if (!selected || selected.kind === 'resignation' || selected.kind === 'shift') return;
+    if (!selected || selected.kind === 'resignation') return;
     try {
       if (selected.kind === 'leave') {
         await approveLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
@@ -159,11 +168,15 @@ export default function ApprovalsScreen() {
         await approvePermission.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'casualLeave') {
         await approveCasualLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+      } else if (selected.kind === 'missingPunch') {
+        await approveMissingPunch.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else {
         await approveAttendance.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       }
       showToast(
-        status === 'approved' ? 'Request approved successfully.' : 'Request rejected.',
+        status === 'approved'
+          ? (selected.kind === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.')
+          : 'Request rejected.',
         status === 'approved' ? 'success' : 'error',
       );
       closeSheet();
@@ -190,29 +203,15 @@ export default function ApprovalsScreen() {
 
   const selectFor = (t: Tab, item: any): SelectedRequest => ({ kind: t, item } as SelectedRequest);
 
-  const handleShiftAction = async (action: 'approve' | 'reject') => {
-    if (!selected || selected.kind !== 'shift') return;
-    try {
-      await approveShift.mutateAsync({ id: selected.item.id, action, comment: comment || undefined });
-      showToast(
-        action === 'approve' ? 'Shift approved successfully.' : 'Shift rejected.',
-        action === 'approve' ? 'success' : 'error',
-      );
-      closeSheet();
-    } catch {
-      showToast('Action failed. Please try again.', 'error');
-    }
-  };
-
   const isPending = approveLeave.isPending || approvePermission.isPending || resignationAction.isPending
-    || approveCasualLeave.isPending || approveAttendance.isPending || approveShift.isPending;
+    || approveCasualLeave.isPending || approveAttendance.isPending || approveMissingPunch.isPending;
 
   const leaveList = data?.leaveRequests ?? [];
   const permList = data?.permissionRequests ?? [];
   const resignList = data?.resignations ?? [];
   const casualLeaveList = data?.casualLeaves ?? [];
   const attendanceList = data?.attendanceRequests ?? [];
-  const shiftList = data?.shiftApprovals ?? [];
+  const missingPunchList = data?.missingPunchRequests ?? [];
 
   const TABS: { key: Tab; icon: string; iconOutline: string; label: string; count: number }[] = [
     { key: 'leave', ...TAB_META.leave, count: leaveList.length },
@@ -223,8 +222,8 @@ export default function ApprovalsScreen() {
     ...(canApproveAttendance
       ? [{ key: 'attendance' as Tab, ...TAB_META.attendance, count: attendanceList.length }]
       : []),
-    ...(canApproveShifts
-      ? [{ key: 'shift' as Tab, ...TAB_META.shift, count: shiftList.length }]
+    ...(canApproveMissingPunch
+      ? [{ key: 'missingPunch' as Tab, ...TAB_META.missingPunch, count: missingPunchList.length }]
       : []),
     ...(canApproveResignations
       ? [{ key: 'resignation' as Tab, ...TAB_META.resignation, count: resignList.length }]
@@ -236,7 +235,7 @@ export default function ApprovalsScreen() {
     : tab === 'permission' ? permList
     : tab === 'casualLeave' ? casualLeaveList
     : tab === 'attendance' ? attendanceList
-    : tab === 'shift' ? shiftList
+    : tab === 'missingPunch' ? missingPunchList
     : resignList;
 
   return (
@@ -245,7 +244,7 @@ export default function ApprovalsScreen() {
 
       {/* Header */}
       <LinearGradient
-        colors={['#006496', '#0090d0']}
+        colors={Colors.gradientPrimary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.header}
@@ -367,56 +366,6 @@ export default function ApprovalsScreen() {
             );
           }
 
-          if (tab === 'shift') {
-            const s = item as TeamShiftApproval;
-            return (
-              <MotiView
-                from={{ opacity: 0, translateY: 10 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ type: 'timing', duration: 260, delay: Math.min(index, 8) * 50 }}
-              >
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => setSelected({ kind: 'shift', item: s })}
-                activeOpacity={0.85}
-              >
-                <View style={styles.cardTop}>
-                  <View style={styles.empRow}>
-                    <LinearGradient colors={['#16a085', '#48c9b0']} style={styles.avatar}>
-                      <Text style={styles.avatarText}>{empName(s as any)[0]?.toUpperCase() ?? '?'}</Text>
-                    </LinearGradient>
-                    <View>
-                      <Text style={styles.empName}>{empName(s as any)}</Text>
-                      <Text style={styles.empCode}>{empCode(s as any)}</Text>
-                    </View>
-                  </View>
-                  <Badge label="Pending" variant="pending" />
-                </View>
-
-                <View style={styles.requestInfo}>
-                  <View style={[styles.requestTypeChip, { backgroundColor: TAB_META.shift.bg }]}>
-                    <Text style={[styles.requestType, { color: TAB_META.shift.color }]}>{s.shiftName || 'Shift Change'}</Text>
-                  </View>
-                  <Text style={styles.requestDate}>
-                    Effective {fmtDate(s.effectiveFrom)}
-                  </Text>
-                </View>
-
-                <View style={styles.quickActions}>
-                  <TouchableOpacity style={styles.approveBtn} onPress={() => setSelected({ kind: 'shift', item: s })}>
-                    <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
-                    <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.rejectBtn} onPress={() => setSelected({ kind: 'shift', item: s })}>
-                    <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
-                    <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableOpacity>
-              </MotiView>
-            );
-          }
-
           const genericItem = item as GenericItem;
           const name = empName(genericItem);
           const initial = name[0]?.toUpperCase() ?? '?';
@@ -480,13 +429,13 @@ export default function ApprovalsScreen() {
         }}
       />
 
-      {/* Detail Sheet — Leave / Permission / Casual Leave / Attendance */}
+      {/* Detail Sheet — Leave / Permission / Casual Leave / Attendance / Missing Punch */}
       <BottomSheet
-        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance'].includes(selected.kind)}
+        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance', 'missingPunch'].includes(selected.kind)}
         onClose={closeSheet}
-        title={selected && selected.kind !== 'resignation' && selected.kind !== 'shift' ? `${TAB_META[selected.kind].label} Request` : ''}
+        title={selected && selected.kind !== 'resignation' ? `${TAB_META[selected.kind].label} Request` : ''}
       >
-        {selected && selected.kind !== 'resignation' && selected.kind !== 'shift' && (
+        {selected && selected.kind !== 'resignation' && (
           <View>
             <View style={styles.sheetEmpRow}>
               <LinearGradient colors={['#006496', '#5dbbff']} style={styles.sheetAvatar}>
@@ -551,70 +500,6 @@ export default function ApprovalsScreen() {
             </View>
           </View>
         )}
-      </BottomSheet>
-
-      {/* Detail Sheet — Shift Approval */}
-      <BottomSheet
-        visible={!!selected && selected.kind === 'shift'}
-        onClose={closeSheet}
-        title="Shift Approval"
-      >
-        {selected?.kind === 'shift' && (() => {
-          const s = selected.item;
-          return (
-            <View>
-              <View style={styles.sheetEmpRow}>
-                <LinearGradient colors={['#16a085', '#48c9b0']} style={styles.sheetAvatar}>
-                  <Text style={styles.sheetAvatarText}>{empName(s as any)[0]?.toUpperCase() ?? '?'}</Text>
-                </LinearGradient>
-                <View>
-                  <Text style={styles.sheetEmpName}>{empName(s as any)}</Text>
-                  <Text style={styles.sheetEmpCode}>{empCode(s as any)}</Text>
-                </View>
-              </View>
-
-              {[
-                ['Shift', s.shiftName || '—'],
-                ['Effective From', fmtDate(s.effectiveFrom)],
-              ].map(([label, value]) => (
-                <View key={label} style={styles.sheetRow}>
-                  <Text style={styles.sheetLabel}>{label}</Text>
-                  <Text style={styles.sheetValue} numberOfLines={3}>{value}</Text>
-                </View>
-              ))}
-
-              <Text style={styles.commentLabel}>Comment (optional)</Text>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Add a comment…"
-                placeholderTextColor={Colors.outline}
-                value={comment}
-                onChangeText={setComment}
-                multiline
-                numberOfLines={2}
-              />
-
-              <View style={styles.sheetActions}>
-                <TouchableOpacity
-                  style={styles.sheetApproveBtn}
-                  onPress={() => handleShiftAction('approve')}
-                  disabled={isPending}
-                >
-                  <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                  <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.sheetRejectBtn}
-                  onPress={() => handleShiftAction('reject')}
-                  disabled={isPending}
-                >
-                  <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
-                  <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        })()}
       </BottomSheet>
 
       {/* Detail Sheet — Resignation */}

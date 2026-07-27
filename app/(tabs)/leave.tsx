@@ -176,7 +176,7 @@ export default function LeaveScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#006496" />
 
       <LinearGradient
-        colors={['#006496', '#0090d0']}
+        colors={Colors.gradientPrimary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.header}

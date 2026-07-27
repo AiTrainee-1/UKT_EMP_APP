@@ -16,6 +16,7 @@ import { useAdvances, Advance } from '../../src/hooks/useAdvances';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { BorderRadius, Spacing, ClayElevation } from '../../src/constants/theme';
 
 function AdvanceCard({ advance }: { advance: Advance }) {
   const [expanded, setExpanded] = useState(false);
@@ -105,14 +106,10 @@ const styles = StyleSheet.create({
   center: { flex: 1 },
   card: {
     backgroundColor: Colors.bgCard,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.base,
+    marginBottom: Spacing.md,
+    ...ClayElevation.low,
   },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   cardLeft: { flex: 1, gap: 4 },

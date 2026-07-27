@@ -31,7 +31,11 @@
       },
       "predictiveBackGestureEnabled": false,
       "usesCleartextTraffic": true,
-      "package": "net.uktex.employee"
+      "package": "net.uktex.employee",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -66,9 +70,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "7f7e04ee-a8f5-4b9d-9c89-bba03424952c"
+        "projectId": "e1105939-f606-42ec-93ee-9fb6ece30c76"
       }
     },
-    "owner": "aitraineeukts-team"
+    "owner": "ukt"
   }
 }

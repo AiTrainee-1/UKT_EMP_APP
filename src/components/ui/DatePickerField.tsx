@@ -87,7 +87,7 @@ export function TimePickerField({ label, value, onChange, error }: TimePickerFie
       >
         <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.primary} />
         <Text style={[styles.value, !value && styles.placeholder]}>
-          {value || 'Select time'}
+          {value ? format(getTimeAsDate(), 'h:mm a') : 'Select time'}
         </Text>
         <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.outline} />
       </TouchableOpacity>
@@ -96,7 +96,7 @@ export function TimePickerField({ label, value, onChange, error }: TimePickerFie
         <DateTimePicker
           value={getTimeAsDate()}
           mode="time"
-          is24Hour
+          is24Hour={false}
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={handleChange}
         />

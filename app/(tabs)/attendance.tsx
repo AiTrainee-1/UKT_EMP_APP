@@ -17,11 +17,12 @@ import { router } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useAttendance } from '../../src/hooks/useAttendance';
 import { useShift } from '../../src/hooks/useShift';
+import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
 import { AttendanceCalendar } from '../../src/components/AttendanceCalendar';
 import { GeoPunchCard } from '../../src/components/GeoPunchCard';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
-import { BorderRadius } from '../../src/constants/theme';
+import { BorderRadius, Spacing } from '../../src/constants/theme';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -48,6 +49,7 @@ export default function AttendanceScreen() {
     year
   );
   const { data: shift } = useShift(user?.employeeId ?? null);
+  const { data: syncStatus } = useAttendanceSyncStatus();
 
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear((y) => y - 1); }
@@ -68,7 +70,7 @@ export default function AttendanceScreen() {
       <StatusBar barStyle="light-content" backgroundColor="#006496" />
 
       <LinearGradient
-        colors={['#006496', '#0090d0']}
+        colors={Colors.gradientPrimary}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.header}
@@ -99,6 +101,15 @@ export default function AttendanceScreen() {
         showsVerticalScrollIndicator={false}
       >
         <GeoPunchCard />
+
+        {syncStatus?.pendingSync && (
+          <View style={styles.syncWarning}>
+            <MaterialCommunityIcons name="alert-outline" size={18} color={Colors.statusYellow} />
+            <Text style={styles.syncWarningText}>
+              Today's attendance may be incomplete — biometric punches haven't synced yet. It'll update once HR runs the next sync.
+            </Text>
+          </View>
+        )}
 
         {/* Assigned shift */}
         {shift && (
@@ -198,6 +209,21 @@ const styles = StyleSheet.create({
   monthLabel: { color: '#fff', fontSize: 13, fontWeight: '700', minWidth: 64, textAlign: 'center' },
 
   content: { padding: 16, paddingBottom: 32, gap: 16 },
+
+  syncWarning: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: Colors.badgeYellowBg,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+  },
+  syncWarningText: {
+    flex: 1,
+    color: Colors.textPrimary,
+    fontSize: 12,
+    lineHeight: 17,
+  },
 
   shiftBanner: {
     flexDirection: 'row',

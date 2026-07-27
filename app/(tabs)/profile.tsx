@@ -19,7 +19,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import { useAuth } from '../../src/hooks/useAuth';
+import { useAuth, setPasswordRequest } from '../../src/hooks/useAuth';
 import { useEmployee, useUpdateProfilePhoto } from '../../src/hooks/useEmployee';
 import { useMyResignation } from '../../src/hooks/useResignation';
 import { ProfileSection } from '../../src/components/ProfileSection';
@@ -32,7 +32,6 @@ import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
 import { BorderRadius } from '../../src/constants/theme';
-import api from '../../src/lib/api';
 
 const pwdSchema = z
   .object({
@@ -76,7 +75,7 @@ export default function ProfileScreen() {
   const handleChangePwd = async (data: PwdForm) => {
     setPwdLoading(true);
     try {
-      await api.post('/auth/set-password', { identifier: data.identifier, password: data.newPassword });
+      await setPasswordRequest(data.identifier, data.newPassword);
       showToast('Password changed successfully!', 'success');
       setShowPwd(false);
       reset();
@@ -129,7 +128,7 @@ export default function ProfileScreen() {
           <>
             {/* Hero card */}
             <LinearGradient
-              colors={['#006496', '#0090d0']}
+              colors={Colors.gradientPrimary}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={styles.heroCard}

@@ -7,6 +7,11 @@ export const Colors = {
   onPrimary: '#ffffff',
   onPrimaryContainer: '#004970',
 
+  // Header/hero gradient used across nearly every screen's top banner —
+  // named here so every screen sources the same two stops instead of
+  // hand-repeating the literal.
+  gradientPrimary: ['#006496', '#0090d0'] as const,
+
   // ─── Secondary (golden) ────────────────────────────────
   secondary: '#735c00',
   secondaryContainer: '#fed65b',

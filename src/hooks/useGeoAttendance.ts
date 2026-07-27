@@ -87,6 +87,17 @@ export function useGeoPunchStatus(enabled = true) {
   });
 }
 
+/** Whether today's attendance might still be incomplete because biometric
+ * hasn't synced yet — true only once a non-biometric punch (Geo/On-Duty/HR
+ * Entry) already exists today AND no device has synced since midnight. */
+export function useAttendanceSyncStatus() {
+  return useQuery({
+    queryKey: ['attendance-sync-status'],
+    queryFn: async () => (await api.get('/attendance/sync-status')).data as { pendingSync: boolean },
+    refetchInterval: 60000,
+  });
+}
+
 /** Read-only "am I inside the geofence right now?" check — no punch is
  * written, safe to call repeatedly as location updates. */
 export function useGeoPunchPrecheck() {
