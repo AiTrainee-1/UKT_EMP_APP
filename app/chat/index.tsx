@@ -6,7 +6,6 @@ import {
   FlatList,
   TextInput,
   TouchableOpacity,
-  KeyboardAvoidingView,
   Platform,
   StatusBar,
   Modal,
@@ -18,12 +17,15 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
 import { format } from 'date-fns';
 
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useChatChannels, useChatMessages, useSendChatMessage, useToggleReaction, ChatMessage } from '../../src/hooks/useChat';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -37,6 +39,11 @@ function fmtTime(str: string) {
 }
 
 export default function ChatScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user } = useAuth();
   const { data: channels, isLoading: channelsLoading } = useChatChannels();
   const [channelType, setChannelType] = useState<'company' | 'department'>('company');
@@ -129,7 +136,7 @@ export default function ChatScreen() {
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoider style={{ flex: 1 }}>
         {channelsLoading || messagesLoading ? (
           <View style={{ padding: 16 }}>
             {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -222,11 +229,16 @@ export default function ChatScreen() {
           </View>
         )}
 
+        {/* Bottom safe-area clearance already comes from the screen's
+            <SafeAreaView edges={['top','bottom']}> wrapper — adding the
+            inset again here would leave a visible empty strip. */}
         <View style={styles.composer}>
           <TextInput
             style={[styles.composerInput, !activeChannel && styles.composerInputDisabled]}
             placeholder={activeChannel ? 'Type a message…' : 'Chat server not configured yet'}
             placeholderTextColor={Colors.outline}
+            selectionColor={Colors.primary}
+            cursorColor={Colors.primary}
             value={text}
             onChangeText={setText}
             editable={!!activeChannel}
@@ -240,7 +252,7 @@ export default function ChatScreen() {
             <MaterialCommunityIcons name="send" size={18} color="#fff" />
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoider>
 
       <Modal visible={!!reactingTo} transparent animationType="fade" onRequestClose={() => setReactingTo(null)}>
         <Pressable style={styles.emojiBackdrop} onPress={() => setReactingTo(null)}>
@@ -260,7 +272,7 @@ export default function ChatScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
   header: {
@@ -399,9 +411,17 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    maxHeight: 100,
+    // WhatsApp-style: starts as a single comfortable line and grows with the
+    // message up to ~5 lines before scrolling internally. Without minHeight
+    // an empty multiline TextInput can collapse to a sliver on Android.
+    minHeight: 44,
+    maxHeight: 120,
     color: Colors.textPrimary,
-    fontSize: 14,
+    fontSize: 15,
+    lineHeight: 20,
+    // Android centres multiline text vertically by default, which looks
+    // wrong once the box grows past one line.
+    textAlignVertical: 'center',
   },
   composerInputDisabled: { opacity: 0.6 },
   sendBtn: {

@@ -4,6 +4,8 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { format } from 'date-fns';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 
 interface DatePickerFieldProps {
@@ -16,6 +18,11 @@ interface DatePickerFieldProps {
 }
 
 export function DatePickerField({ label, value, onChange, error, minDate, maxDate }: DatePickerFieldProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const [show, setShow] = useState(false);
   const parsedDate = value ? new Date(value + 'T00:00:00') : new Date();
 
@@ -61,6 +68,11 @@ interface TimePickerFieldProps {
 }
 
 export function TimePickerField({ label, value, onChange, error }: TimePickerFieldProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const [show, setShow] = useState(false);
 
   const getTimeAsDate = () => {
@@ -105,7 +117,7 @@ export function TimePickerField({ label, value, onChange, error }: TimePickerFie
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: { marginBottom: 14 },
   label: {
     color: Colors.textSecondary,

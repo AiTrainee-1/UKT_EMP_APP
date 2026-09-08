@@ -14,9 +14,16 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 export default function ResignationSuccessScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const scale = useRef(new Animated.Value(0)).current;
   const fade = useRef(new Animated.Value(0)).current;
 
@@ -91,7 +98,7 @@ export default function ResignationSuccessScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1 },
   bg: {
     flex: 1,

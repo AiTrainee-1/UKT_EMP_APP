@@ -18,6 +18,8 @@ export interface LeaveRequest {
   reason: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   appliedOn: string;
+  isHalfDay?: boolean;
+  halfDaySlot?: 'morning' | 'afternoon' | null;
 }
 
 export interface LeaveType {
@@ -75,10 +77,12 @@ export function useApplyLeave(employeeId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: {
-      leaveTypeId: number;
+      leaveTypeId?: number;
       startDate: string;
       endDate: string;
       reason: string;
+      isHalfDay?: boolean;
+      halfDaySlot?: 'morning' | 'afternoon';
     }) => {
       const res = await api.post('/leave-requests', { employeeId, ...data });
       return res.data;

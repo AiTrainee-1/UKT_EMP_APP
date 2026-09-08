@@ -28,6 +28,8 @@ import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { DatePickerField, TimePickerField } from '../../src/components/ui/DatePickerField';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const PERMISSION_TYPES = ['Early Out', 'Late In', 'Short Leave'];
@@ -49,6 +51,11 @@ function currency(n: number) {
 }
 
 export default function RequestsScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user } = useAuth();
   const [showNew, setShowNew] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -90,6 +97,8 @@ export default function RequestsScreen() {
   const monthlyUsed = data?.monthlyUsed ?? 0;
   const monthlyLimit = data?.monthlyLimit ?? 3;
   const remaining = Math.max(0, monthlyLimit - monthlyUsed);
+  const dailyLimit = data?.dailyLimit ?? 1;
+  const weeklyLimit = data?.weeklyLimit ?? 2;
 
   const liveList = items.filter((i) => i.status === 'Pending');
   const confirmedList = items.filter((i) => i.status !== 'Pending');
@@ -116,6 +125,7 @@ export default function RequestsScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.usageTitle}>Permissions this month</Text>
                   <Text style={styles.usageSub}>{monthlyUsed} of {monthlyLimit} used</Text>
+                  <Text style={styles.usageSub}>Max {dailyLimit}/day · {weeklyLimit}/week</Text>
                 </View>
               </View>
               <View style={styles.statsDivider} />
@@ -135,6 +145,15 @@ export default function RequestsScreen() {
                   <Text style={styles.statLabel}>Salary Deduction</Text>
                 </View>
               </View>
+            </View>
+
+            {/* How this is calculated */}
+            <View style={styles.calcInfoBox}>
+              <MaterialCommunityIcons name="information-outline" size={16} color={Colors.textMuted} />
+              <Text style={styles.calcInfoText}>
+                Every employee gets 3 free lates/permissions a month (combined pool). Each additional 3 beyond that
+                costs a ¼ shift deduction from salary — the same rule and numbers HR sees on the Report Log.
+              </Text>
             </View>
 
             {/* Tab switch */}
@@ -271,7 +290,7 @@ export default function RequestsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 100 },
   center: { flex: 1 },
@@ -341,6 +360,16 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   capWarningText: { flex: 1, color: Colors.badgeRedText, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+  calcInfoBox: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.lg,
+    padding: 12,
+    marginBottom: 14,
+    alignItems: 'flex-start',
+  },
+  calcInfoText: { flex: 1, color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
   fieldLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: Colors.outlineVariant },

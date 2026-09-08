@@ -12,6 +12,10 @@ export interface CasualLeaveRequest {
 export interface CLEligibility {
   eligible: boolean;
   reason?: string;
+  year?: number;
+  yearlyEntitlement?: number;
+  usedThisYear?: number;
+  remainingThisYear?: number;
 }
 
 function normalizeStatus(raw: string): CasualLeaveRequest['status'] {
@@ -39,14 +43,21 @@ export function useCasualLeaves(employeeId: number | null, params?: { status?: s
   });
 }
 
+// GET /casual-leaves/my-eligibility — self-scoped for the logged-in employee
+// (casual-leaves/eligibility is a separate, HR-only bulk board endpoint that
+// 403s on an employee token; this one exists specifically for self-service).
 export function useCLEligibility(employeeId: number | null) {
   return useQuery({
     queryKey: ['casual-leave-eligibility', employeeId],
     queryFn: async (): Promise<CLEligibility> => {
-      const res = await api.get('/casual-leaves/eligibility', { params: { employeeId } });
+      const res = await api.get('/casual-leaves/my-eligibility');
       return {
         eligible: !!res.data?.eligible,
         reason: res.data?.reason,
+        year: res.data?.year,
+        yearlyEntitlement: res.data?.yearlyEntitlement,
+        usedThisYear: res.data?.usedThisYear,
+        remainingThisYear: res.data?.remainingThisYear,
       };
     },
     enabled: !!employeeId,

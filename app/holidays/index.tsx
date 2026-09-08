@@ -16,6 +16,8 @@ import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -39,6 +41,11 @@ function typeBadgeVariant(type: string): 'present' | 'pending' | 'onleave' {
 }
 
 export default function HolidaysScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const year = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState(year);
   const { data, isLoading, refetch, isRefetching } = useHolidays(selectedYear);
@@ -125,7 +132,7 @@ export default function HolidaysScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   yearNav: {
     flexDirection: 'row',

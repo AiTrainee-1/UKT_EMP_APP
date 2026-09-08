@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   Image,
   TouchableOpacity,
   Linking,
-  Animated,
   Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,422 +14,310 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { UKTLogo } from '../../src/components/UKTLogo';
-import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import { BorderRadius, Spacing, ClayElevation } from '../../src/constants/theme';
+import type { Palette } from '../../src/theme/palettes';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const COMPANY_URL = 'https://www.uktextiles.in';
+
+/**
+ * About UK Textiles.
+ *
+ * Rebuilt to be exactly two things -who the company is, and what it makes —
+ * because that is what an employee opening this page wants. The previous
+ * version padded those out with decorative sections and parallax; here the
+ * facts carry the page and the only ornament is the hero.
+ *
+ * Everything below is from uktextiles.in (company, products and contact
+ * pages), not invented.
+ */
+
+const COMPANY_URL = 'https://uktextiles.in';
+const PHONE = '04214300800';
+const PHONE_DISPLAY = '0421 430 0800';
+const EMAIL = 'uktex@uktex.net';
+const ADDRESS =
+  'U.K. Textiles, 199-E (New), Sivakami Nagar Main Road,\nA.B. Nagar, Gandhi Nagar Post,\nTirupur – 641603, Tamil Nadu, India';
 
 const heroImg = require('../../assets/company/hero.png');
-const aboutImg = require('../../assets/company/about.png');
-const infraImg = require('../../assets/company/infrastructure.png');
-const yarnImg = require('../../assets/company/product-yarn.png');
-const fabricImg = require('../../assets/company/product-fabric.png');
 const garmentImg = require('../../assets/company/product-garment.png');
+const fabricImg = require('../../assets/company/product-fabric.png');
+const yarnImg = require('../../assets/company/product-yarn.png');
 
-const stats = [
-  { label: 'Years of Excellence', value: '30+' },
-  { label: 'Employees', value: '500+' },
-  { label: 'Export Countries', value: '20+' },
-  { label: 'Products', value: '200+' },
+const FACTS: { label: string; value: string; icon: string }[] = [
+  { label: 'Established', value: '1993', icon: 'calendar-star' },
+  { label: 'Monthly output', value: '400,000 pcs', icon: 'chart-line' },
+  { label: 'Based in', value: 'Tirupur', icon: 'map-marker' },
+  { label: 'Model', value: 'Vertically integrated', icon: 'source-branch' },
 ];
 
-const products = [
+const PRODUCTS: { title: string; blurb: string; image: any }[] = [
   {
-    title: 'Yarn',
-    description:
-      'Premium-quality spun and filament yarns crafted for strength, consistency and vibrant colour retention. Suitable for knitting and weaving applications across all textile segments.',
-    img: yarnImg,
+    title: "Men's Knitwear",
+    blurb: 'High-fashion knitted garments for the menswear segment, produced end to end in house.',
+    image: garmentImg,
   },
   {
-    title: 'Knitted Fabrics',
-    description:
-      'State-of-the-art circular and flat-bed knitting machines produce fabrics of superior elasticity and finish. Available in a wide range of GSM, patterns and fibre compositions.',
-    img: fabricImg,
+    title: "Women's Apparel",
+    blurb: 'Fashion-led knitted womenswear, from styling and sampling through to finished pieces.',
+    image: fabricImg,
   },
   {
-    title: 'Garments',
-    description:
-      'End-to-end garment manufacturing — from cutting and stitching to finishing and packing. Export-quality apparel produced to international standards for global markets.',
-    img: garmentImg,
+    title: "Children's Garments",
+    blurb: 'Knitted childrenswear built to the same quality and delivery standards as the adult lines.',
+    image: yarnImg,
   },
 ];
 
-const infraPoints = [
-  { icon: 'factory', text: 'Modern spinning & knitting plant spread over 2 lakh sq. ft.' },
-  { icon: 'flash', text: 'Fully automated production lines with minimal human error' },
-  { icon: 'layers-outline', text: 'Integrated operations from fibre to finished garment' },
-  { icon: 'truck-outline', text: 'In-house logistics and warehousing for faster dispatch' },
-] as const;
-
-const qualityPoints = [
-  'ISO 9001:2015 certified quality management system',
-  'Rigorous in-process and final inspection at every stage',
-  'State-of-the-art testing laboratory with advanced equipment',
-  'Compliance with international textile safety standards',
-  'Dedicated R&D team for continuous product improvement',
-  'Zero-defect culture driven by trained quality personnel',
+const CAPABILITIES: { icon: string; title: string; body: string }[] = [
+  {
+    icon: 'factory',
+    title: 'Vertically integrated',
+    body: 'Knitting through to finished garment under one roof, so quality is controlled at every stage rather than inspected at the end.',
+  },
+  {
+    icon: 'server-network',
+    title: 'ERP-enabled',
+    body: 'Production, workforce and delivery run on connected systems, which is what makes consistent lead times possible at this volume.',
+  },
+  {
+    icon: 'earth',
+    title: 'Export focused',
+    body: 'Serving international clientele in high-fashion knitwear, with consistent quality and on-time delivery as the operating promise.',
+  },
 ];
-
-const certifications = [
-  { icon: 'shield-check', label: 'ISO 9001:2015' },
-  { icon: 'medal-outline', label: 'Export Excellence' },
-  { icon: 'star', label: 'Best Quality' },
-  { icon: 'earth', label: 'Global Standards' },
-] as const;
-
-const clients = [
-  'Reliance Retail', 'Arvind Limited', 'Raymond Group', 'Vardhman Textiles',
-  'Aditya Birla Fashion', 'Madura Fashion', 'Export Markets', 'Pan-India Distributors',
-];
-
-function FadeIn({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(16)).current;
-
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacity, { toValue: 1, duration: 500, delay, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: 0, duration: 500, delay, useNativeDriver: true }),
-    ]).start();
-  }, []);
-
-  return (
-    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-      {children}
-    </Animated.View>
-  );
-}
-
-function openWebsite() {
-  Linking.openURL(COMPANY_URL).catch(() => {});
-}
 
 export default function CompanyScreen() {
+  const { C } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* ── Hero ── */}
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        {/* ─── Hero ─── */}
         <View style={styles.hero}>
-          <Image source={heroImg} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
+          <Image source={heroImg} style={styles.heroImg} resizeMode="cover" />
+          {/* Scrim, so the wordmark stays legible whatever the photo does. */}
           <LinearGradient
-            colors={['rgba(0,0,0,0.55)', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.65)']}
-            style={StyleSheet.absoluteFillObject}
+            colors={['rgba(0,31,63,0.15)', 'rgba(0,31,63,0.88)']}
+            style={StyleSheet.absoluteFill}
           />
-          <View style={styles.heroContent}>
-            <UKTLogo size={48} />
-            <Text style={styles.heroTitle}>
-              Weaving Excellence,{'\n'}
-              <Text style={styles.heroTitleAccent}>Thread by Thread</Text>
+          <View style={styles.heroBody}>
+            <UKTLogo size={44} />
+            <Text style={styles.heroTitle}>UK Textiles</Text>
+            <Text style={styles.heroTag}>
+              A one-stop shop for high-fashion garment manufacturing
             </Text>
-            <Text style={styles.heroSubtitle}>
-              UK Textiles is a vertically integrated textile manufacturer delivering
-              world-class yarn, fabrics and garments to clients across India and beyond.
-            </Text>
-            <TouchableOpacity style={styles.heroLink} onPress={openWebsite} activeOpacity={0.8}>
-              <Text style={styles.heroLinkText}>Visit our website</Text>
-              <MaterialCommunityIcons name="open-in-new" size={14} color="#fff" />
+          </View>
+        </View>
+
+        {/* ─── The numbers, before the prose ─── */}
+        <View style={styles.factGrid}>
+          {FACTS.map((f) => (
+            <View key={f.label} style={styles.factCell}>
+              <MaterialCommunityIcons name={f.icon as any} size={16} color={C.primary} />
+              <Text style={styles.factValue}>{f.value}</Text>
+              <Text style={styles.factLabel}>{f.label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* ─── Who we are ─── */}
+        <View style={styles.card}>
+          <Text style={styles.sectionLabel}>WHO WE ARE</Text>
+          <Text style={styles.body}>
+            Founded in 1993 in Tirupur, South India, UK Textiles manufactures and exports knitted
+            garments for the men's, women's and children's segments.
+          </Text>
+          <Text style={styles.body}>
+            The operation is a modern, vertically integrated garment manufacturing facility — around
+            400,000 pieces a month, produced on advanced machinery and run on ERP-enabled systems,
+            under a visionary and professional management team.
+          </Text>
+        </View>
+
+        {/* ─── Products ─── */}
+        <Text style={styles.heading}>What we make</Text>
+        {PRODUCTS.map((p) => (
+          <View key={p.title} style={styles.productCard}>
+            <Image source={p.image} style={styles.productImg} resizeMode="cover" />
+            <View style={styles.productBody}>
+              <Text style={styles.productTitle}>{p.title}</Text>
+              <Text style={styles.productBlurb}>{p.blurb}</Text>
+            </View>
+          </View>
+        ))}
+
+        {/* ─── How we work ─── */}
+        <Text style={styles.heading}>How we work</Text>
+        <View style={styles.card}>
+          {CAPABILITIES.map((c, i) => (
+            <View key={c.title} style={[styles.capRow, i > 0 && styles.capDivider]}>
+              <View style={styles.capIcon}>
+                <MaterialCommunityIcons name={c.icon as any} size={18} color={C.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.capTitle}>{c.title}</Text>
+                <Text style={styles.capBody}>{c.body}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* ─── Contact ─── */}
+        <Text style={styles.heading}>Get in touch</Text>
+        <View style={styles.card}>
+          <Text style={styles.address}>{ADDRESS}</Text>
+          <View style={styles.contactRow}>
+            <TouchableOpacity
+              style={styles.contactBtn}
+              activeOpacity={0.75}
+              onPress={() => Linking.openURL(`tel:${PHONE}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Call ${PHONE_DISPLAY}`}
+            >
+              <MaterialCommunityIcons name="phone" size={15} color={C.primary} />
+              <Text style={styles.contactText}>{PHONE_DISPLAY}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.contactBtn}
+              activeOpacity={0.75}
+              onPress={() => Linking.openURL(`mailto:${EMAIL}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Email ${EMAIL}`}
+            >
+              <MaterialCommunityIcons name="email-outline" size={15} color={C.primary} />
+              <Text style={styles.contactText}>{EMAIL}</Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* ── Stats strip ── */}
-        <View style={styles.statsStrip}>
-          {stats.map((s) => (
-            <View key={s.label} style={styles.statItem}>
-              <Text style={styles.statValue}>{s.value}</Text>
-              <Text style={styles.statLabel}>{s.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* ── About Us ── */}
-        <View style={styles.section}>
-          <FadeIn>
-            <Text style={styles.eyebrow}>About Us</Text>
-            <Text style={styles.sectionTitle}>A Legacy of Textile Innovation</Text>
-            <Text style={styles.bodyText}>
-              Founded over three decades ago, UK Textiles has grown from a modest spinning
-              unit into a fully integrated textile powerhouse. We combine time-tested craft
-              with cutting-edge technology to deliver exceptional products that meet the
-              demands of a dynamic global market.
-            </Text>
-            <Text style={[styles.bodyText, { marginTop: Spacing.md }]}>
-              Our vertically integrated operations — spanning fibre processing, yarn
-              spinning, fabric knitting and garment manufacturing — give us unmatched
-              control over quality, cost and lead times.
-            </Text>
-            <View style={styles.tagRow}>
-              {['ISO Certified', 'Export Quality', '30+ Years', 'Pan-India Reach'].map((tag) => (
-                <View key={tag} style={styles.tag}>
-                  <Text style={styles.tagText}>{tag}</Text>
-                </View>
-              ))}
-            </View>
-          </FadeIn>
-          <FadeIn delay={100}>
-            <Image source={aboutImg} style={styles.aboutImage} resizeMode="cover" />
-          </FadeIn>
-        </View>
-
-        {/* ── Products ── */}
-        <View style={[styles.section, styles.sectionMuted]}>
-          <FadeIn>
-            <Text style={styles.eyebrow}>Our Products</Text>
-            <Text style={styles.sectionTitle}>From Fibre to Finished Garment</Text>
-          </FadeIn>
-          {products.map((p, i) => (
-            <FadeIn key={p.title} delay={i * 90}>
-              <View style={styles.productCard}>
-                <Image source={p.img} style={styles.productImage} resizeMode="cover" />
-                <View style={styles.productBody}>
-                  <Text style={styles.productTitle}>{p.title}</Text>
-                  <Text style={styles.productDesc}>{p.description}</Text>
-                </View>
-              </View>
-            </FadeIn>
-          ))}
-        </View>
-
-        {/* ── Infrastructure ── */}
-        <View style={styles.infraSection}>
-          <Image source={infraImg} style={StyleSheet.absoluteFillObject} resizeMode="cover" />
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,100,150,0.87)' }]} />
-          <View style={styles.infraContent}>
-            <FadeIn>
-              <Text style={[styles.eyebrow, { color: Colors.secondaryContainer }]}>Infrastructure</Text>
-              <Text style={[styles.sectionTitle, { color: '#fff' }]}>
-                Built for Scale. Built for Quality.
-              </Text>
-            </FadeIn>
-            {infraPoints.map((pt, i) => (
-              <FadeIn key={pt.text} delay={i * 80}>
-                <View style={styles.infraPoint}>
-                  <View style={styles.infraIconWrap}>
-                    <MaterialCommunityIcons name={pt.icon} size={20} color={Colors.secondaryContainer} />
-                  </View>
-                  <Text style={styles.infraText}>{pt.text}</Text>
-                </View>
-              </FadeIn>
-            ))}
-          </View>
-        </View>
-
-        {/* ── Quality ── */}
-        <View style={styles.section}>
-          <FadeIn>
-            <Text style={styles.eyebrow}>Quality</Text>
-            <Text style={styles.sectionTitle}>Our Commitment to Excellence</Text>
-          </FadeIn>
-          {qualityPoints.map((pt, i) => (
-            <FadeIn key={pt} delay={i * 60}>
-              <View style={styles.qualityRow}>
-                <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                <Text style={styles.qualityText}>{pt}</Text>
-              </View>
-            </FadeIn>
-          ))}
-          <View style={styles.certRow}>
-            {certifications.map((c) => (
-              <View key={c.label} style={styles.certChip}>
-                <MaterialCommunityIcons name={c.icon} size={15} color={Colors.primary} />
-                <Text style={styles.certText}>{c.label}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* ── Clientele ── */}
-        <View style={[styles.section, styles.sectionMuted]}>
-          <FadeIn>
-            <Text style={styles.eyebrow}>Clientele</Text>
-            <Text style={styles.sectionTitle}>Trusted by Industry Leaders</Text>
-          </FadeIn>
-          <View style={styles.clientGrid}>
-            {clients.map((client) => (
-              <View key={client} style={styles.clientChip}>
-                <Text style={styles.clientText}>{client}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        {/* ── CTA footer ── */}
-        <LinearGradient
-          colors={Colors.gradientPrimary}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.cta}
-        >
-          <MaterialCommunityIcons name="account-group" size={32} color="rgba(255,255,255,0.6)" />
-          <Text style={styles.ctaTitle}>Proud to be part of the UK Textiles family</Text>
-          <Text style={styles.ctaText}>
-            As an employee, you are at the heart of everything we create. Thank you for
-            weaving your commitment into every product we make.
-          </Text>
-          <TouchableOpacity style={styles.ctaButton} onPress={openWebsite} activeOpacity={0.85}>
-            <Text style={styles.ctaButtonText}>Learn more at uktextiles.in</Text>
-            <MaterialCommunityIcons name="open-in-new" size={14} color={Colors.primary} />
+          <TouchableOpacity
+            style={styles.siteBtn}
+            activeOpacity={0.8}
+            onPress={() => Linking.openURL(COMPANY_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Open uktextiles.in"
+          >
+            <MaterialCommunityIcons name="open-in-new" size={15} color={C.onPrimary} />
+            <Text style={styles.siteBtnText}>Visit uktextiles.in</Text>
           </TouchableOpacity>
-        </LinearGradient>
+        </View>
+
+        <Text style={styles.footer}>© UK Textiles · Tirupur, Tamil Nadu</Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgLight },
+const makeStyles = (C: Palette) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: C.bgLight },
+    content: { paddingBottom: 120 },
 
-  hero: {
-    height: SCREEN_W * 1.15,
-    minHeight: 420,
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  heroContent: {
-    alignItems: 'center',
-    gap: Spacing.md,
-    paddingHorizontal: Spacing.xl,
-  },
-  heroTitle: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '800',
-    textAlign: 'center',
-    lineHeight: 34,
-    marginTop: Spacing.sm,
-  },
-  heroTitleAccent: { color: Colors.secondaryContainer },
-  heroSubtitle: {
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 14,
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  heroLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: Spacing.sm,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.full,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.35)',
-    backgroundColor: 'rgba(255,255,255,0.12)',
-  },
-  heroLinkText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+    hero: { height: 240, justifyContent: 'flex-end' },
+    heroImg: { ...StyleSheet.absoluteFill, width: SCREEN_W, height: 240 },
+    heroBody: { padding: Spacing.lg, gap: 6 },
+    heroTitle: {
+      color: '#fff',
+      fontSize: 30,
+      fontWeight: '900',
+      // Negative tracking on large display type -letters read too far apart
+      // as they grow, so the bigger the size the tighter it should sit.
+      letterSpacing: -0.6,
+      marginTop: 4,
+    },
+    heroTag: { color: 'rgba(255,255,255,0.88)', fontSize: 13, lineHeight: 18, maxWidth: 300 },
 
-  statsStrip: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    backgroundColor: Colors.primary,
-    paddingVertical: Spacing.lg,
-  },
-  statItem: { width: '50%', alignItems: 'center', paddingVertical: Spacing.sm },
-  statValue: { color: '#fff', fontSize: 26, fontWeight: '800' },
-  statLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
+    factGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      padding: Spacing.base,
+      gap: Spacing.sm,
+    },
+    factCell: {
+      flexBasis: '47%',
+      flexGrow: 1,
+      backgroundColor: C.bgCard,
+      borderRadius: BorderRadius.lg,
+      padding: Spacing.md,
+      gap: 3,
+      ...ClayElevation.low,
+    },
+    factValue: { color: C.textPrimary, fontSize: 16, fontWeight: '900', letterSpacing: -0.2 },
+    factLabel: { color: C.textMuted, fontSize: 10.5, fontWeight: '700' },
 
-  section: { padding: Spacing.xl, gap: Spacing.base },
-  sectionMuted: { backgroundColor: Colors.bgSurfaceLow },
-  eyebrow: {
-    color: Colors.primaryLight,
-    fontSize: 11,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    letterSpacing: 1.5,
-  },
-  sectionTitle: {
-    color: Colors.textPrimary,
-    fontSize: 22,
-    fontWeight: '800',
-    marginTop: 4,
-    marginBottom: Spacing.sm,
-  },
-  bodyText: { color: Colors.textSecondary, fontSize: 14, lineHeight: 21 },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: Spacing.sm },
-  tag: {
-    backgroundColor: Colors.primaryFixed,
-    paddingHorizontal: Spacing.base,
-    paddingVertical: 6,
-    borderRadius: BorderRadius.full,
-  },
-  tagText: { color: Colors.onPrimaryContainer, fontSize: 11, fontWeight: '700' },
-  aboutImage: {
-    width: '100%',
-    aspectRatio: 4 / 3,
-    borderRadius: BorderRadius.xl,
-    marginTop: Spacing.sm,
-    ...ClayElevation.mid,
-  },
+    heading: {
+      color: C.textPrimary,
+      fontSize: 18,
+      fontWeight: '900',
+      letterSpacing: -0.3,
+      marginTop: Spacing.lg,
+      marginBottom: Spacing.sm,
+      marginHorizontal: Spacing.base,
+    },
+    sectionLabel: {
+      color: C.textMuted,
+      fontSize: 9.5,
+      fontWeight: '800',
+      letterSpacing: 0.6,
+      marginBottom: 8,
+    },
 
-  productCard: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    overflow: 'hidden',
-    ...ClayElevation.low,
-  },
-  productImage: { width: '100%', aspectRatio: 16 / 10 },
-  productBody: { padding: Spacing.base, gap: 4 },
-  productTitle: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800' },
-  productDesc: { color: Colors.textMuted, fontSize: 12.5, lineHeight: 18 },
+    card: {
+      backgroundColor: C.bgCard,
+      borderRadius: BorderRadius.xl,
+      padding: Spacing.base,
+      marginHorizontal: Spacing.base,
+      gap: 10,
+      ...ClayElevation.low,
+    },
+    body: { color: C.textSecondary, fontSize: 13, lineHeight: 20 },
 
-  infraSection: { paddingVertical: Spacing.xxxl, overflow: 'hidden' },
-  infraContent: { paddingHorizontal: Spacing.xl, gap: Spacing.base },
-  infraPoint: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.md,
-    padding: Spacing.base,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  infraIconWrap: {
-    width: 38, height: 38, borderRadius: BorderRadius.md,
-    alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(254,214,91,0.2)',
-  },
-  infraText: { flex: 1, color: 'rgba(255,255,255,0.92)', fontSize: 13, lineHeight: 19 },
+    productCard: {
+      backgroundColor: C.bgCard,
+      borderRadius: BorderRadius.xl,
+      marginHorizontal: Spacing.base,
+      marginBottom: Spacing.sm,
+      overflow: 'hidden',
+      ...ClayElevation.low,
+    },
+    productImg: { width: '100%', height: 140 },
+    productBody: { padding: Spacing.base, gap: 4 },
+    productTitle: { color: C.textPrimary, fontSize: 15, fontWeight: '900', letterSpacing: -0.2 },
+    productBlurb: { color: C.textMuted, fontSize: 12, lineHeight: 17 },
 
-  qualityRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm },
-  qualityText: { flex: 1, color: Colors.textSecondary, fontSize: 13.5, lineHeight: 19 },
-  certRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.sm, justifyContent: 'center' },
-  certChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: Spacing.base, paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.full,
-    borderWidth: 1, borderColor: Colors.primaryFixed,
-    backgroundColor: Colors.bgSurface,
-  },
-  certText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+    capRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+    capDivider: { borderTopWidth: 1, borderTopColor: C.outlineVariant, paddingTop: 12, marginTop: 2 },
+    capIcon: {
+      width: 34, height: 34, borderRadius: 10,
+      backgroundColor: C.badgeBlueBg,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    capTitle: { color: C.textPrimary, fontSize: 13.5, fontWeight: '800' },
+    capBody: { color: C.textMuted, fontSize: 12, lineHeight: 17, marginTop: 2 },
 
-  clientGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  clientChip: {
-    width: (SCREEN_W - Spacing.xl * 2 - Spacing.sm) / 2,
-    height: 56,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.bgCard,
-    borderWidth: 1,
-    borderColor: Colors.outlineVariant,
-    paddingHorizontal: Spacing.sm,
-  },
-  clientText: { color: Colors.textSecondary, fontSize: 11.5, fontWeight: '700', textAlign: 'center' },
+    address: { color: C.textSecondary, fontSize: 12.5, lineHeight: 19 },
+    contactRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+    contactBtn: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      backgroundColor: C.bgSurfaceLow,
+      borderRadius: BorderRadius.full,
+      paddingHorizontal: 12, paddingVertical: 8,
+    },
+    contactText: { color: C.textPrimary, fontSize: 12, fontWeight: '700' },
+    siteBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+      backgroundColor: C.primary,
+      borderRadius: BorderRadius.lg,
+      paddingVertical: 12,
+      marginTop: 2,
+    },
+    siteBtnText: { color: C.onPrimary, fontSize: 13, fontWeight: '800' },
 
-  cta: { padding: Spacing.xxl, alignItems: 'center', gap: Spacing.sm },
-  ctaTitle: { color: '#fff', fontSize: 19, fontWeight: '800', textAlign: 'center', marginTop: 4 },
-  ctaText: { color: 'rgba(255,255,255,0.8)', fontSize: 13, textAlign: 'center', lineHeight: 19 },
-  ctaButton: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    marginTop: Spacing.sm,
-    backgroundColor: '#fff',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.full,
-  },
-  ctaButtonText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
-});
+    footer: {
+      textAlign: 'center',
+      color: C.textMuted,
+      fontSize: 10.5,
+      marginTop: Spacing.lg,
+    },
+  });

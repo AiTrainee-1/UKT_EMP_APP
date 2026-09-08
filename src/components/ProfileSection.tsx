@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 
 interface Row {
@@ -17,6 +19,11 @@ interface ProfileSectionProps {
 }
 
 export function ProfileSection({ title, rows, icon, defaultOpen = false }: ProfileSectionProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const [open, setOpen] = useState(defaultOpen);
 
   return (
@@ -48,7 +55,7 @@ export function ProfileSection({ title, rows, icon, defaultOpen = false }: Profi
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   section: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,

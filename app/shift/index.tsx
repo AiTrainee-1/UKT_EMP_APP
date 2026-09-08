@@ -12,6 +12,8 @@ import { useCasualLeaves } from '../../src/hooks/useCasualLeave';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -19,7 +21,21 @@ const now = new Date();
 const month = now.getMonth() + 1;
 const year = now.getFullYear();
 
-export default function ShiftScreen() {
+/**
+ * `topInset` -who is responsible for clearing the status bar.
+ *
+ * This screen is mounted twice: as the My Shift TAB (no header, so the screen
+ * must inset itself or its first card sits under the status bar -that was the
+ * collapsed top border) and as the pushed /shift STACK route, which has a
+ * header already providing that space. Passing it in keeps one screen serving
+ * both without either double-insetting or none at all.
+ */
+export default function ShiftScreen({ topInset = false }: { topInset?: boolean }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user } = useAuth();
   const { data: shift, isLoading } = useShift(user?.employeeId ?? null);
   const { data: employee } = useEmployee(user?.employeeId ?? null);
@@ -27,6 +43,7 @@ export default function ShiftScreen() {
   const { data: approvedCL } = useCasualLeaves(user?.employeeId ?? null, { status: 'approved', month, year });
 
   const isProduction = employee?.employmentType === 'production';
+  const presentDays = stats?.dailyLogs.filter((d) => !!d.firstPunch).length ?? 0;
 
   const workingDays = useMemo(() => {
     if (!shift) return [];
@@ -38,7 +55,7 @@ export default function ShiftScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={['bottom']}>
+      <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
         <View style={styles.pad}>
           {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
         </View>
@@ -48,7 +65,7 @@ export default function ShiftScreen() {
 
   if (!shift) {
     return (
-      <SafeAreaView style={styles.safe} edges={['bottom']}>
+      <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
         <EmptyState
           icon="clock-outline"
           title="No shift assigned"
@@ -59,7 +76,7 @@ export default function ShiftScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
+    <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
       <StatusBar barStyle="light-content" backgroundColor="#006496" />
       <ScrollView contentContainerStyle={styles.pad} showsVerticalScrollIndicator={false}>
         {/* Main Card */}
@@ -137,12 +154,13 @@ export default function ShiftScreen() {
             <Text style={styles.cardTitle}>This Month's Summary</Text>
             <View style={styles.statsGrid}>
               {[
+                { label: 'Present', value: presentDays, icon: 'check-circle-outline', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
+                { label: 'Absent', value: stats.absentDays, icon: 'close-circle-outline', color: Colors.statusRed, bg: Colors.badgeRedBg },
                 { label: 'Late Count', value: stats.totalLateCount, icon: 'clock-alert-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
                 { label: 'Half Shifts', value: stats.halfShiftDays, icon: 'clock-time-four-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
                 { label: 'CL Approved', value: approvedCL?.length ?? 0, icon: 'calendar-check-outline', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-                { label: 'Absent', value: stats.absentDays, icon: 'close-circle-outline', color: Colors.statusRed, bg: Colors.badgeRedBg },
               ].map(({ label, value, icon, color, bg }) => (
-                <View key={label} style={styles.statBox}>
+                <View key={label} style={[styles.statBox, { width: '20%' }]}>
                   <View style={[styles.statIconWrap, { backgroundColor: bg }]}>
                     <MaterialCommunityIcons name={icon as any} size={16} color={color} />
                   </View>
@@ -231,7 +249,7 @@ export default function ShiftScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 40, gap: 12 },
 

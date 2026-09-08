@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
 export interface Employee {
@@ -28,6 +28,10 @@ export interface Employee {
   status: string;
   photoUrl?: string | null;
   locationTrackingEnabled?: boolean;
+  branchName?: string | null;
+  branchAddress?: string | null;
+  branchLat?: number | null;
+  branchLng?: number | null;
 }
 
 export function useEmployee(employeeId: number | null) {
@@ -41,23 +45,15 @@ export function useEmployee(employeeId: number | null) {
   });
 }
 
-export function useUpdateProfilePhoto(employeeId: number | null) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (localUri: string) => {
-      const form = new FormData();
-      const filename = localUri.split('/').pop() || 'photo.jpg';
-      const ext = filename.split('.').pop()?.toLowerCase();
-      const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
-      form.append('photo', { uri: localUri, name: filename, type: mime } as any);
-
-      const res = await api.patch('/my/profile', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      return res.data as Employee;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['employee', employeeId] });
-    },
-  });
-}
+// There is deliberately no "upload profile photo" mutation here.
+//
+// A photo the employee picks in the app is stored on that device only
+// (src/hooks/useLocalProfilePhoto.ts). The photo HR uploads in the HRMS
+// portal stays the official one — it's what ID cards, HR screens and
+// generated documents use — and the app must never overwrite it.
+//
+// The mutation that used to live here PATCHed `/my/profile`, an endpoint
+// that does not exist on the backend (the only `my/*` routes are
+// salary-slips, documents, push-token and resignation). Every attempt
+// therefore 404'd and surfaced as a generic "Failed to update photo"
+// toast — which is why picking a profile photo never appeared to work.

@@ -7,6 +7,8 @@ import { DocumentCategoryCard } from '../../src/components/DocumentCategoryCard'
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 
 interface CategoryGroup {
   category: string;
@@ -26,6 +28,11 @@ function groupByCategory(docs: EmployeeDocument[]): CategoryGroup[] {
 }
 
 export default function DocumentsScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { data, isLoading, refetch, isRefetching } = useDocuments();
   const groups = groupByCategory(data || []);
 
@@ -63,7 +70,7 @@ export default function DocumentsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 32 },
   center: { flex: 1 },

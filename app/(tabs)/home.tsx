@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   StatusBar,
   Alert,
+  Linking,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,33 +19,63 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useDashboard } from '../../src/hooks/useDashboard';
 import { useAppNotifications } from '../../src/hooks/useAppNotifications';
-import { useMobileHomeSummary, useLiveFeed } from '../../src/hooks/useHomeSummary';
+import { useLiveFeed } from '../../src/hooks/useHomeSummary';
 import { useIdCard } from '../../src/hooks/useIdCard';
 import { useEmployee } from '../../src/hooks/useEmployee';
-import { useGeoPunchStatus } from '../../src/hooks/useGeoAttendance';
+import { useAttendance } from '../../src/hooks/useAttendance';
+import { SlideToPunch } from '../../src/components/SlideToPunch';
+import { Reveal } from '../../src/components/Reveal';
 import { SideDrawer } from '../../src/components/SideDrawer';
-import { UKTLogo } from '../../src/components/UKTLogo';
+import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Avatar } from '../../src/components/ui/Avatar';
 import { LiveFeedTicker } from '../../src/components/LiveFeedTicker';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 
-const QUICK_ACTIONS = [
+// Ordered by how often an employee actually reaches for each one:
+//   1. Attendance group  -the daily-driver actions (punching, corrections, shift)
+//   2. Leave             -next most common request
+//   3. Permission        -short-duration variant of the above
+//   4. Everything else   -pay, identity/documents, then reference and account
+//                         screens, with Resignation deliberately last since
+//                         it's rare and consequential.
+const makeQuickActions = (Colors: Palette) => ([
+  // ── Attendance ──
   { label: 'Attendance', icon: 'calendar-check-outline', route: '/(tabs)/attendance' as const, color: Colors.primary },
   { label: 'Attendance Request', icon: 'map-marker-radius-outline', route: '/geo-punch' as const, color: '#0891b2' },
-  { label: 'Salary Slips', icon: 'cash-multiple', route: '/salary' as const, color: '#27ae60' },
-  { label: 'Apply Leave', icon: 'umbrella-outline', route: '/(tabs)/leave' as const, color: '#8e44ad' },
+  { label: 'Missing Punch', icon: 'fingerprint', route: '/missing-punch' as const, color: '#5e35b1' },
   { label: 'My Shift', icon: 'clock-outline', route: '/shift' as const, color: '#e67e22' },
+  { label: 'On-Duty', icon: 'briefcase-outline', route: '/on-duty' as const, color: '#815600' },
+  { label: 'Live Tracking', icon: 'crosshairs-gps', route: '/geo-tracking' as const, color: '#0891b2' },
+  // ── Leave ──
+  { label: 'Apply Leave', icon: 'umbrella-outline', route: '/(tabs)/leave' as const, color: '#8e44ad' },
+  // ── Permission ──
   { label: 'Permission', icon: 'hand-pointing-right', route: '/requests' as const, color: '#2980b9' },
+  // ── Everything else, by how often it's used ──
+  { label: 'Salary Slips', icon: 'cash-multiple', route: '/salary' as const, color: '#27ae60' },
+  { label: 'Advances', icon: 'bank-transfer', route: '/settlement' as const, color: '#7f8c8d' },
+  { label: 'Digital ID Card', icon: 'card-account-details-outline', route: '/idcard' as const, color: '#2c3e50' },
+  { label: 'My Documents', icon: 'folder-outline', route: '/documents' as const, color: '#00897b' },
   { label: 'Holidays', icon: 'flag-outline', route: '/holidays' as const, color: '#c0392b' },
-];
+  { label: 'Notifications', icon: 'bell-outline', route: '/(tabs)/notifications' as const, color: '#735c00' },
+  { label: 'Chat', icon: 'chat-outline', route: '/chat' as const, color: '#0984e3' },
+  { label: 'My Profile', icon: 'account-circle-outline', route: '/(tabs)/profile' as const, color: '#2c3e50' },
+  { label: 'About Company', icon: 'office-building-outline', route: '/company' as const, color: Colors.primary },
+  { label: 'Resignation', icon: 'file-sign', route: '/resignation/warning' as const, color: '#c62828' },
+]);
 
-const SUMMARY_ITEMS = (data: any) => [
+// Working / Present / Absent / Leave for the current month. All four come
+// from the same backend engine as the Attendance tab, so the two screens
+// always agree. Note these are *days elapsed so far this month*, not the
+// whole month — the month's remaining days aren't counted until they happen.
+const SUMMARY_ITEMS = (Colors: Palette, data: any) => [
+  { label: 'Working Days', value: data?.workingDays ?? 0, icon: 'calendar-month-outline', color: Colors.primary, bg: Colors.badgeBlueBg },
   { label: 'Present', value: data?.presentDays ?? 0, icon: 'check-circle', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
   { label: 'Absent', value: data?.absentDays ?? 0, icon: 'close-circle', color: Colors.statusRed, bg: Colors.badgeRedBg },
-  { label: 'Leave Bal.', value: data?.leaveBalance ?? 0, icon: 'umbrella', color: Colors.primary, bg: Colors.primaryFixed },
-  { label: 'Pending', value: data?.pendingRequests ?? 0, icon: 'clock', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
+  { label: 'Leave', value: data?.leaveDays ?? 0, icon: 'umbrella', color: Colors.primary, bg: Colors.badgeYellowBg },
 ];
 
 function getGreeting() {
@@ -56,6 +87,13 @@ function getGreeting() {
 
 /** Section title with gradient accent bar */
 function GradientSectionTitle({ title }: { title: string }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const sectionTitleSt = useThemedStyles(makeSectionTitleSt);
+  const QUICK_ACTIONS = makeQuickActions(Colors);
+
   return (
     <View style={sectionTitleSt.wrap}>
       <LinearGradient
@@ -69,7 +107,7 @@ function GradientSectionTitle({ title }: { title: string }) {
   );
 }
 
-const sectionTitleSt = StyleSheet.create({
+const makeSectionTitleSt = (Colors: Palette) => StyleSheet.create({
   wrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   bar: { width: 4, height: 18, borderRadius: 2 },
   text: {
@@ -81,6 +119,13 @@ const sectionTitleSt = StyleSheet.create({
 });
 
 function AttendanceDot({ status }: { status: string }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const sectionTitleSt = useThemedStyles(makeSectionTitleSt);
+  const QUICK_ACTIONS = makeQuickActions(Colors);
+
   const color =
     status === 'Present' ? Colors.clayGreen
     : status === 'Absent' ? Colors.clayRed
@@ -108,17 +153,38 @@ const dot = StyleSheet.create({
 });
 
 export default function HomeScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const sectionTitleSt = useThemedStyles(makeSectionTitleSt);
+  const QUICK_ACTIONS = makeQuickActions(Colors);
+
   const { user, logout } = useAuth();
+  const now = new Date();
   const { data, isLoading, refetch, isRefetching } = useDashboard(user?.employeeId ?? null);
   const { data: notifs } = useAppNotifications(user?.employeeId ?? null);
-  const { data: todaySummary } = useMobileHomeSummary();
   const { data: liveFeed } = useLiveFeed();
   const { data: idCard } = useIdCard(user?.employeeId ?? null);
   const { data: emp } = useEmployee(user?.employeeId ?? null);
-  const { data: geoStatus } = useGeoPunchStatus();
+  const { data: myAttendance } = useAttendance(user?.employeeId ?? null, now.getMonth() + 1, now.getFullYear());
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [showAllActions, setShowAllActions] = useState(false);
+  const [clock, setClock] = useState(new Date());
+  // The attendance group leads QUICK_ACTIONS, so the first six are exactly
+  // the daily-driver actions -a sensible default without a second list to
+  // keep in sync.
+  const visibleActions = showAllActions ? QUICK_ACTIONS : QUICK_ACTIONS.slice(0, 6);
   const today = format(new Date(), 'EEEE, d MMMM yyyy');
   const unreadCount = notifs?.filter(n => !n.isRead).length ?? 0;
+
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const myTodayPunches = myAttendance?.records.find(r => r.date === todayStr)?.punches ?? [];
 
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
@@ -139,27 +205,35 @@ export default function HomeScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* ─── App header ─── */}
+        {/* ─── App header ─────────────────────────────────────────────────
+            Single left-aligned text block between the two controls. The
+            previous version centred the greeting and clock but left-aligned
+            the date underneath, so nothing lined up; the greeting was also
+            squeezed between the buttons and truncated on longer names. */}
         <View style={styles.header}>
-          {/* Hamburger menu */}
-          <TouchableOpacity style={styles.menuBtn} onPress={() => setDrawerOpen(true)} activeOpacity={0.75}>
-            <MaterialCommunityIcons name="menu" size={22} color={Colors.primary} />
-          </TouchableOpacity>
-
-          {/* Logo + greeting */}
-          <View style={styles.headerMid}>
-            <UKTLogo size={34} />
-            <View>
-              <Text style={styles.greeting}>{getGreeting()},</Text>
-              <Text style={styles.name} numberOfLines={1}>{user?.name?.split(' ')[0] || 'Employee'}</Text>
-            </View>
+          <View style={styles.menuBtn}>
+            <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.primary} size={20} />
           </View>
 
-          {/* Notification bell */}
+          <View style={styles.headerText}>
+            <Text style={styles.greeting} numberOfLines={1}>
+              {getGreeting()}, {user?.name?.split(' ')[0] || 'Employee'}
+            </Text>
+            {/* Date and time on one line — the seconds ticked away in the old
+                header purely as decoration, drawing the eye every second. */}
+            <Text style={styles.headerMeta} numberOfLines={1}>
+              {today} · <Text style={styles.headerClock}>{format(clock, 'hh:mm a')}</Text>
+            </Text>
+          </View>
+
           <TouchableOpacity
             style={styles.notifBtn}
             onPress={() => router.push('/(tabs)/notifications')}
             activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel={
+              unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'
+            }
           >
             <MaterialCommunityIcons name="bell-outline" size={22} color={Colors.primary} />
             {unreadCount > 0 && (
@@ -169,67 +243,6 @@ export default function HomeScreen() {
             )}
           </TouchableOpacity>
         </View>
-
-        <Text style={styles.dateLabel}>{today}</Text>
-
-        {/* ─── Today at a Glance (company-wide) ─── */}
-        {todaySummary && (
-          <View style={styles.todayCard}>
-            <View style={styles.todayHeader}>
-              <MaterialCommunityIcons name="domain" size={14} color={Colors.primary} />
-              <Text style={styles.todayHeaderText}>Today at a Glance · Company-wide</Text>
-            </View>
-            <View style={styles.todayGrid}>
-              {[
-                { label: 'Present', value: todaySummary.presentToday, color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-                { label: 'Absent', value: todaySummary.absentToday, color: Colors.statusRed, bg: Colors.badgeRedBg },
-                { label: 'On Leave', value: todaySummary.onLeaveToday, color: Colors.primary, bg: Colors.badgeBlueBg },
-                { label: 'Pending', value: todaySummary.pendingRequestsCount, color: Colors.statusYellow, bg: Colors.badgeYellowBg },
-              ].map(({ label, value, color, bg }) => (
-                <View key={label} style={styles.todayItem}>
-                  <View style={[styles.todayDot, { backgroundColor: bg }]}>
-                    <Text style={[styles.todayNum, { color }]}>{value}</Text>
-                  </View>
-                  <Text style={styles.todayLabel}>{label}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* ─── Location Punch widget ─── */}
-        {(() => {
-          const onDutySession = geoStatus?.onDutySession;
-          const isOnDuty = onDutySession != null && (onDutySession.status === 'pending_hod' || onDutySession.status === 'pending_hr' || onDutySession.status === 'active');
-          return (
-            <TouchableOpacity style={styles.geoCard} onPress={() => router.push(isOnDuty ? '/on-duty' : '/geo-punch')} activeOpacity={0.85}>
-              <View style={styles.geoIconWrap}>
-                <MaterialCommunityIcons
-                  name={isOnDuty ? 'briefcase-outline' : 'map-marker-radius-outline'}
-                  size={20}
-                  color={isOnDuty ? Colors.tertiary : Colors.primary}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.geoTitle}>{isOnDuty ? 'On-Duty' : 'Attendance Request'}</Text>
-                <Text style={styles.geoSubtitle}>
-                  {onDutySession?.status === 'pending_hod'
-                    ? 'Awaiting Department Head approval'
-                    : onDutySession?.status === 'pending_hr'
-                      ? 'Awaiting HR approval'
-                      : onDutySession?.status === 'active'
-                        ? geoStatus?.nextPunchNumber == null
-                          ? 'Active — all 4 punches recorded'
-                          : `Active — next: Punch ${geoStatus?.nextPunchNumber} · ${geoStatus?.nextPunchType === 'IN' ? 'Check-In' : 'Check-Out'}`
-                        : geoStatus?.nextPunchNumber == null
-                          ? 'All 4 punches recorded for today'
-                          : `Next: Punch ${geoStatus?.nextPunchNumber} · ${geoStatus?.nextPunchType === 'IN' ? 'Check-In' : 'Check-Out'}`}
-                </Text>
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          );
-        })()}
 
         {/* ─── Summary banner ─── */}
         <LinearGradient
@@ -255,7 +268,7 @@ export default function HomeScreen() {
             </View>
           ) : (
             <View style={styles.bannerGrid}>
-              {SUMMARY_ITEMS(data).map(({ label, value, icon, bg }) => (
+              {SUMMARY_ITEMS(Colors, data).map(({ label, value, icon, bg }) => (
                 <View key={label} style={styles.bannerStat}>
                   <View style={[styles.bannerIcon, { backgroundColor: bg }]}>
                     <MaterialCommunityIcons name={icon as any} size={16} color={Colors.textPrimary} />
@@ -269,16 +282,39 @@ export default function HomeScreen() {
         </LinearGradient>
 
         {/* ─── Quick Actions ─── */}
+        {/* Eighteen tiles at once was a wall of colour with no hierarchy, so
+            the six highest-priority actions (the attendance group, per
+            QUICK_ACTIONS' ordering) show by default and the rest expand on
+            demand. Nothing is removed -just staged. */}
         <View style={styles.sectionRow}>
           <GradientSectionTitle title="Quick Actions" />
+          <TouchableOpacity
+            onPress={() => setShowAllActions(v => !v)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.sectionAction}
+            accessibilityRole="button"
+            accessibilityLabel={showAllActions ? 'Show fewer quick actions' : 'Show all quick actions'}
+          >
+            <Text style={styles.sectionActionText}>
+              {showAllActions ? 'Show less' : `All ${QUICK_ACTIONS.length}`}
+            </Text>
+            <MaterialCommunityIcons
+              name={showAllActions ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={Colors.primary}
+            />
+          </TouchableOpacity>
         </View>
         <View style={styles.actionsGrid}>
-          {QUICK_ACTIONS.map(({ label, icon, route, color }) => (
+          {visibleActions.map(({ label, icon, route, color }, i) => (
+            <Reveal key={label} index={i} offsetY={8} style={styles.actionBtnWrap}>
             <TouchableOpacity
-              key={label}
               style={styles.actionBtn}
               onPress={() => router.push(route as any)}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={label}
             >
               <LinearGradient
                 colors={[`${color}22`, `${color}0a`]}
@@ -288,16 +324,77 @@ export default function HomeScreen() {
               </LinearGradient>
               <Text style={styles.actionLabel}>{label}</Text>
             </TouchableOpacity>
+            </Reveal>
           ))}
         </View>
 
-        {/* ─── Live Attendance Ticker ─── */}
+        {/* ─── My Punches Today ─── */}
+        <View style={styles.sectionRow}>
+          <GradientSectionTitle title="My Punches Today" />
+        </View>
+        <View style={styles.myPunchesCard}>
+          {myTodayPunches.length === 0 ? (
+            <Text style={styles.myPunchesEmpty}>No punches recorded yet today</Text>
+          ) : (
+            <View style={styles.myPunchesRow}>
+              {myTodayPunches.map((p, i) => (
+                <View key={i} style={styles.myPunchChip}>
+                  <MaterialCommunityIcons
+                    name={p.type === 'IN' ? 'login' : 'logout'}
+                    size={14}
+                    color={p.type === 'IN' ? Colors.statusGreen : Colors.statusRed}
+                  />
+                  <Text style={[styles.myPunchTime, { color: p.type === 'IN' ? Colors.statusGreen : Colors.statusRed }]}>
+                    {p.time}
+                  </Text>
+                  <Text style={styles.myPunchType}>{p.type}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
+        {/* ─── Live Attendance Ticker (own punches only) ─── */}
         <View style={styles.sectionRow}>
           <GradientSectionTitle title="Live Attendance" />
         </View>
         <View style={{ marginBottom: 24 }}>
           <LiveFeedTicker items={liveFeed ?? []} />
         </View>
+
+        {/* ─── Company Location ─── */}
+        {emp?.branchLat != null && emp?.branchLng != null && (
+          <>
+            <View style={styles.sectionRow}>
+              <GradientSectionTitle title="Company Location" />
+            </View>
+            <TouchableOpacity
+              style={styles.locationCard}
+              activeOpacity={0.85}
+              onPress={() => {
+                const label = encodeURIComponent(emp?.branchName ?? 'Company');
+                const url = Platform.select({
+                  ios: `maps:0,0?q=${label}@${emp.branchLat},${emp.branchLng}`,
+                  default: `geo:${emp.branchLat},${emp.branchLng}?q=${emp.branchLat},${emp.branchLng}(${label})`,
+                });
+                if (url) Linking.openURL(url).catch(() => {});
+              }}
+            >
+              <View style={styles.locationIconWrap}>
+                <MaterialCommunityIcons name="map-marker" size={20} color={Colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.locationTitle}>{emp?.branchName ?? 'Your Branch'}</Text>
+                {!!emp?.branchAddress && (
+                  <Text style={styles.locationSubtitle} numberOfLines={2}>{emp.branchAddress}</Text>
+                )}
+              </View>
+              <View style={styles.locationOpenBtn}>
+                <MaterialCommunityIcons name="directions" size={16} color="#fff" />
+              </View>
+            </TouchableOpacity>
+          </>
+        )}
 
         {/* ─── Digital ID Card (compact) ─── */}
         {(idCard || emp) && (
@@ -381,6 +478,11 @@ export default function HomeScreen() {
         )}
       </ScrollView>
 
+      {/* Pinned above the tab bar, deliberately outside the ScrollView. Its
+          travel is horizontal, so it never competes with the vertical scroll
+          for the gesture, and it stays reachable without scrolling. */}
+      <SlideToPunch />
+
       {/* Side Drawer */}
       <SideDrawer
         visible={drawerOpen}
@@ -393,18 +495,19 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   scroll: { flex: 1 },
-  content: { paddingHorizontal: 16, paddingBottom: 32 },
+  // Bottom padding clears the pinned SwipeUpPunch bar, not just the tab bar.
+  content: { paddingHorizontal: 16, paddingBottom: 132 },
 
   // Header
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 12,
     marginTop: 12,
-    marginBottom: 4,
+    marginBottom: 18,
   },
   menuBtn: {
     width: 40, height: 40, borderRadius: 12,
@@ -415,9 +518,12 @@ const styles = StyleSheet.create({
       android: { elevation: 2 },
     }),
   },
-  headerMid: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  greeting: { color: Colors.textMuted, fontSize: 11 },
-  name: { color: Colors.textPrimary, fontSize: 15, fontWeight: '800', maxWidth: 150 },
+  // flex:1 + minWidth:0 lets the greeting truncate cleanly instead of
+  // pushing the bell off the row on long names.
+  headerText: { flex: 1, minWidth: 0, gap: 2 },
+  greeting: { color: Colors.textPrimary, fontSize: 18, fontWeight: '800', letterSpacing: -0.3 },
+  headerMeta: { color: Colors.textMuted, fontSize: 12 },
+  headerClock: { fontVariant: ['tabular-nums'], fontWeight: '600' },
   notifBtn: {
     width: 40, height: 40, borderRadius: 12,
     backgroundColor: Colors.bgCard,
@@ -436,56 +542,57 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   notifBadgeText: { color: Colors.secondary, fontSize: 9, fontWeight: '900' },
-  dateLabel: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    marginBottom: 16,
-  },
-
-  // Today at a Glance
-  todayCard: {
+  // My Punches Today
+  myPunchesCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
     padding: 14,
-    marginBottom: 16,
-    gap: 12,
+    marginBottom: 20,
     ...Platform.select({
       ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
       android: { elevation: 3 },
     }),
   },
-  todayHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  todayHeaderText: { color: Colors.textMuted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
-  todayGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  todayItem: { alignItems: 'center', gap: 6 },
-  todayDot: {
-    width: 44, height: 44, borderRadius: 22,
-    alignItems: 'center', justifyContent: 'center',
+  myPunchesEmpty: { color: Colors.textMuted, fontSize: 12, textAlign: 'center', paddingVertical: 6 },
+  myPunchesRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  myPunchChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.bgSurfaceLow,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
   },
-  todayNum: { fontSize: 15, fontWeight: '900' },
-  todayLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
+  myPunchTime: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  myPunchType: { color: Colors.textMuted, fontSize: 10, fontWeight: '700' },
 
-  // Location Punch widget
-  geoCard: {
+  // Company Location
+  locationCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
     padding: 14,
-    marginBottom: 16,
+    marginBottom: 20,
     ...Platform.select({
       ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
       android: { elevation: 3 },
     }),
   },
-  geoIconWrap: {
+  locationIconWrap: {
     width: 40, height: 40, borderRadius: 12,
-    backgroundColor: Colors.badgeBlueBg,
+    backgroundColor: Colors.primaryFixed,
     alignItems: 'center', justifyContent: 'center',
   },
-  geoTitle: { color: Colors.textPrimary, fontSize: 13, fontWeight: '800' },
-  geoSubtitle: { color: Colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2 },
+  locationTitle: { color: Colors.textPrimary, fontSize: 13, fontWeight: '800' },
+  locationSubtitle: { color: Colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2 },
+  locationOpenBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   // Digital ID Card mini
   idCardMini: { borderRadius: BorderRadius.xl, overflow: 'hidden', marginBottom: 24 },
@@ -526,13 +633,23 @@ const styles = StyleSheet.create({
   bannerInner: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
   bannerLabel: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600' },
   bannerGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  bannerStat: { alignItems: 'center', gap: 6 },
+  // flex:1 so all four stats get equal width -"Working Days" is a longer
+  // label than the others and would otherwise squeeze its neighbours.
+  bannerStat: { flex: 1, alignItems: 'center', gap: 6 },
   bannerIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   bannerNum: { color: '#fff', fontSize: 22, fontWeight: '900' },
-  bannerStatLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 10, fontWeight: '600' },
+  bannerStatLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 10, fontWeight: '600', textAlign: 'center' },
 
   // Section headers
-  sectionRow: { marginBottom: 12, marginTop: 4 },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  sectionAction: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  sectionActionText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
 
   // Actions grid
   actionsGrid: {
@@ -541,12 +658,19 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 24,
   },
+  // Width lives on the Reveal wrapper so the animated container is what the
+  // grid lays out; the button itself just fills it.
+  actionBtnWrap: { width: '30.5%' },
   actionBtn: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
     padding: 14,
     alignItems: 'center',
-    width: '30.5%',
+    width: '100%',
+    // Keeps every tile the same height regardless of whether its label
+    // wraps to two lines, so rows stay aligned.
+    minHeight: 92,
+    justifyContent: 'center',
     gap: 8,
     ...Platform.select({
       ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.09, shadowRadius: 10 },

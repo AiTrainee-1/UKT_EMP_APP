@@ -16,6 +16,8 @@ import { useSalarySlip, downloadAndShareSalarySlip } from '../../src/hooks/useSa
 import { Badge } from '../../src/components/ui/Badge';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing, ClayElevation } from '../../src/constants/theme';
 
 const MONTHS = [
@@ -24,6 +26,11 @@ const MONTHS = [
 ];
 
 function Row({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -33,6 +40,11 @@ function Row({ label, value, highlight }: { label: string; value: string; highli
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -46,6 +58,11 @@ function currency(n: number) {
 }
 
 export default function SalarySlipDetail() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: slip, isLoading } = useSalarySlip(Number(id));
   const [downloading, setDownloading] = useState(false);
@@ -156,7 +173,7 @@ export default function SalarySlipDetail() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: Spacing.base, paddingBottom: 40, gap: Spacing.md },
   headerCard: {

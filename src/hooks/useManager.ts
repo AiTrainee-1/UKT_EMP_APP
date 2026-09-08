@@ -20,6 +20,17 @@ export interface ManagerProfile {
   pendingMissingPunchCount?: number;
 }
 
+export interface TeamOutpassRequest {
+  id: number;
+  employeeName?: string;
+  employeeCode?: string;
+  employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
+  destination: string;
+  reason: string;
+  status: string;
+  createdAt?: string;
+}
+
 export interface TeamLeaveRequest {
   id: number;
   // Flat fields (if backend serializes directly)
@@ -112,6 +123,7 @@ export interface PendingRequests {
   casualLeaves: TeamCasualLeaveRequest[];
   attendanceRequests: TeamAttendanceRequest[];
   missingPunchRequests: TeamMissingPunchRequest[];
+  outpassRequests: TeamOutpassRequest[];
 }
 
 export function useManagerProfile(enabled = true) {
@@ -144,6 +156,7 @@ export function usePendingRequests(enabled = true) {
         casualLeaves: raw.casualLeaves ?? [],
         attendanceRequests: raw.attendanceRequests ?? [],
         missingPunchRequests: raw.missingPunchRequests ?? [],
+        outpassRequests: raw.outpassRequests ?? [],
       };
     },
     enabled,
@@ -236,6 +249,20 @@ export function useApproveAttendance() {
   return useMutation({
     mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
       const res = await api.patch(`/manager/attendance-requests/${id}/status`, { status, comment });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+  });
+}
+
+export function useApproveOutpass() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
+      const res = await api.patch(`/manager/outpass-requests/${id}/status`, { status, comment });
       return res.data;
     },
     onSuccess: () => {

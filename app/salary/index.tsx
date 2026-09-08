@@ -8,9 +8,16 @@ import { SalarySlipCard } from '../../src/components/SalarySlipCard';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { Spacing } from '../../src/constants/theme';
 
 export default function SalarySlipsScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { data, isLoading, refetch, isRefetching } = useSalarySlips();
 
   const sorted = [...(data || [])].sort(
@@ -47,7 +54,7 @@ export default function SalarySlipsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: Spacing.base, paddingBottom: Spacing.xxl },
   center: { flex: 1 },

@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 import { LiveFeedItem } from '../hooks/useHomeSummary';
 
@@ -10,6 +12,11 @@ interface Props {
 }
 
 function FeedChip({ item }: { item: LiveFeedItem }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const isIn = item.event === 'in';
   return (
     <View style={styles.chip}>
@@ -21,15 +28,20 @@ function FeedChip({ item }: { item: LiveFeedItem }) {
         />
       </View>
       <Text style={styles.chipText} numberOfLines={1}>
-        <Text style={styles.chipName}>{item.employeeName}</Text>
-        {' · '}{item.department}{' · '}
-        <Text style={styles.chipTime}>{isIn ? 'in' : 'out'} {item.time}</Text>
+        <Text style={styles.chipName}>{isIn ? 'Checked in' : 'Checked out'}</Text>
+        {' at '}
+        <Text style={styles.chipTime}>{item.time}</Text>
       </Text>
     </View>
   );
 }
 
 export function LiveFeedTicker({ items }: Props) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const translateX = useRef(new Animated.Value(0)).current;
   const [rowWidth, setRowWidth] = useState(0);
 
@@ -71,7 +83,7 @@ export function LiveFeedTicker({ items }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   wrap: {
     overflow: 'hidden',
     backgroundColor: Colors.bgCard,

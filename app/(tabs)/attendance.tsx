@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Platform,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,10 +19,16 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useAttendance } from '../../src/hooks/useAttendance';
 import { useShift } from '../../src/hooks/useShift';
 import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
+import { useCLEligibility } from '../../src/hooks/useCasualLeave';
 import { AttendanceCalendar } from '../../src/components/AttendanceCalendar';
+import { AttendanceTrendChart } from '../../src/components/AttendanceTrendChart';
 import { GeoPunchCard } from '../../src/components/GeoPunchCard';
+import { SideDrawer } from '../../src/components/SideDrawer';
+import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing } from '../../src/constants/theme';
 
 const MONTHS = [
@@ -29,19 +36,38 @@ const MONTHS = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-const SUMMARY = (data: any) => [
+// Six figures in a 3×2 grid. Working Days leads because it's the
+// denominator the rest are read against; Present/Absent are ordered to
+// match the Home screen's overview card so the two never look reversed.
+// Takes the palette explicitly -a plain builder, not a component, so it
+// cannot reach the theme through a hook.
+const SUMMARY = (Colors: Palette, data: any) => [
+  { label: 'Working Days', value: data?.workingDays ?? 0, color: Colors.primary, bg: Colors.badgeBlueBg, icon: 'calendar-month-outline' },
   { label: 'Present', value: data?.present ?? 0, color: Colors.statusGreen, bg: Colors.badgeGreenBg, icon: 'check-circle' },
   { label: 'Absent', value: data?.absent ?? 0, color: Colors.statusRed, bg: Colors.badgeRedBg, icon: 'close-circle' },
   { label: 'Late', value: data?.late ?? 0, color: Colors.statusYellow, bg: Colors.badgeYellowBg, icon: 'clock-alert' },
   { label: 'Half Shift', value: data?.halfShift ?? 0, color: Colors.statusYellow, bg: Colors.badgeYellowBg, icon: 'clock-time-four-outline' },
-  { label: 'On Leave', value: data?.onLeave ?? 0, color: Colors.primary, bg: Colors.primaryFixed, icon: 'umbrella' },
+  { label: 'Leave', value: data?.onLeave ?? 0, color: Colors.primary, bg: Colors.primaryFixed, icon: 'umbrella' },
 ];
 
 export default function AttendanceScreen() {
-  const { user } = useAuth();
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  const { user, logout } = useAuth();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: logout },
+    ]);
+  };
 
   const { data, isLoading, refetch, isRefetching } = useAttendance(
     user?.employeeId ?? null,
@@ -50,6 +76,7 @@ export default function AttendanceScreen() {
   );
   const { data: shift } = useShift(user?.employeeId ?? null);
   const { data: syncStatus } = useAttendanceSyncStatus();
+  const { data: clEligibility } = useCLEligibility(user?.employeeId ?? null);
 
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear((y) => y - 1); }
@@ -77,9 +104,12 @@ export default function AttendanceScreen() {
       >
         <View style={styles.headerDeco} />
         <View style={styles.headerContent}>
-          <View>
-            <Text style={styles.title}>Attendance</Text>
-            <Text style={styles.subtitle}>Track your daily attendance</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
+            <View>
+              <Text style={styles.title}>Attendance</Text>
+              <Text style={styles.subtitle}>Track your daily attendance</Text>
+            </View>
           </View>
           <View style={styles.monthPill}>
             <TouchableOpacity onPress={prevMonth} style={styles.navBtn}>
@@ -132,7 +162,7 @@ export default function AttendanceScreen() {
           <SkeletonCard lines={2} />
         ) : (
           <View style={styles.summaryRow}>
-            {SUMMARY(data).map(({ label, value, color, bg, icon }) => (
+            {SUMMARY(Colors, data).map(({ label, value, color, bg, icon }) => (
               <View key={label} style={styles.summaryItem}>
                 <View style={[styles.summaryIcon, { backgroundColor: bg }]}>
                   <MaterialCommunityIcons name={icon as any} size={18} color={color} />
@@ -141,6 +171,48 @@ export default function AttendanceScreen() {
                 <Text style={styles.summaryLabel}>{label}</Text>
               </View>
             ))}
+          </View>
+        )}
+
+        {/* Monthly trend chart */}
+        {!isLoading && (
+          <View style={styles.trendCard}>
+            <Text style={styles.trendTitle}>Monthly Trend</Text>
+            <AttendanceTrendChart records={data?.records ?? []} />
+          </View>
+        )}
+
+        {/* Casual Leave eligibility */}
+        {clEligibility && (
+          <View style={styles.clCard}>
+            <View style={styles.clHeader}>
+              <MaterialCommunityIcons name="calendar-heart" size={16} color={Colors.primary} />
+              <Text style={styles.clTitle}>Casual Leave</Text>
+              <View style={[styles.clBadge, clEligibility.eligible ? styles.clBadgeOk : styles.clBadgeNo]}>
+                <Text style={[styles.clBadgeText, clEligibility.eligible ? styles.clBadgeTextOk : styles.clBadgeTextNo]}>
+                  {clEligibility.eligible ? 'Eligible' : 'Not Eligible'}
+                </Text>
+              </View>
+            </View>
+            {!clEligibility.eligible && !!clEligibility.reason && (
+              <Text style={styles.clReason}>{clEligibility.reason}</Text>
+            )}
+            {clEligibility.yearlyEntitlement != null && (
+              <View style={styles.clStatsRow}>
+                <View style={styles.clStat}>
+                  <Text style={styles.clStatNum}>{clEligibility.yearlyEntitlement}</Text>
+                  <Text style={styles.clStatLabel}>Yearly Entitlement</Text>
+                </View>
+                <View style={styles.clStat}>
+                  <Text style={[styles.clStatNum, { color: Colors.statusYellow }]}>{clEligibility.usedThisYear}</Text>
+                  <Text style={styles.clStatLabel}>Used</Text>
+                </View>
+                <View style={styles.clStat}>
+                  <Text style={[styles.clStatNum, { color: Colors.statusGreen }]}>{clEligibility.remainingThisYear}</Text>
+                  <Text style={styles.clStatLabel}>Remaining</Text>
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -169,11 +241,18 @@ export default function AttendanceScreen() {
           ))}
         </View>
       </ScrollView>
+
+      <SideDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        user={user}
+        onLogout={handleLogout}
+      />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   header: {
     paddingHorizontal: 20,
@@ -248,6 +327,7 @@ const styles = StyleSheet.create({
   summaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    rowGap: 18,          // breathing room between the two rows of the 3×2 grid
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
     paddingVertical: 18,
@@ -257,7 +337,9 @@ const styles = StyleSheet.create({
       android: { elevation: 4 },
     }),
   },
-  summaryItem: { alignItems: 'center', gap: 6, width: '20%' },
+  // 33.33% = three per row, so the six stats form an even 3×2 grid.
+  // (At the previous 20% the sixth stat wrapped to a row of its own.)
+  summaryItem: { alignItems: 'center', gap: 6, width: '33.33%' },
   summaryIcon: {
     width: 36,
     height: 36,
@@ -266,7 +348,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   summaryNum: { fontSize: 22, fontWeight: '900' },
-  summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
+  summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
 
   calendarCard: {
     backgroundColor: Colors.bgCard,
@@ -277,6 +359,43 @@ const styles = StyleSheet.create({
       android: { elevation: 4 },
     }),
   },
+
+  trendCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    padding: 16,
+    marginBottom: 14,
+    ...Platform.select({
+      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
+      android: { elevation: 3 },
+    }),
+  },
+  trendTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800', marginBottom: 10 },
+
+  clCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    padding: 16,
+    marginBottom: 14,
+    gap: 8,
+    ...Platform.select({
+      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
+      android: { elevation: 3 },
+    }),
+  },
+  clHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  clTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800', flex: 1 },
+  clBadge: { borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  clBadgeOk: { backgroundColor: Colors.badgeGreenBg },
+  clBadgeNo: { backgroundColor: Colors.badgeRedBg },
+  clBadgeText: { fontSize: 10, fontWeight: '800' },
+  clBadgeTextOk: { color: Colors.badgeGreenText },
+  clBadgeTextNo: { color: Colors.badgeRedText },
+  clReason: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
+  clStatsRow: { flexDirection: 'row', marginTop: 4 },
+  clStat: { flex: 1, alignItems: 'center', gap: 2 },
+  clStatNum: { color: Colors.textPrimary, fontSize: 18, fontWeight: '900' },
+  clStatLabel: { color: Colors.textMuted, fontSize: 9.5, fontWeight: '600', textAlign: 'center' },
 
   legend: {
     flexDirection: 'row',

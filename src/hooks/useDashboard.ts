@@ -4,7 +4,11 @@ import api from '../lib/api';
 import { useLeaveBalances, useLeaveRequests } from './useLeave';
 import { usePermissions } from './useRequests';
 
-// Dashboard endpoint now returns presentDays, absentDays, leaveBalance, pendingRequests.
+// Dashboard endpoint returns workingDays, presentDays, halfShiftDays, lateDays,
+// absentDays, leaveDays, leaveBalance and pendingRequests. The attendance
+// figures come from the same engine as the Attendance tab and HRMS payroll
+// (backend attendance_final.compute_month_records), so the Home card can
+// never disagree with the Attendance tab for the same month.
 // We supplement leaveBalance from the leave-balances API as a fallback.
 export function useDashboard(employeeId: number | null) {
   const dashboard = useQuery({
@@ -12,11 +16,14 @@ export function useDashboard(employeeId: number | null) {
     queryFn: async () => {
       const res = await api.get('/dashboard/employee-summary', { params: { employeeId } });
       return res.data as {
+        workingDays: number;
         presentDays: number;
+        halfShiftDays: number;
+        lateDays: number;
         absentDays: number;
+        leaveDays: number;
         leaveBalance: number;
         pendingRequests: number;
-        leaveDays?: number;
         recentAttendance?: Array<{ date: string; status: string }>;
         upcomingHolidays?: Array<{ name: string; date: string; type: string }>;
       };
@@ -44,8 +51,12 @@ export function useDashboard(employeeId: number | null) {
         (permissions.data?.items?.filter((r) => r.status === 'Pending').length ?? 0);
 
     return {
+      workingDays: d.workingDays ?? 0,
       presentDays: d.presentDays ?? 0,
+      halfShiftDays: d.halfShiftDays ?? 0,
+      lateDays: d.lateDays ?? 0,
       absentDays: d.absentDays ?? 0,
+      leaveDays: d.leaveDays ?? 0,
       leaveBalance,
       pendingRequests,
       recentAttendance: d.recentAttendance ?? [],

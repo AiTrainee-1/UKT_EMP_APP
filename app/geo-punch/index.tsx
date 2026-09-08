@@ -9,6 +9,8 @@ import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
 import {
   useGeoPunchStatus, useGeoPunchPrecheck, useGeoPunch, GeoPunchPrecheckResult,
@@ -19,6 +21,11 @@ type Step = 'permission' | 'locate' | 'review' | 'done';
 const STEPS: Step[] = ['permission', 'locate', 'review'];
 
 function StepDots({ labels, current }: { labels: string[]; current: number }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={dotStyles.row}>
       {labels.map((label, i) => (
@@ -38,6 +45,11 @@ function StepDots({ labels, current }: { labels: string[]; current: number }) {
 }
 
 export default function GeoPunchScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useGeoPunchStatus();
   const precheckMutation = useGeoPunchPrecheck();
   const punchMutation = useGeoPunch();
@@ -151,14 +163,10 @@ export default function GeoPunchScreen() {
             </Text>
             <Button title="Go to On-Duty" onPress={() => router.push('/on-duty')} style={{ marginTop: Spacing.base }} />
           </View>
-        ) : nextNum == null ? (
-          <View style={[styles.doneBanner]}>
-            <MaterialCommunityIcons name="check-circle-outline" size={16} color={Colors.statusGreen} />
-            <Text style={styles.doneBannerText}>
-              All 4 punches for today are already recorded — there's no punch slot left to attach a new request to.
-            </Text>
-          </View>
         ) : (
+          /* No "day is full" branch: Office Geo Punch is uncapped, so
+             nextPunchNumber is always a real number and the only thing that
+             can turn a punch away is being outside the branch radius. */
           <>
             <View style={styles.stepHeader}>
               <Text style={styles.introText}>
@@ -267,7 +275,7 @@ export default function GeoPunchScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   content: { padding: 16, gap: 16, paddingBottom: 32 },
 

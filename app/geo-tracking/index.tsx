@@ -15,6 +15,8 @@ import { Button } from '../../src/components/ui/Button';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
 
 function timeAgo(d: Date | null): string {
@@ -27,6 +29,11 @@ function timeAgo(d: Date | null): string {
 }
 
 export default function GeoTrackingScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user } = useAuth();
   const { data: emp, isLoading, refetch } = useEmployee(user?.employeeId ?? null);
   const enabled = !!emp?.locationTrackingEnabled;
@@ -165,7 +172,7 @@ export default function GeoTrackingScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   content: { padding: 16, gap: 16 },
 

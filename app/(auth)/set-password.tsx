@@ -4,8 +4,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   TouchableOpacity,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -14,10 +12,13 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { KeyboardAvoider, useKeyboardVisible } from '../../src/components/KeyboardAvoider';
 import { Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { setPasswordRequest } from '../../src/hooks/useAuth';
 
 const schema = z
@@ -34,6 +35,12 @@ const schema = z
 type FormData = z.infer<typeof schema>;
 
 export default function SetPasswordScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  const keyboardVisible = useKeyboardVisible();
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
     message: '',
@@ -68,12 +75,9 @@ export default function SetPasswordScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardAvoider style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={styles.container}
+          contentContainerStyle={[styles.container, keyboardVisible && styles.containerKeyboard]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -89,7 +93,7 @@ export default function SetPasswordScreen() {
               render={({ field: { onChange, value, onBlur } }) => (
                 <Input
                   label="Employee Code"
-                  placeholder="e.g. 30020"
+                  placeholder="e.g. 345678"
                   keyboardType="numeric"
                   value={value}
                   onChangeText={onChange}
@@ -149,14 +153,14 @@ export default function SetPasswordScreen() {
             </Text>
           </TouchableOpacity>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoider>
 
       <Toast {...toast} />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: Colors.bgLight,
@@ -167,6 +171,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 24,
   },
+  // See login.tsx: centring puts fields out of reach once the keyboard
+  // shrinks the viewport, so top-align while it's open.
+  containerKeyboard: { justifyContent: 'flex-start', paddingBottom: 32 },
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: 20,

@@ -2,6 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 
 interface ToastProps {
   message: string;
@@ -9,13 +11,19 @@ interface ToastProps {
   visible: boolean;
 }
 
-const typeConfig = {
+const makeTypeConfig = (Colors: Palette) => ({
   success: { bg: '#e8f5e9', border: '#a5d6a7', text: '#1b5e20', icon: 'check-circle-outline' as const, iconColor: '#2e7d32' },
   error:   { bg: '#ffebee', border: '#ef9a9a', text: '#b71c1c', icon: 'alert-circle-outline' as const, iconColor: '#c62828' },
   info:    { bg: Colors.primaryFixed, border: Colors.primaryLight, text: Colors.onPrimaryContainer, icon: 'information-outline' as const, iconColor: Colors.primary },
-};
+});
 
 export function Toast({ message, type = 'success', visible }: ToastProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const typeConfig = makeTypeConfig(Colors);
+
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
 
@@ -49,7 +57,7 @@ export function Toast({ message, type = 'success', visible }: ToastProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   toast: {
     position: 'absolute',
     bottom: 100,

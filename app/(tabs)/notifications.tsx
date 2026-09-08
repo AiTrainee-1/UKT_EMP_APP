@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Platform,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -16,10 +17,16 @@ import { MotiView } from 'moti';
 import { formatDistanceToNow } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
-import { useAppNotifications, useMarkNotificationRead, AppNotification } from '../../src/hooks/useAppNotifications';
+import {
+  useAppNotifications, useMarkNotificationRead, useMarkAllNotificationsRead, AppNotification,
+} from '../../src/hooks/useAppNotifications';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
+import { SideDrawer } from '../../src/components/SideDrawer';
+import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 function timeAgo(dateStr: string) {
@@ -30,19 +37,42 @@ function timeAgo(dateStr: string) {
   }
 }
 
+// The backend Notification model has no "title" field at all (only
+// type + free-text message) — every notification card previously rendered
+// a blank headline because it read a `title` the API never sends. Titles
+// are derived here from the real `type` values the backend actually
+// creates (grep-confirmed against every Notification.objects.create() call
+// site): leave, casual_leave, permission, on_duty, missing_punch,
+// attendance, employee_request, resignation, general (default).
+const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: string; color: string; title: string }> => ({
+  leave: { icon: 'umbrella', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Leave Update' },
+  casual_leave: { icon: 'calendar-heart', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Casual Leave Update' },
+  permission: { icon: 'hand-wave', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Permission Update' },
+  on_duty: { icon: 'briefcase-check-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'On-Duty Update' },
+  missing_punch: { icon: 'fingerprint', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Missing Punch Update' },
+  attendance: { icon: 'calendar-check-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Attendance Update' },
+  employee_request: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
+  resignation: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Update' },
+  general: { icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' },
+});
+const makeDefaultNotifMeta = (Colors: Palette) => ({ icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' });
+
+/** Takes the palette explicitly: it is a plain helper, not a component, so
+ *  it cannot read the theme from a hook -and the maps it looks into are now
+ *  built per-theme rather than frozen at import. */
+function notifMeta(Colors: Palette, type?: string) {
+  return makeNotifMeta(Colors)[type ?? ''] ?? makeDefaultNotifMeta(Colors);
+}
+
 function NotifIcon({ type }: { type?: string }) {
-  const map: Record<string, { icon: string; bg: string; color: string }> = {
-    leave: { icon: 'umbrella', bg: Colors.badgeBlueBg, color: Colors.primary },
-    permission: { icon: 'hand-wave', bg: Colors.badgeBlueBg, color: Colors.primary },
-    approval: { icon: 'check-circle', bg: Colors.badgeGreenBg, color: Colors.statusGreen },
-    rejection: { icon: 'close-circle', bg: Colors.badgeRedBg, color: Colors.statusRed },
-    resignation: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed },
-    salary: { icon: 'cash', bg: Colors.secondaryFixed, color: Colors.secondary },
-    reminder: { icon: 'bell-ring', bg: Colors.badgeYellowBg, color: Colors.statusYellow },
-    announcement: { icon: 'bullhorn-outline', bg: Colors.secondaryFixed, color: Colors.secondary },
-    geo_punch: { icon: 'map-marker-radius', bg: Colors.badgeBlueBg, color: Colors.primary },
-  };
-  const cfg = map[type ?? ''] ?? { icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary };
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const NOTIF_META = makeNotifMeta(Colors);
+  const DEFAULT_NOTIF_META = makeDefaultNotifMeta(Colors);
+
+  const cfg = notifMeta(Colors, type);
   return (
     <View style={[styles.notifIcon, { backgroundColor: cfg.bg }]}>
       <MaterialCommunityIcons name={cfg.icon as any} size={20} color={cfg.color} />
@@ -51,11 +81,27 @@ function NotifIcon({ type }: { type?: string }) {
 }
 
 export default function NotificationsScreen() {
-  const { user } = useAuth();
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const NOTIF_META = makeNotifMeta(Colors);
+  const DEFAULT_NOTIF_META = makeDefaultNotifMeta(Colors);
+
+  const { user, logout } = useAuth();
   const { data, isLoading, refetch, isRefetching } = useAppNotifications(user?.employeeId ?? null);
   const markRead = useMarkNotificationRead();
+  const markAllRead = useMarkAllNotificationsRead();
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const unreadCount = data?.filter(n => !n.isRead).length ?? 0;
+
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: logout },
+    ]);
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -70,12 +116,23 @@ export default function NotificationsScreen() {
       >
         <View style={styles.headerDeco} />
         <View style={styles.headerContent}>
-          <View>
+          <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
+          <View style={{ flex: 1, marginLeft: 12 }}>
             <Text style={styles.headerTitle}>Notifications</Text>
             <Text style={styles.headerSub}>
               {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
             </Text>
           </View>
+          {unreadCount > 0 && (
+            <TouchableOpacity
+              style={styles.markAllBtn}
+              onPress={() => markAllRead.mutate()}
+              disabled={markAllRead.isPending}
+            >
+              <MaterialCommunityIcons name="check-all" size={14} color="#fff" />
+              <Text style={styles.markAllBtnText}>Mark all read</Text>
+            </TouchableOpacity>
+          )}
           <View style={styles.bellWrap}>
             <MaterialCommunityIcons name="bell" size={24} color="#fff" />
             {unreadCount > 0 && (
@@ -121,7 +178,7 @@ export default function NotificationsScreen() {
               <NotifIcon type={item.type} />
               <View style={styles.cardBody}>
                 <Text style={[styles.cardTitle, item.isRead && styles.cardTitleRead]}>
-                  {item.title}
+                  {notifMeta(Colors, item.type).title}
                 </Text>
                 <Text style={styles.cardMsg} numberOfLines={2}>{item.message}</Text>
                 <Text style={styles.cardTime}>{timeAgo(item.createdAt)}</Text>
@@ -131,11 +188,19 @@ export default function NotificationsScreen() {
           </MotiView>
         )}
       />
+
+      <SideDrawer
+        visible={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        user={user}
+        onLogout={handleLogout}
+        notificationCount={unreadCount}
+      />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
   header: {
@@ -161,6 +226,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   bellBadgeText: { color: Colors.secondary, fontSize: 9, fontWeight: '900' },
+  markAllBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 10, paddingVertical: 6,
+    marginRight: 10,
+  },
+  markAllBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
   list: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 32, gap: 8 },
   listCenter: { flex: 1 },

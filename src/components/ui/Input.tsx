@@ -11,6 +11,8 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 
 interface InputProps extends TextInputProps {
@@ -24,6 +26,9 @@ interface InputProps extends TextInputProps {
 
 export const Input = forwardRef<TextInput, InputProps>(
   ({ label, error, containerStyle, rightIcon, isPassword, leftIconName, value, ...props }, ref) => {
+    // `Colors` shadows the module import for this component's body.
+    const { C: Colors, isDark } = useTheme();
+    const styles = useThemedStyles(makeStyles);
     const [focused, setFocused] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
@@ -49,6 +54,9 @@ export const Input = forwardRef<TextInput, InputProps>(
             ref={ref}
             style={[styles.input, leftIconName && styles.inputNoLeft]}
             placeholderTextColor={Colors.outline}
+            selectionColor={Colors.primary}
+            cursorColor={Colors.primary}
+            keyboardAppearance={isDark ? 'dark' : 'light'}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             secureTextEntry={isPassword && !showPassword}
@@ -76,7 +84,7 @@ export const Input = forwardRef<TextInput, InputProps>(
 
 Input.displayName = 'Input';
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     marginBottom: 14,
   },
@@ -97,7 +105,7 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
+        shadowColor: Colors.primary,
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.06,
         shadowRadius: 6,
@@ -110,7 +118,10 @@ const styles = StyleSheet.create({
   // dropping focus (keyboard opens then instantly closes).
   inputWrapperFocused: {
     borderColor: Colors.primary,
-    backgroundColor: '#fff',
+    // Not '#fff': in dark mode that puts near-white typed text on a white
+    // field. bgCard is the theme's "raised surface", which is white in light
+    // mode and reads correctly in dark.
+    backgroundColor: Colors.bgCard,
     ...Platform.select({
       ios: {
         shadowOpacity: 0.12,

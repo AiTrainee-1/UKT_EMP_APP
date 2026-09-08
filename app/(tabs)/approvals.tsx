@@ -25,12 +25,14 @@ import {
   useApproveCasualLeave,
   useApproveAttendance,
   useApproveMissingPunch,
+  useApproveOutpass,
   TeamLeaveRequest,
   TeamPermissionRequest,
   TeamResignationRequest,
   TeamCasualLeaveRequest,
   TeamAttendanceRequest,
   TeamMissingPunchRequest,
+  TeamOutpassRequest,
 } from '../../src/hooks/useManager';
 import { PUNCH_SLOT_LABEL } from '../../src/hooks/useRequests';
 import { useManagerProfile } from '../../src/hooks/useManager';
@@ -41,17 +43,20 @@ import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
-type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch';
-type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest;
+type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch' | 'outpass';
+type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest | TeamOutpassRequest;
 type SelectedRequest =
   | { kind: 'leave'; item: TeamLeaveRequest }
   | { kind: 'permission'; item: TeamPermissionRequest }
   | { kind: 'resignation'; item: TeamResignationRequest }
   | { kind: 'casualLeave'; item: TeamCasualLeaveRequest }
   | { kind: 'attendance'; item: TeamAttendanceRequest }
-  | { kind: 'missingPunch'; item: TeamMissingPunchRequest };
+  | { kind: 'missingPunch'; item: TeamMissingPunchRequest }
+  | { kind: 'outpass'; item: TeamOutpassRequest };
 
 function empName(item: GenericItem): string {
   return item.employeeName || item.employee?.name || '—';
@@ -79,14 +84,15 @@ function fmtDate(str: string | null | undefined): string {
   try { return format(new Date(str), 'dd MMM yyyy'); } catch { return str; }
 }
 
-const TAB_META: Record<Tab, { label: string; icon: string; iconOutline: string; color?: string; bg?: string }> = {
+const makeTabMeta = (Colors: Palette): Record<Tab, { label: string; icon: string; iconOutline: string; color?: string; bg?: string }> => ({
   leave: { label: 'Leave', icon: 'umbrella', iconOutline: 'umbrella-outline' },
   permission: { label: 'Permission', icon: 'hand-wave', iconOutline: 'hand-wave-outline' },
   resignation: { label: 'Resignations', icon: 'file-sign', iconOutline: 'file-outline', color: Colors.badgeRedText, bg: Colors.badgeRedBg },
   casualLeave: { label: 'Casual Leave', icon: 'calendar-star', iconOutline: 'calendar-star', color: Colors.secondary, bg: Colors.secondaryFixed },
   attendance: { label: 'Attendance', icon: 'calendar-edit', iconOutline: 'calendar-edit', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
   missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: '#5e35b1', bg: '#ede7f6' },
-};
+  outpass: { label: 'Outpass', icon: 'exit-run', iconOutline: 'exit-run', color: Colors.primary, bg: Colors.primaryFixed },
+});
 
 function itemTypeLabel(tab: Tab, item: GenericItem): string {
   if (tab === 'leave') return leaveType(item as TeamLeaveRequest);
@@ -100,6 +106,7 @@ function itemTypeLabel(tab: Tab, item: GenericItem): string {
     const p = item as TeamMissingPunchRequest;
     return p.punchSlot ? PUNCH_SLOT_LABEL[p.punchSlot] : (p.punchType === 'IN' ? 'Check-In' : 'Check-Out');
   }
+  if (tab === 'outpass') return (item as TeamOutpassRequest).destination;
   return '—';
 }
 
@@ -125,10 +132,17 @@ function itemDateLabel(tab: Tab, item: GenericItem): string {
     const d = (item as any).date;
     return d ? format(new Date(d + 'T00:00:00'), 'dd MMM yyyy') : '—';
   }
+  if (tab === 'outpass') return appliedOn(item);
   return '—';
 }
 
 export default function ApprovalsScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const TAB_META = makeTabMeta(Colors);
+
   const { user } = useAuth();
   const { data: manager } = useManagerProfile(!!user);
 
@@ -146,11 +160,16 @@ export default function ApprovalsScreen() {
   const approveCasualLeave = useApproveCasualLeave();
   const approveAttendance = useApproveAttendance();
   const approveMissingPunch = useApproveMissingPunch();
+  const approveOutpass = useApproveOutpass();
 
   const canApproveResignations = manager?.canApproveResignations ?? false;
   const canApproveCasualLeave = manager?.canApproveCasualLeave ?? false;
   const canApproveAttendance = manager?.canApproveAttendance ?? false;
   const canApproveMissingPunch = manager?.canApproveMissingPunch ?? false;
+  // Outpass reuses the Permissions capability -see
+  // backend/api/manager_views.py::manager_update_outpass_status, which
+  // deliberately shares can_approve_permissions rather than a new flag.
+  const canApproveOutpass = manager?.canApprovePermissions ?? false;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
@@ -170,6 +189,8 @@ export default function ApprovalsScreen() {
         await approveCasualLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'missingPunch') {
         await approveMissingPunch.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+      } else if (selected.kind === 'outpass') {
+        await approveOutpass.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else {
         await approveAttendance.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       }
@@ -204,7 +225,8 @@ export default function ApprovalsScreen() {
   const selectFor = (t: Tab, item: any): SelectedRequest => ({ kind: t, item } as SelectedRequest);
 
   const isPending = approveLeave.isPending || approvePermission.isPending || resignationAction.isPending
-    || approveCasualLeave.isPending || approveAttendance.isPending || approveMissingPunch.isPending;
+    || approveCasualLeave.isPending || approveAttendance.isPending || approveMissingPunch.isPending
+    || approveOutpass.isPending;
 
   const leaveList = data?.leaveRequests ?? [];
   const permList = data?.permissionRequests ?? [];
@@ -212,6 +234,7 @@ export default function ApprovalsScreen() {
   const casualLeaveList = data?.casualLeaves ?? [];
   const attendanceList = data?.attendanceRequests ?? [];
   const missingPunchList = data?.missingPunchRequests ?? [];
+  const outpassList = data?.outpassRequests ?? [];
 
   const TABS: { key: Tab; icon: string; iconOutline: string; label: string; count: number }[] = [
     { key: 'leave', ...TAB_META.leave, count: leaveList.length },
@@ -225,6 +248,9 @@ export default function ApprovalsScreen() {
     ...(canApproveMissingPunch
       ? [{ key: 'missingPunch' as Tab, ...TAB_META.missingPunch, count: missingPunchList.length }]
       : []),
+    ...(canApproveOutpass
+      ? [{ key: 'outpass' as Tab, ...TAB_META.outpass, count: outpassList.length }]
+      : []),
     ...(canApproveResignations
       ? [{ key: 'resignation' as Tab, ...TAB_META.resignation, count: resignList.length }]
       : []),
@@ -236,6 +262,7 @@ export default function ApprovalsScreen() {
     : tab === 'casualLeave' ? casualLeaveList
     : tab === 'attendance' ? attendanceList
     : tab === 'missingPunch' ? missingPunchList
+    : tab === 'outpass' ? outpassList
     : resignList;
 
   return (
@@ -431,7 +458,7 @@ export default function ApprovalsScreen() {
 
       {/* Detail Sheet — Leave / Permission / Casual Leave / Attendance / Missing Punch */}
       <BottomSheet
-        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance', 'missingPunch'].includes(selected.kind)}
+        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance', 'missingPunch', 'outpass'].includes(selected.kind)}
         onClose={closeSheet}
         title={selected && selected.kind !== 'resignation' ? `${TAB_META[selected.kind].label} Request` : ''}
       >
@@ -448,9 +475,11 @@ export default function ApprovalsScreen() {
             </View>
 
             {([
-              ['Type', itemTypeLabel(selected.kind, selected.item)],
+              [selected.kind === 'outpass' ? 'Destination' : 'Type', itemTypeLabel(selected.kind, selected.item)],
               selected.kind === 'leave'
                 ? ['From', format(new Date((selected.item as TeamLeaveRequest).startDate + 'T00:00:00'), 'dd MMM yyyy')]
+                : selected.kind === 'outpass'
+                ? null
                 : ['Date', itemDateLabel(selected.kind, selected.item).split(' · ')[0]],
               selected.kind === 'leave'
                 ? ['To', format(new Date((selected.item as TeamLeaveRequest).endDate + 'T00:00:00'), 'dd MMM yyyy')]
@@ -474,6 +503,8 @@ export default function ApprovalsScreen() {
               style={styles.commentInput}
               placeholder="Add a comment…"
               placeholderTextColor={Colors.outline}
+              selectionColor={Colors.primary}
+              cursorColor={Colors.primary}
               value={comment}
               onChangeText={setComment}
               multiline
@@ -553,6 +584,8 @@ export default function ApprovalsScreen() {
                 style={styles.commentInput}
                 placeholder="Add a comment…"
                 placeholderTextColor={Colors.outline}
+              selectionColor={Colors.primary}
+              cursorColor={Colors.primary}
                 value={comment}
                 onChangeText={setComment}
                 multiline
@@ -587,7 +620,7 @@ export default function ApprovalsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   header: {
     paddingHorizontal: 20,

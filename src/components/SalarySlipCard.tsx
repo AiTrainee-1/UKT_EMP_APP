@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { Colors } from '../constants/colors';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palettes';
 import { Badge } from './ui/Badge';
 import { SalarySlip } from '../hooks/useSalarySlips';
 
@@ -17,6 +19,11 @@ interface Props {
 }
 
 export function SalarySlipCard({ slip, onPress }: Props) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
       <View style={styles.left}>
@@ -41,7 +48,7 @@ export function SalarySlipCard({ slip, onPress }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: 16,

@@ -7,10 +7,12 @@ import {
   Pressable,
   Dimensions,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { KeyboardAvoider } from '../KeyboardAvoider';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -34,6 +36,11 @@ export function BottomSheet({
   children,
   maxHeight = SCREEN_HEIGHT * 0.85,
 }: BottomSheetProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <Modal
       transparent
@@ -46,10 +53,9 @@ export function BottomSheet({
         {/* Backdrop is a sibling *behind* the sheet — a tap can only reach it
             when it genuinely lands outside the sheet. */}
         <Pressable style={styles.backdrop} onPress={onClose} />
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          pointerEvents="box-none"
-        >
+        {/* Sheets host forms across the app, so the composer/inputs inside
+            need to clear the keyboard on Android too -see KeyboardAvoider. */}
+        <KeyboardAvoider style={{ flex: 0 }} pointerEvents="box-none">
           <View style={[styles.sheet, { maxHeight }]}>
             <View style={styles.handle} />
             {title && (
@@ -65,13 +71,13 @@ export function BottomSheet({
               {children}
             </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardAvoider>
       </View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     justifyContent: 'flex-end',

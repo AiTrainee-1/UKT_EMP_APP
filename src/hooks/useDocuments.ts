@@ -34,26 +34,42 @@ function mimeTypeFor(filename: string): string {
   return 'application/octet-stream';
 }
 
-/** Downloads a document (image or PDF) to a cache file, then opens the
- * native share sheet — same pattern as downloadAndShareSalarySlip. The
- * request carries the Bearer token manually since this bypasses the axios
- * instance; the endpoint is authenticated (owner employee or HR only). */
-export async function downloadAndShareDocument(doc: EmployeeDocument) {
+export function isImageFile(filename: string): boolean {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  return ext === 'png' || ext === 'jpg' || ext === 'jpeg';
+}
+
+async function fetchToFile(doc: EmployeeDocument, dir: typeof Paths.cache) {
   const baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/$/, '');
   const url = `${baseUrl}/employee-documents/${doc.id}/file`;
   const token = await getToken();
-  const target = new File(Paths.cache, doc.originalFilename);
-
-  const downloaded = await File.downloadFileAsync(url, target, {
+  const target = new File(dir, doc.originalFilename);
+  return File.downloadFileAsync(url, target, {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
+}
 
-  const canShare = await Sharing.isAvailableAsync();
-  if (canShare) {
-    await Sharing.shareAsync(downloaded.uri, {
-      mimeType: mimeTypeFor(doc.originalFilename),
-      dialogTitle: doc.originalFilename,
-    });
+/** "View" — downloads to a cache file. For images the caller shows an
+ * in-app preview modal; for everything else (PDFs etc., no in-app viewer
+ * installed) it opens the native share/Quick-Look sheet instead. */
+export async function viewDocument(doc: EmployeeDocument): Promise<string> {
+  const downloaded = await fetchToFile(doc, Paths.cache);
+  if (!isImageFile(doc.originalFilename)) {
+    const canShare = await Sharing.isAvailableAsync();
+    if (canShare) {
+      await Sharing.shareAsync(downloaded.uri, {
+        mimeType: mimeTypeFor(doc.originalFilename),
+        dialogTitle: doc.originalFilename,
+      });
+    }
   }
+  return downloaded.uri;
+}
+
+/** "Download" — saves to the app's persistent document directory (survives
+ * across launches, unlike the cache dir View uses) without opening any
+ * share sheet. */
+export async function downloadDocument(doc: EmployeeDocument): Promise<string> {
+  const downloaded = await fetchToFile(doc, Paths.document);
   return downloaded.uri;
 }

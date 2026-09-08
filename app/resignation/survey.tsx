@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
   StatusBar,
@@ -17,10 +16,13 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { format, addDays } from 'date-fns';
 
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
 import { Input } from '../../src/components/ui/Input';
 import { TextArea } from '../../src/components/ui/TextArea';
 import { DatePickerField } from '../../src/components/ui/DatePickerField';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const SURVEY_QUESTIONS = [
@@ -42,6 +44,11 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 function StepBar() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={step.row}>
       <View style={step.active} />
@@ -59,6 +66,11 @@ const step = StyleSheet.create({
 });
 
 export default function ResignationSurveyScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
@@ -86,7 +98,7 @@ export default function ResignationSurveyScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoider style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -182,12 +194,12 @@ export default function ResignationSurveyScreen() {
             <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
           </TouchableOpacity>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoider>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
   header: {

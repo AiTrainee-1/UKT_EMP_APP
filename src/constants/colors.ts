@@ -12,6 +12,13 @@ export const Colors = {
   // hand-repeating the literal.
   gradientPrimary: ['#006496', '#0090d0'] as const,
 
+  // Deep blue → near-black — for hero sections that want more weight/drama
+  // than the everyday gradientPrimary (e.g. Profile's parallax hero).
+  gradientRoyal: ['#001f3f', '#004970', '#006496'] as const,
+  // Blue → gold — an accent gradient for celebratory/reward-flavored UI
+  // (e.g. a milestone banner), not used as a default background.
+  gradientGoldAccent: ['#006496', '#c99a1f'] as const,
+
   // ─── Secondary (golden) ────────────────────────────────
   secondary: '#735c00',
   secondaryContainer: '#fed65b',
@@ -41,12 +48,14 @@ export const Colors = {
   clayGreen: '#a5d6a7',
   clayRed: '#ef9a9a',
   clayYellow: '#ffe082',
+  clayOrange: '#ffcc80',
   clayBlue: '#90caf9',
 
   // ─── Status (vivid, for badges/icons) ─────────────────
   statusGreen: '#2e7d32',
   statusRed: '#c62828',
   statusYellow: '#f57f17',
+  statusOrange: '#d84315',
   statusBlue: '#006496',
   statusGrey: '#546e7a',
 

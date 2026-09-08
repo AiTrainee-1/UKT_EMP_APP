@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 
 type BadgeVariant =
   | 'present'
@@ -18,7 +20,7 @@ interface BadgeProps {
   variant?: BadgeVariant;
 }
 
-const variantMap: Record<BadgeVariant, { bg: string; text: string }> = {
+const makeVariantMap = (Colors: Palette): Record<BadgeVariant, { bg: string; text: string }> => ({
   present:   { bg: Colors.badgeGreenBg, text: Colors.badgeGreenText },
   approved:  { bg: Colors.badgeGreenBg, text: Colors.badgeGreenText },
   paid:      { bg: Colors.badgeGreenBg, text: Colors.badgeGreenText },
@@ -28,9 +30,15 @@ const variantMap: Record<BadgeVariant, { bg: string; text: string }> = {
   pending:   { bg: Colors.badgePendingBg, text: Colors.badgePendingText },
   generated: { bg: Colors.badgePendingBg, text: Colors.badgePendingText },
   onleave:   { bg: Colors.badgeBlueBg,  text: Colors.badgeBlueText },
-};
+});
 
 export function Badge({ label, variant = 'pending' }: BadgeProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const variantMap = makeVariantMap(Colors);
+
   const colors = variantMap[variant] ?? variantMap.pending;
   return (
     <View style={[styles.badge, { backgroundColor: colors.bg }]}>
@@ -39,7 +47,7 @@ export function Badge({ label, variant = 'pending' }: BadgeProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   badge: {
     paddingHorizontal: 10,
     paddingVertical: 4,

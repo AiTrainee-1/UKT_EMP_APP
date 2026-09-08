@@ -25,6 +25,8 @@ import { Avatar } from '../../src/components/ui/Avatar';
 import { UKTLogo } from '../../src/components/UKTLogo';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 // Best-effort public web origin for the QR verify link — set
@@ -46,6 +48,11 @@ function fmtDate(str?: string | null) {
 }
 
 function DashRow({ label, value }: { label: string; value: string }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={rowSt.row}>
       <Text style={rowSt.label}>{label}</Text>
@@ -74,6 +81,11 @@ interface FaceProps {
 }
 
 function CardHeader({ template, data }: { template: IdCardTemplate; data: IdCardData }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <>
       <LinearGradient
@@ -102,6 +114,11 @@ function CardHeader({ template, data }: { template: IdCardTemplate; data: IdCard
 }
 
 function CardFooter({ template }: { template: IdCardTemplate }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <LinearGradient
       colors={[template.primaryColor, template.secondaryColor, template.primaryColor]}
@@ -113,6 +130,11 @@ function CardFooter({ template }: { template: IdCardTemplate }) {
 }
 
 function StaffFront({ data, template }: FaceProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={[cardSt.card, { width: CARD_W, aspectRatio: 240 / 380 }]}>
       <CardHeader template={template} data={data} />
@@ -142,6 +164,11 @@ function StaffFront({ data, template }: FaceProps) {
 }
 
 function StaffBack({ data, template, qrValue }: FaceProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={[cardSt.card, { width: CARD_W, aspectRatio: 240 / 380 }]}>
       <CardHeader template={template} data={data} />
@@ -176,6 +203,11 @@ function StaffBack({ data, template, qrValue }: FaceProps) {
 }
 
 function ProductionFront({ data, template }: FaceProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={[cardSt.card, { width: CARD_W, aspectRatio: 380 / 240 }]}>
       <CardHeader template={template} data={data} />
@@ -207,6 +239,11 @@ function ProductionFront({ data, template }: FaceProps) {
 }
 
 function ProductionBack({ data, template, qrValue }: FaceProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={[cardSt.card, { width: CARD_W, aspectRatio: 380 / 240 }]}>
       <CardHeader template={template} data={data} />
@@ -230,6 +267,11 @@ function ProductionBack({ data, template, qrValue }: FaceProps) {
 }
 
 function FlipCard({ data, template, qrValue, isProduction }: FaceProps & { isProduction: boolean }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const flipAnim = useRef(new Animated.Value(0)).current;
   const [showingBack, setShowingBack] = useState(false);
 
@@ -268,6 +310,11 @@ function FlipCard({ data, template, qrValue, isProduction }: FaceProps & { isPro
 }
 
 export default function IdCardScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user } = useAuth();
   const { data: card, isLoading: cardLoading } = useIdCard(user?.employeeId ?? null);
   const { data: settings } = useIdCardSettings();
@@ -336,7 +383,7 @@ export default function IdCardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   header: {
     flexDirection: 'row',

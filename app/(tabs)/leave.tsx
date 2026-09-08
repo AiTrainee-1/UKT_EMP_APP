@@ -9,6 +9,7 @@ import {
   RefreshControl,
   Platform,
   StatusBar,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
@@ -22,6 +23,8 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useLeaveRequests, useLeaveTypes, useApplyLeave, LeaveRequest } from '../../src/hooks/useLeave';
 import { useCasualLeaves, useCLEligibility, useApplyCasualLeave } from '../../src/hooks/useCasualLeave';
 import { LeaveCard } from '../../src/components/LeaveCard';
+import { SideDrawer } from '../../src/components/SideDrawer';
+import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Button } from '../../src/components/ui/Button';
 import { Input } from '../../src/components/ui/Input';
@@ -32,12 +35,17 @@ import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { DatePickerField } from '../../src/components/ui/DatePickerField';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const todayStr = format(new Date(), 'yyyy-MM-dd');
 
 const schema = z.object({
-  leaveTypeId: z.string().min(1, 'Please select a leave type'),
+  // Not required at the schema level -a Half Day request skips the leave-type
+  // picker entirely (see the halfDay branch in onSubmit), so this is only
+  // validated when halfDay is false.
+  leaveTypeId: z.string(),
   date: z.string().min(1, 'Date is required'),
   startDate: z.string().min(1, 'Start date is required'),
   endDate: z.string().min(1, 'End date is required'),
@@ -56,12 +64,26 @@ const defaultValues: FormData = {
 type ReqTab = 'live' | 'confirmed';
 
 export default function LeaveScreen() {
-  const { user } = useAuth();
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  const { user, logout } = useAuth();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const handleLogout = () => {
+    Alert.alert('Logout', 'Are you sure you want to logout?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Logout', style: 'destructive', onPress: logout },
+    ]);
+  };
   const [showApply, setShowApply] = useState(false);
   const [showCLApply, setShowCLApply] = useState(false);
   const [clDate, setClDate] = useState(todayStr);
   const [clReason, setClReason] = useState('');
   const [multiDay, setMultiDay] = useState(false);
+  const [halfDay, setHalfDay] = useState(false);
+  const [halfDaySlot, setHalfDaySlot] = useState<'morning' | 'afternoon' | ''>('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMsg, setSuccessMsg] = useState('Your leave request has been sent for approval.');
   const [tab, setTab] = useState<ReqTab>('live');
@@ -124,10 +146,38 @@ export default function LeaveScreen() {
   const closeSheet = () => {
     setShowApply(false);
     setMultiDay(false);
+    setHalfDay(false);
+    setHalfDaySlot('');
     reset(defaultValues);
   };
 
   const onSubmit = async (data: FormData) => {
+    if (halfDay) {
+      if (!halfDaySlot) {
+        showToast('Please select Morning or Afternoon.', 'error');
+        return;
+      }
+      try {
+        await applyLeave.mutateAsync({
+          startDate: data.date,
+          endDate: data.date,
+          reason: data.reason,
+          isHalfDay: true,
+          halfDaySlot,
+        });
+        closeSheet();
+        setSuccessMsg('Your half-day leave request has been sent for approval.');
+        setShowSuccess(true);
+      } catch {
+        showToast('Failed to submit. Please try again.', 'error');
+      }
+      return;
+    }
+
+    if (!data.leaveTypeId) {
+      setError('leaveTypeId', { message: 'Please select a leave type' });
+      return;
+    }
     const startDate = multiDay ? data.startDate : data.date;
     const endDate = multiDay ? data.endDate : data.date;
     if (multiDay && endDate < startDate) {
@@ -183,9 +233,12 @@ export default function LeaveScreen() {
       >
         <View style={styles.headerDeco} />
         <View style={styles.headerContent}>
-          <View>
-            <Text style={styles.title}>Leave</Text>
-            <Text style={styles.subtitle}>Manage your leave requests</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
+            <View>
+              <Text style={styles.title}>Leave</Text>
+              <Text style={styles.subtitle}>Manage your leave requests</Text>
+            </View>
           </View>
           <TouchableOpacity onPress={() => setShowApply(true)} style={styles.applyBtn} activeOpacity={0.8}>
             <MaterialCommunityIcons name="plus" size={18} color="#006496" />
@@ -323,35 +376,41 @@ export default function LeaveScreen() {
         )}
       </ScrollView>
 
+      <SideDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} user={user} onLogout={handleLogout} />
+
       {/* Apply Leave Sheet */}
       <BottomSheet visible={showApply} onClose={closeSheet} title="Apply for Leave">
-        <Text style={styles.fieldLabel}>Leave Type</Text>
-        <Controller
-          control={control}
-          name="leaveTypeId"
-          render={({ field: { onChange, value } }) => (
-            <View style={styles.chipsWrap}>
-              {typesLoading ? (
-                <Text style={styles.helperText}>Loading types…</Text>
-              ) : !leaveTypes?.length ? (
-                <Text style={styles.helperText}>No leave types configured</Text>
-              ) : (
-                leaveTypes.map((t) => (
-                  <TouchableOpacity
-                    key={t.id}
-                    style={[styles.chip, value === String(t.id) && styles.chipActive]}
-                    onPress={() => onChange(String(t.id))}
-                  >
-                    <Text style={[styles.chipText, value === String(t.id) && styles.chipTextActive]}>
-                      {t.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))
+        {!halfDay && (
+          <>
+            <Text style={styles.fieldLabel}>Leave Type</Text>
+            <Controller
+              control={control}
+              name="leaveTypeId"
+              render={({ field: { onChange, value } }) => (
+                <View style={styles.chipsWrap}>
+                  {typesLoading ? (
+                    <Text style={styles.helperText}>Loading types…</Text>
+                  ) : !leaveTypes?.length ? (
+                    <Text style={styles.helperText}>No leave types configured</Text>
+                  ) : (
+                    leaveTypes.map((t) => (
+                      <TouchableOpacity
+                        key={t.id}
+                        style={[styles.chip, value === String(t.id) && styles.chipActive]}
+                        onPress={() => onChange(String(t.id))}
+                      >
+                        <Text style={[styles.chipText, value === String(t.id) && styles.chipTextActive]}>
+                          {t.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
               )}
-            </View>
-          )}
-        />
-        {errors.leaveTypeId && <Text style={styles.errorText}>{errors.leaveTypeId.message as string}</Text>}
+            />
+            {errors.leaveTypeId && <Text style={styles.errorText}>{errors.leaveTypeId.message as string}</Text>}
+          </>
+        )}
 
         <View style={styles.toggleRow}>
           <View style={styles.toggleLeft}>
@@ -360,11 +419,46 @@ export default function LeaveScreen() {
           </View>
           <Switch
             value={multiDay}
-            onValueChange={setMultiDay}
+            onValueChange={(v) => { setMultiDay(v); if (v) setHalfDay(false); }}
             trackColor={{ false: Colors.outlineVariant, true: Colors.primaryLight }}
             thumbColor={multiDay ? Colors.primary : Colors.bgSurfaceHighest}
           />
         </View>
+
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleLeft}>
+            <MaterialCommunityIcons name="weather-sunset-up" size={18} color={Colors.primary} />
+            <Text style={styles.toggleLabel}>Half-Day leave</Text>
+          </View>
+          <Switch
+            value={halfDay}
+            onValueChange={(v) => { setHalfDay(v); if (v) setMultiDay(false); else setHalfDaySlot(''); }}
+            trackColor={{ false: Colors.outlineVariant, true: Colors.primaryLight }}
+            thumbColor={halfDay ? Colors.primary : Colors.bgSurfaceHighest}
+          />
+        </View>
+
+        {halfDay && (
+          <>
+            <Text style={styles.fieldLabel}>Which half?</Text>
+            <View style={styles.chipsWrap}>
+              {([
+                { key: 'morning' as const, label: 'Morning (First Half)' },
+                { key: 'afternoon' as const, label: 'Afternoon (Second Half)' },
+              ]).map((opt) => (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.chip, halfDaySlot === opt.key && styles.chipActive]}
+                  onPress={() => setHalfDaySlot(opt.key)}
+                >
+                  <Text style={[styles.chipText, halfDaySlot === opt.key && styles.chipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
 
         {!multiDay ? (
           <Controller
@@ -447,7 +541,7 @@ export default function LeaveScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   header: {
     paddingHorizontal: 20,

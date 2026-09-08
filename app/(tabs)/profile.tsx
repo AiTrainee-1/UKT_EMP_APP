@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
+  Animated,
   TouchableOpacity,
   Alert,
   Platform,
@@ -20,9 +20,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth, setPasswordRequest } from '../../src/hooks/useAuth';
-import { useEmployee, useUpdateProfilePhoto } from '../../src/hooks/useEmployee';
+import { useEmployee } from '../../src/hooks/useEmployee';
+import { useLocalProfilePhoto } from '../../src/hooks/useLocalProfilePhoto';
 import { useMyResignation } from '../../src/hooks/useResignation';
 import { ProfileSection } from '../../src/components/ProfileSection';
+import { SideDrawer } from '../../src/components/SideDrawer';
+import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Button } from '../../src/components/ui/Button';
 import { Input } from '../../src/components/ui/Input';
@@ -31,6 +34,8 @@ import { Avatar } from '../../src/components/ui/Avatar';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const pwdSchema = z
@@ -52,10 +57,16 @@ function maskAccount(acc: string) {
 }
 
 export default function ProfileScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user, logout } = useAuth();
   const { data: emp, isLoading } = useEmployee(user?.employeeId ?? null);
   const { data: resignation } = useMyResignation(user?.employeeId ?? null);
-  const updatePhoto = useUpdateProfilePhoto(user?.employeeId ?? null);
+  const localPhoto = useLocalProfilePhoto(user?.employeeId ?? null);
+  const [savingPhoto, setSavingPhoto] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [pwdLoading, setPwdLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
@@ -93,26 +104,89 @@ export default function ProfileScreen() {
     ]);
   };
 
-  const handlePickPhoto = async () => {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const HERO_HEIGHT = 220;
+  const heroTranslateY = scrollY.interpolate({
+    inputRange: [-100, 0, HERO_HEIGHT],
+    outputRange: [50, 0, -HERO_HEIGHT * 0.4],
+    extrapolateRight: 'clamp',
+  });
+  const heroScale = scrollY.interpolate({
+    inputRange: [-100, 0],
+    outputRange: [1.3, 1],
+    extrapolateRight: 'clamp',
+  });
+  const heroContentOpacity = scrollY.interpolate({
+    inputRange: [0, HERO_HEIGHT * 0.55],
+    outputRange: [1, 0],
+    extrapolate: 'clamp',
+  });
+
+  // Picks a photo and stores it on this device only — see
+  // useLocalProfilePhoto for why this never touches the server.
+  const pickPhoto = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
       showToast('Photo library permission is required.', 'error');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.7,
+      // Squared by the crop above and only ever displayed at avatar size,
+      // so mid quality keeps the stored base64 comfortably small.
+      quality: 0.5,
+      base64: true,
     });
-    if (result.canceled || !result.assets?.[0]?.uri) return;
+    if (result.canceled) return;
 
-    try {
-      await updatePhoto.mutateAsync(result.assets[0].uri);
-      showToast('Profile photo updated!', 'success');
-    } catch {
-      showToast('Failed to update photo. Please try again.', 'error');
+    const asset = result.assets?.[0];
+    if (!asset?.base64) {
+      showToast('Could not read that image. Please try another.', 'error');
+      return;
     }
+
+    setSavingPhoto(true);
+    try {
+      const mime = asset.mimeType || 'image/jpeg';
+      await localPhoto.savePhoto(`data:${mime};base64,${asset.base64}`);
+      showToast('Profile photo updated on this device.', 'success');
+    } catch {
+      showToast('Failed to save photo. Please try again.', 'error');
+    } finally {
+      setSavingPhoto(false);
+    }
+  };
+
+  const handlePickPhoto = () => {
+    // Once a device photo exists, tapping offers removal too — that's the
+    // only way back to the official portal photo.
+    if (!localPhoto.photo) {
+      pickPhoto();
+      return;
+    }
+    Alert.alert(
+      'Profile photo',
+      'This photo is saved on this device only. Your official HR photo is unchanged.',
+      [
+        { text: 'Choose new photo', onPress: pickPhoto },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await localPhoto.clearPhoto();
+              showToast('Reverted to your official HR photo.', 'success');
+            } catch {
+              showToast('Failed to remove photo. Please try again.', 'error');
+            }
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+    );
   };
 
   const isProduction = emp?.employmentType === 'production';
@@ -121,54 +195,74 @@ export default function ProfileScreen() {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor="#006496" />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <Animated.ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
+      >
         {isLoading ? (
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            {/* Hero card */}
-            <LinearGradient
-              colors={Colors.gradientPrimary}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.heroCard}
-            >
-              {/* Decorative circles */}
-              <View style={styles.heroDeco1} />
-              <View style={styles.heroDeco2} />
-
-              <TouchableOpacity
-                style={styles.avatarWrap}
-                onPress={handlePickPhoto}
-                activeOpacity={0.85}
-                disabled={updatePhoto.isPending}
+            {/* Hero card — parallax: shrinks/slides on scroll, avatar/name/badges fade out */}
+            <Animated.View style={{ transform: [{ translateY: heroTranslateY }, { scale: heroScale }] }}>
+              <LinearGradient
+                colors={Colors.gradientRoyal}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.heroCard}
               >
-                <Avatar uri={emp?.photoUrl} name={emp?.name} size={88} borderColor="rgba(255,255,255,0.5)" />
-                <View style={styles.avatarEditBadge}>
-                  {updatePhoto.isPending ? (
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                  ) : (
-                    <MaterialCommunityIcons name="camera" size={14} color={Colors.primary} />
-                  )}
+                {/* Decorative circles */}
+                <View style={styles.heroDeco1} />
+                <View style={styles.heroDeco2} />
+
+                <View style={styles.heroTopRow}>
+                  <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
                 </View>
-              </TouchableOpacity>
-              <Text style={styles.empName}>{emp?.name}</Text>
-              <Text style={styles.empSub}>{emp?.employeeCode} · {emp?.designationTitle}</Text>
-              <View style={styles.heroBadgeRow}>
-                <Badge label={emp?.status || 'Active'} variant="present" />
-                <View style={styles.typeChip}>
-                  <MaterialCommunityIcons
-                    name={isProduction ? 'factory' : 'briefcase-outline'}
-                    size={12}
-                    color="#fff"
-                  />
-                  <Text style={styles.typeChipText}>{isProduction ? 'Production' : 'Staff'}</Text>
-                </View>
-                <View style={styles.deptChip}>
-                  <Text style={styles.deptText}>{emp?.departmentName || 'Department'}</Text>
-                </View>
-              </View>
-            </LinearGradient>
+
+                <Animated.View style={{ opacity: heroContentOpacity, alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={styles.avatarWrap}
+                    onPress={handlePickPhoto}
+                    activeOpacity={0.85}
+                    disabled={savingPhoto}
+                  >
+                    {/* Device photo wins over the portal photo on this
+                        device; falling back to emp.photoUrl when none set. */}
+                    <Avatar
+                      uri={localPhoto.photo ?? emp?.photoUrl}
+                      name={emp?.name}
+                      size={88}
+                      borderColor="rgba(255,255,255,0.5)"
+                    />
+                    <View style={styles.avatarEditBadge}>
+                      {savingPhoto ? (
+                        <ActivityIndicator size="small" color={Colors.primary} />
+                      ) : (
+                        <MaterialCommunityIcons name="camera" size={14} color={Colors.primary} />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                  <Text style={styles.empName}>{emp?.name}</Text>
+                  <Text style={styles.empSub}>{emp?.employeeCode} · {emp?.designationTitle}</Text>
+                  <View style={styles.heroBadgeRow}>
+                    <Badge label={emp?.status || 'Active'} variant="present" />
+                    <View style={styles.typeChip}>
+                      <MaterialCommunityIcons
+                        name={isProduction ? 'factory' : 'briefcase-outline'}
+                        size={12}
+                        color="#fff"
+                      />
+                      <Text style={styles.typeChipText}>{isProduction ? 'Production' : 'Staff'}</Text>
+                    </View>
+                    <View style={styles.deptChip}>
+                      <Text style={styles.deptText}>{emp?.departmentName || 'Department'}</Text>
+                    </View>
+                  </View>
+                </Animated.View>
+              </LinearGradient>
+            </Animated.View>
 
             {/* Stats row */}
             <View style={styles.statsRow}>
@@ -340,22 +434,22 @@ export default function ProfileScreen() {
             </View>
           </>
         )}
-      </ScrollView>
+      </Animated.ScrollView>
+
+      <SideDrawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} user={user} onLogout={handleLogout} />
 
       <BottomSheet visible={showPwd} onClose={() => setShowPwd(false)} title="Change Password">
         <Controller
           control={control}
           name="identifier"
-          render={({ field: { onChange, value, onBlur } }) => (
+          render={({ field: { value } }) => (
             <Input
               label="Employee Code"
-              placeholder="Your employee code"
               value={value}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              keyboardType="numeric"
+              editable={false}
               error={errors.identifier?.message}
               leftIconName="badge-account-outline"
+              containerStyle={{ opacity: 0.6 }}
             />
           )}
         />
@@ -399,7 +493,7 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   content: { paddingBottom: 40 },
 
@@ -416,6 +510,7 @@ const styles = StyleSheet.create({
       android: { elevation: 10 },
     }),
   },
+  heroTopRow: { width: '100%', alignItems: 'flex-start', marginBottom: 4 },
   heroDeco1: {
     position: 'absolute', top: -30, right: -30,
     width: 120, height: 120, borderRadius: 60,

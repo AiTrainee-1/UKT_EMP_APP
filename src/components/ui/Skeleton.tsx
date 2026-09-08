@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Animated, StyleSheet, ViewStyle, Platform } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 
 interface SkeletonProps {
@@ -11,6 +13,11 @@ interface SkeletonProps {
 }
 
 export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style }: SkeletonProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const opacity = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
@@ -32,6 +39,11 @@ export function Skeleton({ width = '100%', height = 16, borderRadius = 8, style 
 }
 
 export function SkeletonCard({ lines = 3 }: { lines?: number }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.card}>
       <Skeleton height={20} width="60%" borderRadius={6} style={{ marginBottom: 12 }} />
@@ -48,7 +60,7 @@ export function SkeletonCard({ lines = 3 }: { lines?: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   skeleton: {
     backgroundColor: Colors.bgSurfaceMid,
   },

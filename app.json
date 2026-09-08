@@ -2,18 +2,13 @@
   "expo": {
     "name": "uktextiles",
     "slug": "ukt-team",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "uktextiles",
     "experiments": {
       "typedRoutes": true
-    },
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#f6fafe"
     },
     "ios": {
       "supportsTablet": false,
@@ -29,8 +24,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "versionCode": 2,
       "predictiveBackGestureEnabled": false,
-      "usesCleartextTraffic": true,
       "package": "net.uktex.employee",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
@@ -64,6 +59,24 @@
         {
           "cameraPermission": "UKTextiles needs camera access to take the two verification photos required when you punch attendance from outside your branch's location.",
           "microphonePermission": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      "expo-sharing",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#f6fafe"
         }
       ]
     ],

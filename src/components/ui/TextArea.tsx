@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { View, TextInput, Text, StyleSheet, TextInputProps, Platform } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 
 interface TextAreaProps extends Omit<TextInputProps, 'style'> {
@@ -26,6 +28,11 @@ export function TextArea({
   placeholder,
   ...props
 }: TextAreaProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const [focused, setFocused] = useState(false);
   // Android multiline inputs grow with content natively; only iOS needs a
   // measured height. Never mutate layout of the focused input on Android —
@@ -49,6 +56,8 @@ export function TextArea({
       >
         <TextInput
           multiline
+          selectionColor={Colors.primary}
+          cursorColor={Colors.primary}
           value={value}
           onChangeText={onChangeText}
           maxLength={maxLength}
@@ -102,7 +111,7 @@ export function TextArea({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: { marginBottom: 14 },
   label: {
     color: Colors.textSecondary,
@@ -133,7 +142,8 @@ const styles = StyleSheet.create({
   // instantly dropping focus and closing the keyboard.
   wrapperFocused: {
     borderColor: Colors.primary,
-    backgroundColor: '#fff',
+    // See Input.tsx: '#fff' here makes typed text invisible in dark mode.
+    backgroundColor: Colors.bgCard,
     ...Platform.select({
       ios: { shadowOpacity: 0.12, shadowRadius: 8 },
       android: {},

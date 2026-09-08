@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
   StatusBar,
@@ -16,11 +15,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+import { KeyboardAvoider, useKeyboardVisible } from '../../src/components/KeyboardAvoider';
 import { Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { UKTLogo } from '../../src/components/UKTLogo';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { useAuth } from '../../src/hooks/useAuth';
 import { loginRequest } from '../../src/hooks/useAuth';
@@ -33,7 +35,13 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function LoginScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { setUser } = useAuth();
+  const keyboardVisible = useKeyboardVisible();
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
     message: '',
@@ -82,9 +90,14 @@ export default function LoginScreen() {
         <View style={styles.decorCircle2} />
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoider style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={styles.container}
+          contentContainerStyle={[
+            styles.container,
+            // Centred when there's room; top-aligned once the keyboard
+            // shrinks the viewport, so the password field stays reachable.
+            keyboardVisible && styles.containerKeyboard,
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
@@ -118,7 +131,7 @@ export default function LoginScreen() {
               render={({ field: { onChange, value, onBlur } }) => (
                 <Input
                   label="Employee Code"
-                  placeholder="e.g. 30020"
+                  placeholder="e.g. 345678"
                   keyboardType="numeric"
                   value={value}
                   onChangeText={onChange}
@@ -163,16 +176,17 @@ export default function LoginScreen() {
             </Text>
           </TouchableOpacity>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoider>
 
       <Toast {...toast} />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   container: { flexGrow: 1, padding: 24, justifyContent: 'center', gap: 20 },
+  containerKeyboard: { justifyContent: 'flex-start', paddingBottom: 32 },
   decorWrap: { position: 'absolute', top: -40, right: -30, zIndex: 0 },
   decorCircle1: {
     width: 180,

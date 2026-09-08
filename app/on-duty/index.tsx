@@ -12,10 +12,12 @@ import { TextArea } from '../../src/components/ui/TextArea';
 import { Badge } from '../../src/components/ui/Badge';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
 import {
   useOnDutySessionStatus, useSubmitOnDutySessionRequest, useCompleteOnDutySession,
-  useSubmitOnDutyPunch, useGeoPunchStatus, OnDutyPunchVerification,
+  useSubmitOnDutyPunch, OnDutyPunchVerification, PunchSlot,
 } from '../../src/hooks/useGeoAttendance';
 
 const STAGE_LABEL: Record<string, string> = {
@@ -33,8 +35,12 @@ function statusBadgeVariant(status: string): 'pending' | 'approved' | 'rejected'
 }
 
 export default function OnDutyScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { data: status, isLoading: statusLoading, refetch: refetchStatus } = useOnDutySessionStatus();
-  const { data: geoStatus } = useGeoPunchStatus();
   const submitRequestMutation = useSubmitOnDutySessionRequest();
   const completeMutation = useCompleteOnDutySession();
   const submitPunchMutation = useSubmitOnDutyPunch();
@@ -43,6 +49,9 @@ export default function OnDutyScreen() {
   const [showNewRequestForm, setShowNewRequestForm] = useState(false);
   const [punchBusy, setPunchBusy] = useState(false);
   const [punchStage, setPunchStage] = useState<'idle' | 'review'>('idle');
+  // Which of the day's four slots this capture is for. The employee picks it;
+  // it is never inferred from what came before.
+  const [punchSlot, setPunchSlot] = useState<PunchSlot | null>(null);
   const [punchPhotoUri, setPunchPhotoUri] = useState<string | null>(null);
   const [punchLocation, setPunchLocation] = useState<{ latitude: number; longitude: number; accuracy?: number; isMocked: boolean } | null>(null);
 
@@ -56,27 +65,36 @@ export default function OnDutyScreen() {
 
   const session = status?.session ?? null;
   const punchVerifications = status?.punchVerifications ?? [];
-  const nextPunchNumber = geoStatus?.nextPunchNumber ?? null;
-  const nextPunchType = geoStatus?.nextPunchType ?? null;
-
-  const hasPendingVerification = punchVerifications.some((v) => v.status === 'pending');
 
   const latestByNumber = new Map<number, OnDutyPunchVerification>();
   for (const v of punchVerifications) {
     const existing = latestByNumber.get(v.punchNumber);
     if (!existing || v.id > existing.id) latestByNumber.set(v.punchNumber, v);
   }
-  const slots = [1, 2, 3, 4].map((n) => ({
-    number: n,
-    type: (n % 2 === 1 ? 'IN' : 'OUT') as 'IN' | 'OUT',
-    verification: latestByNumber.get(n) ?? null,
+
+  // Slot state is the server's answer, not a local guess -it also accounts
+  // for punches that arrived from the biometric device or Office Geo Punch,
+  // which this screen can't see. Falls back to a plain 1-4 layout only if
+  // the status call hasn't landed yet.
+  const serverSlots: PunchSlot[] = status?.punchSlots?.length
+    ? status.punchSlots
+    : ([1, 2, 3, 4] as const).map((n) => ({
+        punchNumber: n,
+        punchType: (n % 2 === 1 ? 'IN' : 'OUT') as 'IN' | 'OUT',
+        status: 'available' as const,
+        available: true,
+      }));
+  const slots = serverSlots.map((slot) => ({
+    ...slot,
+    verification: latestByNumber.get(slot.punchNumber) ?? null,
   }));
+  const openSlots = slots.filter((slot) => slot.available);
 
   const submitRequest = async () => {
     if (!destination.trim()) return;
     try {
       await submitRequestMutation.mutateAsync({ destination: destination.trim() });
-      showToast('On-Duty request submitted — awaiting approval.', 'success');
+      showToast('On-Duty started — you can begin punching now.', 'success');
       setDestination('');
       setShowNewRequestForm(false);
     } catch (err: any) {
@@ -84,7 +102,8 @@ export default function OnDutyScreen() {
     }
   };
 
-  const startPunchCapture = async () => {
+  const startPunchCapture = async (slot: PunchSlot) => {
+    setPunchSlot(slot);
     setPunchBusy(true);
     try {
       const camPerm = await ImagePicker.requestCameraPermissionsAsync();
@@ -120,16 +139,24 @@ export default function OnDutyScreen() {
 
   const cancelPunch = () => {
     setPunchStage('idle');
+    setPunchSlot(null);
     setPunchPhotoUri(null);
     setPunchLocation(null);
   };
 
   const submitPunch = async () => {
-    if (!punchPhotoUri || !punchLocation) return;
+    if (!punchPhotoUri || !punchLocation || !punchSlot) return;
     setPunchBusy(true);
     try {
-      await submitPunchMutation.mutateAsync({ ...punchLocation, photoUri: punchPhotoUri });
-      showToast('Punch submitted — awaiting HR approval.', 'success');
+      const result = await submitPunchMutation.mutateAsync({
+        ...punchLocation, photoUri: punchPhotoUri, punchNumber: punchSlot.punchNumber,
+      });
+      showToast(
+        result.sessionEnded
+          ? 'Punch submitted. All 4 punches are in — your On-Duty session has ended.'
+          : 'Punch submitted — you can record your next punch any time.',
+        'success',
+      );
       cancelPunch();
     } catch (err: any) {
       showToast(err?.response?.data?.error ?? err?.message ?? 'Failed to submit punch', 'error');
@@ -141,7 +168,7 @@ export default function OnDutyScreen() {
   const handleMarkDone = () => {
     Alert.alert(
       'Mark On-Duty as Done',
-      "This ends your On-Duty session now. If you haven't made all of today's punches yet, you can still complete them from the regular Attendance flow. Continue?",
+      "This ends your On-Duty session now. Any punches you've already recorded stay submitted and will be confirmed by HR as usual. Continue?",
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -178,9 +205,9 @@ export default function OnDutyScreen() {
               <Text style={styles.introTitle}>Request On-Duty</Text>
             </View>
             <Text style={styles.introBody}>
-              Enter where you're going. Once your Department Head and HR approve, your On-Duty session starts
-              automatically — your regular attendance punches for the rest of the day will then need a selfie and
-              GPS verification, reviewed by HR.
+              Enter where you're going. Your session starts as soon as you submit — you can begin punching right
+              away, no waiting for approval. Each punch needs a selfie and your location, and your Department Head
+              or HR confirms the whole day afterwards.
             </Text>
             <Text style={styles.reviewLabel}>DESTINATION / PLACE</Text>
             <TextArea
@@ -231,6 +258,12 @@ export default function OnDutyScreen() {
                 <MaterialCommunityIcons name="check-circle-outline" size={18} color={Colors.statusGreen} />
                 <Text style={[styles.statusBannerText, { color: Colors.statusGreen }]}>On-Duty session active</Text>
               </View>
+              {session.isProvisional && (
+                <Text style={styles.hintText}>
+                  Your request is still with your Department Head / HR. That does not hold you up — keep punching
+                  as normal; they confirm the day afterwards.
+                </Text>
+              )}
               <View style={styles.reviewCell}>
                 <Text style={styles.reviewLabel}>Destination</Text>
                 <Text style={styles.reviewValue}>{session.destination}</Text>
@@ -245,7 +278,7 @@ export default function OnDutyScreen() {
               )}
             </View>
 
-            {punchStage === 'review' && punchPhotoUri ? (
+            {punchStage === 'review' && punchPhotoUri && punchSlot ? (
               <View style={[CardStyle.clay, { gap: Spacing.md }]}>
                 <Text style={styles.reviewLabel}>REVIEW YOUR PUNCH</Text>
                 <Image source={{ uri: punchPhotoUri }} style={styles.photoPreview} />
@@ -253,7 +286,7 @@ export default function OnDutyScreen() {
                   <View style={styles.reviewCell}>
                     <Text style={styles.reviewLabel}>Punch</Text>
                     <Text style={styles.reviewValue}>
-                      #{nextPunchNumber} · {nextPunchType === 'IN' ? 'Check-In' : 'Check-Out'}
+                      #{punchSlot.punchNumber} · {punchSlot.punchType === 'IN' ? 'Check-In' : 'Check-Out'}
                     </Text>
                   </View>
                   <View style={styles.reviewCell}>
@@ -264,58 +297,64 @@ export default function OnDutyScreen() {
                   </View>
                 </View>
                 <Text style={styles.hintText}>
-                  This punch will be held pending until HR verifies your photo and location.
+                  This punch is held until your On-Duty request is confirmed. You don't have to wait for it —
+                  your next punch can go in straight away.
                 </Text>
                 <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
-                  <Button title="Retake" variant="outline" onPress={startPunchCapture} loading={punchBusy} style={{ flex: 1 }} />
+                  <Button title="Retake" variant="outline" onPress={() => startPunchCapture(punchSlot)} loading={punchBusy} style={{ flex: 1 }} />
                   <Button title="Submit Punch" onPress={submitPunch} loading={punchBusy} style={{ flex: 1 }} />
                 </View>
                 <Button title="Cancel" variant="ghost" onPress={cancelPunch} disabled={punchBusy} />
               </View>
-            ) : hasPendingVerification ? (
-              <View style={[CardStyle.clay, styles.gateCard]}>
-                <MaterialCommunityIcons name="timer-sand" size={28} color={Colors.tertiary} style={styles.gateIcon} />
-                <Text style={styles.gateTitle}>Punch awaiting HR approval</Text>
-                <Text style={styles.gateBody}>You'll be able to submit your next punch once HR reviews this one.</Text>
-              </View>
-            ) : nextPunchNumber != null ? (
-              <View style={[CardStyle.clay, styles.gateCard]}>
-                <MaterialCommunityIcons name="camera-outline" size={28} color={Colors.tertiary} style={styles.gateIcon} />
-                <Text style={styles.gateTitle}>
-                  Punch {nextPunchNumber} · {nextPunchType === 'IN' ? 'Check-In' : 'Check-Out'}
-                </Text>
-                <Text style={styles.gateBody}>Take a selfie and capture your location to record this punch.</Text>
-                <Button title="Make Punch" onPress={startPunchCapture} loading={punchBusy} style={{ marginTop: Spacing.base }} />
-              </View>
-            ) : (
+            ) : openSlots.length === 0 ? (
               <View style={[styles.doneBanner]}>
                 <MaterialCommunityIcons name="check-circle-outline" size={16} color={Colors.statusGreen} />
                 <Text style={styles.doneBannerText}>
-                  All 4 punches for today are recorded. Your session will complete once HR approves your last punch.
+                  All 4 punches for today are in. Your session has ended — HR will confirm your punches.
                 </Text>
               </View>
-            )}
+            ) : null}
 
+            {/* Today's punches -each empty slot is its own entry point, so a
+                missed punch never blocks a later one, and nothing here waits
+                on HR reviewing the punch before it. */}
             <View style={[CardStyle.clay, { gap: Spacing.sm }]}>
               <Text style={styles.reviewLabel}>TODAY'S PUNCHES</Text>
-              {slots.map((slot) => (
-                <View key={slot.number} style={styles.slotRow}>
-                  <View style={styles.slotLeft}>
-                    <Text style={styles.slotNum}>#{slot.number}</Text>
-                    <Text style={styles.slotType}>{(slot.verification?.punchType ?? slot.type) === 'IN' ? 'Check-In' : 'Check-Out'}</Text>
-                  </View>
-                  {slot.verification ? (
-                    <View style={styles.slotRight}>
-                      <Text style={styles.slotTime}>{slot.verification.punchTime.slice(0, 5)}</Text>
-                      <Badge label={slot.verification.status} variant={statusBadgeVariant(slot.verification.status)} />
+              <Text style={styles.hintText}>
+                Tap any open slot to record it. You can submit them in any order.
+              </Text>
+              {slots.map((slot) => {
+                const v = slot.verification;
+                const isRecordedElsewhere = slot.status === 'recorded' && !v;
+                return (
+                  <View key={slot.punchNumber} style={styles.slotRow}>
+                    <View style={styles.slotLeft}>
+                      <Text style={styles.slotNum}>#{slot.punchNumber}</Text>
+                      <Text style={styles.slotType}>
+                        {slot.punchType === 'IN' ? 'Check-In' : 'Check-Out'}
+                      </Text>
                     </View>
-                  ) : (
-                    <Text style={styles.slotPending}>
-                      {nextPunchNumber === slot.number ? 'Up next' : 'Not yet'}
-                    </Text>
-                  )}
-                </View>
-              ))}
+                    {v ? (
+                      <View style={styles.slotRight}>
+                        <Text style={styles.slotTime}>{v.punchTime.slice(0, 5)}</Text>
+                        <Badge label={v.status} variant={statusBadgeVariant(v.status)} />
+                      </View>
+                    ) : isRecordedElsewhere ? (
+                      <Text style={styles.slotPending}>Already recorded</Text>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.addPunchBtn}
+                        onPress={() => startPunchCapture(slot)}
+                        disabled={punchBusy || punchStage === 'review'}
+                        activeOpacity={0.75}
+                      >
+                        <MaterialCommunityIcons name="plus-circle-outline" size={16} color={Colors.primary} />
+                        <Text style={styles.addPunchText}>Add my punch</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })}
             </View>
 
             <Button title="Mark On-Duty as Done" variant="outline" onPress={handleMarkDone} loading={completeMutation.isPending} />
@@ -334,7 +373,9 @@ export default function OnDutyScreen() {
             {session.status === 'completed' && session.completionReason && (
               <Text style={styles.hintText}>
                 {session.completionReason === 'auto_4th_punch'
-                  ? 'Ended automatically after your 4th punch was approved.'
+                  ? 'Ended automatically once all 4 punches were recorded.'
+                  : session.completionReason === 'auto_day_end'
+                  ? 'Ended automatically at the end of the day.'
                   : 'Ended manually.'}
               </Text>
             )}
@@ -355,7 +396,7 @@ export default function OnDutyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   content: { padding: 16, gap: 16, paddingBottom: 32 },
 
@@ -386,6 +427,13 @@ const styles = StyleSheet.create({
   reviewValue: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary, marginTop: 2 },
 
   hintText: { fontSize: 11.5, color: Colors.textMuted, lineHeight: 16 },
+
+  addPunchBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.sm,
+    paddingVertical: 6, paddingHorizontal: 10,
+  },
+  addPunchText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
 
   photoPreview: { width: '100%', aspectRatio: 1.2, borderRadius: BorderRadius.md },
 

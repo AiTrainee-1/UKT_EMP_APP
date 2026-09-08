@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native
 import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 import { useGeoPunchStatus } from '../hooks/useGeoAttendance';
 
@@ -14,11 +16,20 @@ import { useGeoPunchStatus } from '../hooks/useGeoAttendance';
  * from an explicit button tap rather than a background effect.
  */
 export function GeoPunchCard() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { data: status } = useGeoPunchStatus();
-  const nextNum = status?.nextPunchNumber;
+  // Office punches are uncapped now -report what has been recorded rather
+  // than counting down to a limit that no longer exists.
+  const punchCount = status?.punches?.length ?? 0;
   const nextType = status?.nextPunchType;
   const session = status?.onDutySession;
-  const isOnDuty = session != null && (session.status === 'pending_hod' || session.status === 'pending_hr' || session.status === 'active');
+  // A submitted request reads as "active" -punching starts immediately.
+  const isOnDuty = session != null && session.status === 'active';
+  const openSlots = (status?.punchSlots ?? []).filter((sl) => sl.available).length;
 
   return (
     <TouchableOpacity
@@ -36,17 +47,13 @@ export function GeoPunchCard() {
       <View style={{ flex: 1 }}>
         <Text style={styles.title}>{isOnDuty ? 'On-Duty' : 'Attendance Request'}</Text>
         <Text style={styles.subtitle}>
-          {session?.status === 'pending_hod'
-            ? 'Awaiting Department Head approval…'
-            : session?.status === 'pending_hr'
-              ? 'Awaiting HR approval…'
-              : session?.status === 'active'
-                ? nextNum == null
-                  ? 'Active — all 4 punches recorded'
-                  : `Active — next: Punch ${nextNum} · ${nextType === 'IN' ? 'Check-In' : 'Check-Out'}`
-                : nextNum == null
-                  ? 'All 4 punches recorded today'
-                  : `Next: Punch ${nextNum} · ${nextType === 'IN' ? 'Check-In' : 'Check-Out'}`}
+          {isOnDuty
+            ? openSlots === 0
+              ? 'All 4 punches recorded — session ended'
+              : `Active — ${4 - openSlots} of 4 punches recorded`
+            : punchCount === 0
+              ? 'No punches yet today'
+              : `${punchCount} punch${punchCount === 1 ? '' : 'es'} today · next is ${nextType === 'IN' ? 'Check-In' : 'Check-Out'}`}
         </Text>
       </View>
       <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
@@ -54,7 +61,7 @@ export function GeoPunchCard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   banner: {
     flexDirection: 'row',
     alignItems: 'center',

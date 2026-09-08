@@ -3,7 +3,6 @@ import api from '../lib/api';
 
 export interface AppNotification {
   id: number;
-  title: string;
   message: string;
   isRead: boolean;
   createdAt: string;
@@ -38,6 +37,22 @@ export function useMarkNotificationRead() {
         { queryKey: ['app-notifications'] },
         (old: AppNotification[] | undefined) =>
           old ? old.map(n => n.id === id ? { ...n, isRead: true } : n) : old
+      );
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      await api.patch('/notifications/mark-all-read');
+    },
+    onSuccess: () => {
+      queryClient.setQueriesData(
+        { queryKey: ['app-notifications'] },
+        (old: AppNotification[] | undefined) =>
+          old ? old.map(n => ({ ...n, isRead: true })) : old
       );
     },
   });

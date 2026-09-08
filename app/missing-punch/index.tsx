@@ -27,12 +27,18 @@ import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { DatePickerField, TimePickerField } from '../../src/components/ui/DatePickerField';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing } from '../../src/constants/theme';
 
 const now = new Date();
 const todayStr = format(now, 'yyyy-MM-dd');
 
 const PUNCH_SLOTS: MissingPunchSlot[] = ['morning_in', 'lunch_out', 'lunch_in', 'evening_out'];
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
 
 const schema = z.object({
   date: z.string().min(1, 'Date is required'),
@@ -57,6 +63,11 @@ function badgeVariant(status: string): 'pending' | 'approved' | 'rejected' | 'on
 }
 
 export default function MissingPunchScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user } = useAuth();
   const [showNew, setShowNew] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -64,8 +75,22 @@ export default function MissingPunchScreen() {
     message: '', type: 'success', visible: false,
   });
 
-  const { data, isLoading, refetch, isRefetching } = useMissingPunch(user?.employeeId ?? null);
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(now.getFullYear());
+  const { data, isLoading, refetch, isRefetching } = useMissingPunch(user?.employeeId ?? null, month, year);
   const submit = useSubmitMissingPunch(user?.employeeId ?? null);
+
+  const prevMonth = () => {
+    if (month === 1) { setMonth(12); setYear((y) => y - 1); }
+    else setMonth((m) => m - 1);
+  };
+  const nextMonth = () => {
+    const atCurrent = year === now.getFullYear() && month === now.getMonth() + 1;
+    if (atCurrent) return;
+    if (month === 12) { setMonth(1); setYear((y) => y + 1); }
+    else setMonth((m) => m + 1);
+  };
+  const atCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1;
 
   const { control, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -90,6 +115,10 @@ export default function MissingPunchScreen() {
   };
 
   const items = data ?? [];
+  const totalCount = items.length;
+  const pendingCount = items.filter((i) => i.status === 'pending_hod' || i.status === 'pending_hr').length;
+  const approvedCount = items.filter((i) => i.status === 'approved').length;
+  const rejectedCount = items.filter((i) => i.status === 'rejected').length;
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -101,16 +130,42 @@ export default function MissingPunchScreen() {
           <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
         }
         ListHeaderComponent={
-          <View style={styles.introCard}>
-            <View style={styles.introRow}>
-              <MaterialCommunityIcons name="fingerprint" size={22} color={Colors.tertiary} />
-              <Text style={styles.introTitle}>Missing Punch</Text>
+          <>
+            <View style={styles.introCard}>
+              <View style={styles.introRow}>
+                <MaterialCommunityIcons name="fingerprint" size={22} color={Colors.tertiary} />
+                <Text style={styles.introTitle}>Missing Punch</Text>
+              </View>
+              <Text style={styles.introBody}>
+                Forgot to punch in or out? Submit the date, time and reason — your Department Head reviews it first,
+                then HR gives the final approval. Once HR approves, the punch is added to your attendance automatically.
+              </Text>
             </View>
-            <Text style={styles.introBody}>
-              Forgot to punch in or out? Submit the date, time and reason — your Department Head reviews it first,
-              then HR gives the final approval. Once HR approves, the punch is added to your attendance automatically.
-            </Text>
-          </View>
+
+            <View style={styles.monthRow}>
+              <TouchableOpacity onPress={prevMonth} style={styles.monthNavBtn}>
+                <MaterialCommunityIcons name="chevron-left" size={20} color={Colors.primary} />
+              </TouchableOpacity>
+              <Text style={styles.monthLabel}>{MONTHS[month - 1]} {year}</Text>
+              <TouchableOpacity onPress={nextMonth} style={styles.monthNavBtn} disabled={atCurrentMonth}>
+                <MaterialCommunityIcons name="chevron-right" size={20} color={atCurrentMonth ? Colors.outlineVariant : Colors.primary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.summaryGrid}>
+              {[
+                { label: 'Total', value: totalCount, color: Colors.primary, bg: Colors.badgeBlueBg },
+                { label: 'Pending', value: pendingCount, color: Colors.statusYellow, bg: Colors.badgeYellowBg },
+                { label: 'Approved', value: approvedCount, color: Colors.statusGreen, bg: Colors.badgeGreenBg },
+                { label: 'Rejected', value: rejectedCount, color: Colors.statusRed, bg: Colors.badgeRedBg },
+              ].map(({ label, value, color, bg }) => (
+                <View key={label} style={[styles.summaryBox, { backgroundColor: bg }]}>
+                  <Text style={[styles.summaryNum, { color }]}>{value}</Text>
+                  <Text style={styles.summaryLabel}>{label}</Text>
+                </View>
+              ))}
+            </View>
+          </>
         }
         ListEmptyComponent={
           isLoading ? (
@@ -227,7 +282,7 @@ export default function MissingPunchScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 100 },
   center: { flex: 1 },
@@ -246,6 +301,15 @@ const styles = StyleSheet.create({
   introRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   introTitle: { fontSize: 15, fontWeight: '800', color: Colors.textPrimary },
   introBody: { fontSize: 12.5, color: Colors.textSecondary, lineHeight: 18 },
+
+  monthRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, marginBottom: 12 },
+  monthNavBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgCard },
+  monthLabel: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800', minWidth: 130, textAlign: 'center' },
+
+  summaryGrid: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  summaryBox: { flex: 1, borderRadius: BorderRadius.lg, paddingVertical: 10, alignItems: 'center', gap: 2 },
+  summaryNum: { fontSize: 18, fontWeight: '900' },
+  summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700' },
 
   card: { backgroundColor: Colors.bgCard, borderRadius: 16, padding: 14, marginBottom: 10, gap: 6 },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

@@ -2,6 +2,7 @@ import React, { useState, useEffect, Component, ReactNode, useRef } from 'react'
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { StatusBar } from 'expo-status-bar';
 import { AuthContext, AuthUser, checkAuth, useAuth } from '../src/hooks/useAuth';
 import { clearAuth } from '../src/lib/auth';
@@ -11,6 +12,8 @@ import { useMyResignation } from '../src/hooks/useResignation';
 import { registerPushToken } from '../src/hooks/usePushToken';
 import { useEmployee } from '../src/hooks/useEmployee';
 import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
+import { useNotificationObserver } from '../src/hooks/useNotifications';
+import { PermissionGate } from '../src/components/PermissionGate';
 import * as Location from 'expo-location';
 
 // registerPushToken() (src/hooks/usePushToken.ts) guards internally against
@@ -138,6 +141,21 @@ function LiveLocationTracker() {
 }
 
 // ---------------------------------------------------------------------------
+// Notification Tap Handler — useNotificationObserver() was previously
+// defined but never mounted anywhere, so tapping a delivered push
+// notification did nothing. Mounted once here; any tap opens the
+// Notifications screen (the handler for actually DISPLAYING a delivered
+// push in the system tray is already configured separately in
+// useNotifications.ts's setNotificationHandler call).
+// ---------------------------------------------------------------------------
+function NotificationTapHandler() {
+  useNotificationObserver(() => {
+    router.push('/(tabs)/notifications');
+  });
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Root Layout
 // ---------------------------------------------------------------------------
 export default function RootLayout() {
@@ -163,12 +181,15 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
         <AuthContext.Provider value={{ user, isLoading, login, logout, setUser }}>
           <StatusBar style="light" />
+          <PermissionGate />
           <ResignationGuard />
           <PushTokenRegistrar />
           <LiveLocationTracker />
+          <NotificationTapHandler />
           <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
@@ -187,9 +208,11 @@ export default function RootLayout() {
             <Stack.Screen name="geo-punch" />
             <Stack.Screen name="geo-tracking" />
             <Stack.Screen name="on-duty" />
+            <Stack.Screen name="outpass" />
           </Stack>
-        </AuthContext.Provider>
-      </QueryClientProvider>
+          </AuthContext.Provider>
+        </QueryClientProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

@@ -5,8 +5,8 @@ export interface MobileHomeSummary {
   date: string;
   presentToday: number;
   absentToday: number;
-  onLeaveToday: number;
-  pendingRequestsCount: number;
+  lateToday: number;
+  permissionToday: number;
 }
 
 export function useMobileHomeSummary() {

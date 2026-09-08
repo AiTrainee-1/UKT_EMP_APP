@@ -17,6 +17,8 @@ import { format, parseISO } from 'date-fns';
 
 import { useSubmitResignation } from '../../src/hooks/useResignation';
 import { Colors } from '../../src/constants/colors';
+import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 
 const SURVEY_LABELS = [
@@ -26,6 +28,11 @@ const SURVEY_LABELS = [
 ];
 
 function StepBar() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={step.row}>
       <View style={step.done} />
@@ -43,6 +50,11 @@ const step = StyleSheet.create({
 });
 
 export default function ResignationConfirmScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const params = useLocalSearchParams<{
     reason: string;
     lastWorkingDate: string;
@@ -191,7 +203,7 @@ export default function ResignationConfirmScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
   header: {

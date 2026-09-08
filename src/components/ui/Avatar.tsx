@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet, ViewStyle } from 'react-native';
 import { Colors } from '../../constants/colors';
+import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
+import type { Palette } from '../../theme/palettes';
 
 interface AvatarProps {
   uri?: string | null;
@@ -24,6 +26,11 @@ function getInitials(name?: string | null): string {
 }
 
 export function Avatar({ uri, name, size = 44, style, borderColor, textColor, bgColor }: AvatarProps) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const [failed, setFailed] = useState(false);
   const showImage = !!uri && !failed;
 
@@ -56,7 +63,7 @@ export function Avatar({ uri, name, size = 44, style, borderColor, textColor, bg
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   wrap: {
     alignItems: 'center',
     justifyContent: 'center',

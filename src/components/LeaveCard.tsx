@@ -4,6 +4,8 @@ import { MotiView } from 'moti';
 import { format } from 'date-fns';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../constants/colors';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 import { Badge } from './ui/Badge';
 import { LeaveRequest } from '../hooks/useLeave';
@@ -14,6 +16,11 @@ interface Props {
 }
 
 export function LeaveCard({ request, index = 0 }: Props) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const variant =
     request.status === 'Approved' ? 'approved'
     : request.status === 'Rejected' ? 'rejected'
@@ -22,7 +29,9 @@ export function LeaveCard({ request, index = 0 }: Props) {
   const days = request.totalDays ?? request.days ?? 1;
   const isSingleDay = request.startDate === request.endDate || days === 1;
 
-  const dateLabel = isSingleDay
+  const dateLabel = request.isHalfDay
+    ? `${format(new Date(request.startDate + 'T00:00:00'), 'EEEE, d MMMM yyyy')} · ${request.halfDaySlot === 'afternoon' ? 'Afternoon' : 'Morning'} half`
+    : isSingleDay
     ? format(new Date(request.startDate + 'T00:00:00'), 'EEEE, d MMMM yyyy')
     : `${format(new Date(request.startDate + 'T00:00:00'), 'dd MMM')} → ${format(new Date(request.endDate + 'T00:00:00'), 'dd MMM yyyy')}`;
 
@@ -40,8 +49,12 @@ export function LeaveCard({ request, index = 0 }: Props) {
     >
       <View style={styles.top}>
         <View style={styles.typeRow}>
-          <MaterialCommunityIcons name="umbrella-outline" size={16} color={Colors.primary} />
-          <Text style={styles.type}>{request.leaveType}</Text>
+          <MaterialCommunityIcons
+            name={request.isHalfDay ? 'weather-sunset-up' : 'umbrella-outline'}
+            size={16}
+            color={Colors.primary}
+          />
+          <Text style={styles.type}>{request.isHalfDay ? 'Half-Day Leave' : request.leaveType}</Text>
         </View>
         <Badge label={request.status} variant={variant} />
       </View>
@@ -61,7 +74,7 @@ export function LeaveCard({ request, index = 0 }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,

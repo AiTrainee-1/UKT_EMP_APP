@@ -15,6 +15,14 @@ export interface PermissionsResult {
   items: PermissionRequest[];
   monthlyUsed: number;
   monthlyLimit: number;
+  // Daily/weekly caps on the backend's auto-detected Permission zone (see
+  // PayrollSettings.max_permissions_per_day/_per_week) -not enforced on
+  // this submission form itself, but shown alongside the monthly figure so
+  // the employee understands the full picture. Read off any item since the
+  // value is the same company-wide setting on every row; undefined when the
+  // list is empty (falls back below).
+  dailyLimit: number;
+  weeklyLimit: number;
 }
 
 export function usePermissions(employeeId: number | null, month?: number, year?: number) {
@@ -24,10 +32,13 @@ export function usePermissions(employeeId: number | null, month?: number, year?:
       const res = await api.get('/permissions', { params: { employeeId, month, year } });
       const raw = res.data;
       const items: PermissionRequest[] = Array.isArray(raw) ? raw : (raw?.items ?? raw?.results ?? []);
+      const first: any = items[0] ?? {};
       return {
         items,
         monthlyUsed: raw?.monthlyUsed ?? items.filter((r) => r.status !== 'Rejected').length,
-        monthlyLimit: raw?.monthlyLimit ?? 3,
+        monthlyLimit: raw?.monthlyLimit ?? (first.monthlyLimit ?? 3),
+        dailyLimit: first.dailyLimit ?? 1,
+        weeklyLimit: first.weeklyLimit ?? 2,
       };
     },
     enabled: !!employeeId,
@@ -85,11 +96,11 @@ export interface MissingPunchItem {
   createdAt: string | null;
 }
 
-export function useMissingPunch(employeeId: number | null) {
+export function useMissingPunch(employeeId: number | null, month?: number, year?: number) {
   return useQuery({
-    queryKey: ['missing-punch-requests', employeeId],
+    queryKey: ['missing-punch-requests', employeeId, month, year],
     queryFn: async (): Promise<MissingPunchItem[]> => {
-      const res = await api.get('/missing-punch-requests');
+      const res = await api.get('/missing-punch-requests', { params: { month, year } });
       return Array.isArray(res.data) ? res.data : [];
     },
     enabled: !!employeeId,

@@ -5,6 +5,8 @@ import { Redirect } from 'expo-router';
 import { useAuth } from '../src/hooks/useAuth';
 import { UKTLogo } from '../src/components/UKTLogo';
 import { Colors } from '../src/constants/colors';
+import { useTheme, useThemedStyles } from '../src/theme/ThemeProvider';
+import type { Palette } from '../src/theme/palettes';
 
 /**
  * Custom JS splash shown while auth state resolves — layered on top of the
@@ -14,6 +16,11 @@ import { Colors } from '../src/constants/colors';
  * it, and the wordmark + tagline fade up a beat later.
  */
 export default function SplashScreen() {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const { user, isLoading } = useAuth();
 
   const logoScale = useRef(new Animated.Value(0.6)).current;
@@ -86,6 +93,11 @@ export default function SplashScreen() {
 }
 
 function PulsingDot({ delay }: { delay: number }) {
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   const scale = useRef(new Animated.Value(0.6)).current;
 
   useEffect(() => {
@@ -105,7 +117,7 @@ function PulsingDot({ delay }: { delay: number }) {
   return <Animated.View style={[styles.dot, { transform: [{ scale }] }]} />;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',

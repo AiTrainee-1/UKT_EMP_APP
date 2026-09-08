@@ -25,16 +25,31 @@ export interface GeoPunchResult {
 }
 
 /** The destination-request gate — no photos/GPS at this stage, that
- * verification now happens per-punch (see OnDutyPunchVerification below).
- * Two-stage HOD->HR chain; approval flips status to "active" (started_at
- * stamped), and the session ends in "completed" either automatically (4th
- * punch approved) or manually (employee taps Done). */
+ * verification happens per-punch (see OnDutyPunchVerification below).
+ *
+ * The employee does NOT wait for the HOD->HR chain. The backend reports
+ * `status: "active"` to this app the moment the request is submitted, so
+ * the session is punchable straight away; `approvalStatus` carries the real
+ * HRMS state for display only. Nothing captured counts as attendance until
+ * HR approves the request, at which point every punch under it is accepted
+ * together — and if HR rejects it, they are all voided.
+ *
+ * The session ends the same day, one of three ways: the employee taps Done,
+ * all 4 punches are in (closed at capture, not at approval), or the
+ * server's 23:00 job closes it. */
 export interface OnDutySession {
   id: number;
   destination: string;
   branchId: number | null;
   branchName: string | null;
+  /** Presented status. A submitted-but-unapproved session reads "active"
+   *  here so the app lets the employee get on with their day. */
   status: 'pending_hod' | 'pending_hr' | 'active' | 'completed' | 'rejected';
+  /** The true HRMS status behind `status` — show it, never gate on it. */
+  approvalStatus: 'pending_hod' | 'pending_hr' | 'active' | 'completed' | 'rejected';
+  /** Being worked, but HR/HOD hasn't decided yet. */
+  isProvisional: boolean;
+  employeeEndedAt: string | null;
   hodReviewedBy: string | null;
   hodReviewComment: string | null;
   hodReviewedAt: string | null;
@@ -44,7 +59,7 @@ export interface OnDutySession {
   startedAt: string | null;
   completedAt: string | null;
   completedBy: string | null;
-  completionReason: 'manual' | 'auto_4th_punch' | null;
+  completionReason: 'manual' | 'auto_4th_punch' | 'auto_day_end' | null;
   createdAt: string | null;
 }
 
@@ -70,12 +85,24 @@ export interface OnDutyPunchVerification {
   createdAt: string | null;
 }
 
+/** One of the day's four punch slots. The employee picks which one they're
+ *  submitting, so a missed punch never blocks the ones after it — slot 4 can
+ *  be filled while slot 3 is still empty. Type is fixed by slot parity
+ *  (IN/OUT/IN/OUT), so filling a gap later can't invert the day. */
+export interface PunchSlot {
+  punchNumber: 1 | 2 | 3 | 4;
+  punchType: 'IN' | 'OUT';
+  status: 'available' | 'pending' | 'approved' | 'recorded';
+  available: boolean;
+}
+
 export interface GeoPunchStatus {
   date: string;
   punches: { punchTime: string; punchType: 'IN' | 'OUT'; source: string; sourceLabel: string }[];
   onDutySession: OnDutySession | null;
   nextPunchNumber: number | null;
   nextPunchType: 'IN' | 'OUT' | null;
+  punchSlots: PunchSlot[];
 }
 
 export function useGeoPunchStatus(enabled = true) {
@@ -127,6 +154,7 @@ export function useGeoPunch() {
 export interface OnDutySessionStatusResult {
   session: OnDutySession | null;
   punchVerifications: OnDutyPunchVerification[];
+  punchSlots: PunchSlot[];
 }
 
 /** The employee's current/most recent On-Duty session (pending/active, or
@@ -141,14 +169,16 @@ export function useOnDutySessionStatus() {
   });
 }
 
-/** Step 1 of the On-Duty flow: just a destination, no photos — starts the
- * Department Head -> HR approval chain. The session auto-activates the
- * moment HR approves it. */
+/** Step 1 of the On-Duty flow: just a destination, no photos. Starts the
+ * Department Head -> HR approval chain AND opens the session immediately —
+ * the employee can punch straight away rather than waiting on approval. */
 export function useSubmitOnDutySessionRequest() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (body: { destination: string }) =>
-      (await api.post('/on-duty-sessions/request', body)).data as { status: string; sessionId: number },
+      (await api.post('/on-duty-sessions/request', body)).data as {
+        status: string; sessionId: number; isProvisional: boolean; canPunch: boolean; message: string;
+      },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
@@ -156,9 +186,10 @@ export function useSubmitOnDutySessionRequest() {
   });
 }
 
-/** Employee-only manual "Mark as Done" — ends an active session early. If
- * they don't tap this, the session auto-completes when their 4th punch of
- * the day is approved by HR. */
+/** Employee-only manual "Mark as Done" — ends the session early. If they
+ * don't tap it, the session closes on its own: at the 4th punch, or at
+ * 23:00 IST, whichever comes first. Ending the day does not decide the
+ * request — a still-unapproved session stays in HR's queue. */
 export function useCompleteOnDutySession() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -175,12 +206,19 @@ export interface OnDutyPunchResult {
   verificationId: number;
   punchNumber: number | null;
   punchType: 'IN' | 'OUT' | null;
+  /** True when this punch filled the day's last slot and the server closed
+   *  the session there and then. */
+  sessionEnded: boolean;
+  punchSlots: PunchSlot[];
 }
 
-/** Captures one of the day's regular attendance punches while a session is
- * active — selfie + GPS, held pending until HR approves it. Reuses the SAME
- * 4-punch-per-day slot the biometric/Office Geo Punch pipelines use; this is
- * not a separate on-duty punch counter. */
+/** Captures one of the day's regular attendance punches — selfie + GPS,
+ * held pending until HR approves the On-Duty request it belongs to. Reuses
+ * the SAME 4-punch-per-day slots the biometric/Office Geo Punch pipelines
+ * use; this is not a separate on-duty punch counter.
+ *
+ * `punchNumber` says which slot this is. It can be submitted in any order,
+ * and submitting one never waits on the previous one being reviewed. */
 export function useSubmitOnDutyPunch() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -190,11 +228,13 @@ export function useSubmitOnDutyPunch() {
       accuracy?: number;
       isMocked?: boolean;
       photoUri: string;
+      punchNumber?: number;
     }) => {
       const form = new FormData();
       form.append('latitude', String(body.latitude));
       form.append('longitude', String(body.longitude));
       if (body.accuracy != null) form.append('accuracy', String(body.accuracy));
+      if (body.punchNumber != null) form.append('punchNumber', String(body.punchNumber));
       form.append('isMocked', String(!!body.isMocked));
       form.append('photo', { uri: body.photoUri, name: 'punch.jpg', type: 'image/jpeg' } as any);
       const res = await api.post('/on-duty-sessions/punch', form, {

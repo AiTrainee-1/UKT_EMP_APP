@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Modal, Image, SafeAreaView } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { Colors } from '../constants/colors';
+import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
+import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
-import { EmployeeDocument, downloadAndShareDocument } from '../hooks/useDocuments';
+import { EmployeeDocument, viewDocument, downloadDocument, isImageFile } from '../hooks/useDocuments';
 
 const CATEGORY_ICONS: Record<string, string> = {
   pan_card: 'card-account-details-outline',
@@ -26,16 +28,35 @@ interface Props {
 }
 
 export function DocumentCategoryCard({ categoryLabel, category, files }: Props) {
-  const [openingId, setOpeningId] = useState<number | null>(null);
+  // `Colors` shadows the module import for this component's body, so both
+  // the stylesheet and any inline JSX colour follow the active theme.
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
 
-  const handleOpen = async (doc: EmployeeDocument) => {
-    setOpeningId(doc.id);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [previewUri, setPreviewUri] = useState<string | null>(null);
+
+  const handleView = async (doc: EmployeeDocument) => {
+    setBusyId(doc.id);
     try {
-      await downloadAndShareDocument(doc);
+      const uri = await viewDocument(doc);
+      if (isImageFile(doc.originalFilename)) setPreviewUri(uri);
     } catch {
       Alert.alert('Could not open file', 'Please try again later.');
     } finally {
-      setOpeningId(null);
+      setBusyId(null);
+    }
+  };
+
+  const handleDownload = async (doc: EmployeeDocument) => {
+    setBusyId(doc.id);
+    try {
+      await downloadDocument(doc);
+      Alert.alert('Downloaded', `${doc.originalFilename} has been saved.`);
+    } catch {
+      Alert.alert('Could not download file', 'Please try again later.');
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -54,13 +75,7 @@ export function DocumentCategoryCard({ categoryLabel, category, files }: Props) 
 
       <View style={styles.files}>
         {files.map((doc) => (
-          <TouchableOpacity
-            key={doc.id}
-            style={styles.fileRow}
-            onPress={() => handleOpen(doc)}
-            disabled={openingId === doc.id}
-            activeOpacity={0.7}
-          >
+          <View key={doc.id} style={styles.fileRow}>
             <MaterialCommunityIcons name="file-outline" size={16} color={Colors.textMuted} />
             <View style={{ flex: 1 }}>
               <Text style={styles.fileName} numberOfLines={1}>{doc.originalFilename}</Text>
@@ -68,19 +83,41 @@ export function DocumentCategoryCard({ categoryLabel, category, files }: Props) 
                 <Text style={styles.fileDate}>{format(new Date(doc.uploadedAt), 'dd MMM yyyy')}</Text>
               )}
             </View>
-            <MaterialCommunityIcons
-              name={openingId === doc.id ? 'loading' : 'tray-arrow-down'}
-              size={18}
-              color={Colors.primary}
-            />
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.fileActionBtn}
+              onPress={() => handleView(doc)}
+              disabled={busyId === doc.id}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="eye-outline" size={18} color={Colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.fileActionBtn}
+              onPress={() => handleDownload(doc)}
+              disabled={busyId === doc.id}
+              activeOpacity={0.7}
+            >
+              <MaterialCommunityIcons name="tray-arrow-down" size={18} color={Colors.primary} />
+            </TouchableOpacity>
+          </View>
         ))}
       </View>
+
+      <Modal visible={!!previewUri} transparent animationType="fade" onRequestClose={() => setPreviewUri(null)}>
+        <SafeAreaView style={styles.previewBackdrop}>
+          <TouchableOpacity style={styles.previewCloseBtn} onPress={() => setPreviewUri(null)}>
+            <MaterialCommunityIcons name="close" size={24} color="#fff" />
+          </TouchableOpacity>
+          {previewUri && (
+            <Image source={{ uri: previewUri }} style={styles.previewImage} resizeMode="contain" />
+          )}
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
@@ -114,4 +151,9 @@ const styles = StyleSheet.create({
   },
   fileName: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600' },
   fileDate: { color: Colors.textMuted, fontSize: 11, marginTop: 1 },
+  fileActionBtn: { padding: 4, marginLeft: 4 },
+
+  previewBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' },
+  previewCloseBtn: { position: 'absolute', top: 16, right: 16, zIndex: 1, padding: 8 },
+  previewImage: { width: '100%', height: '80%' },
 });
