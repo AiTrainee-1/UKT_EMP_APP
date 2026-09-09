@@ -17,7 +17,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.uktextiles.in/api"
+        "EXPO_PUBLIC_API_URL": "https://api.uktextiles.in/api",
+        "EXPO_PUBLIC_WEB_APP_URL": "https://hrms.uktextiles.in"
       }
     },
     "production": {
@@ -25,7 +26,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://api.uktextiles.in/api"
+        "EXPO_PUBLIC_API_URL": "https://api.uktextiles.in/api",
+        "EXPO_PUBLIC_WEB_APP_URL": "https://hrms.uktextiles.in"
       }
     }
   },

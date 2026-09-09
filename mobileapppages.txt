@@ -1,0 +1,1502 @@
+====================================================================
+UKTEXTILES EMPLOYEE APP — MOBILE APP PAGE & COMPONENT REFERENCE
+====================================================================
+Repo: D:\Projects\UK-textile-Mobi\uktextiles-employee-app
+Stack: Expo Router (React Native), SDK 57
+Purpose of this document: a complete, page-by-page inventory of every
+screen, component, feature, and API call in the mobile app, for use as
+a source-of-truth reference when recreating the UI (e.g. in Google
+Stitch) with identical features and functionality.
+
+This document has five parts:
+  1. Full route tree
+  2. Per-page catalog (UI, actions, API calls, conditional content)
+  3. Reusable shared components
+  4. Navigation structure (tab bar, side drawer, home quick actions)
+  5. Full hook / API endpoint map
+
+
+====================================================================
+1. FULL ROUTE TREE (app/)
+====================================================================
+
+app/
+  _layout.tsx                    Root Stack + app-wide providers (not a screen)
+  index.tsx                      Splash / auth redirect                -> /
+  (auth)/
+    _layout.tsx                  Auth stack shell
+    login.tsx                    -> /(auth)/login
+    set-password.tsx             -> /(auth)/set-password
+  (tabs)/
+    _layout.tsx                  Bottom tab bar shell
+    home.tsx                     -> /(tabs)/home
+    attendance.tsx                -> /(tabs)/attendance
+    shift.tsx                    -> /(tabs)/shift              (thin wrapper)
+    approvals.tsx                -> /(tabs)/approvals          (manager-only tab)
+    profile.tsx                  -> /(tabs)/profile
+    leave.tsx                    -> /(tabs)/leave              (routable, no tab button)
+    notifications.tsx            -> /(tabs)/notifications      (routable, no tab button)
+  chat/
+    _layout.tsx
+    index.tsx                    -> /chat
+  company/
+    _layout.tsx
+    index.tsx                    -> /company
+  documents/
+    _layout.tsx
+    index.tsx                    -> /documents
+  geo-punch/
+    _layout.tsx
+    index.tsx                    -> /geo-punch
+  geo-tracking/
+    _layout.tsx
+    index.tsx                    -> /geo-tracking
+  holidays/
+    _layout.tsx
+    index.tsx                    -> /holidays
+  idcard/
+    _layout.tsx
+    index.tsx                    -> /idcard
+  missing-punch/
+    _layout.tsx
+    index.tsx                    -> /missing-punch
+  on-duty/
+    _layout.tsx
+    index.tsx                    -> /on-duty
+  outpass/
+    _layout.tsx
+    index.tsx                    -> /outpass
+  requests/
+    _layout.tsx
+    index.tsx                    -> /requests                 (Permission requests)
+  resignation/
+    _layout.tsx
+    warning.tsx                  -> /resignation/warning
+    survey.tsx                   -> /resignation/survey
+    confirm.tsx                  -> /resignation/confirm
+    success.tsx                  -> /resignation/success
+    deactivated.tsx              -> /resignation/deactivated
+  salary/
+    _layout.tsx
+    index.tsx                    -> /salary
+    [id].tsx                     -> /salary/[id]
+  settlement/
+    _layout.tsx
+    index.tsx                    -> /settlement                (Advances & Loans)
+  shift/
+    _layout.tsx
+    index.tsx                    -> /shift                     (also mounted as the "My Shift" tab)
+
+
+====================================================================
+2. PER-PAGE CATALOG
+====================================================================
+
+--------------------------------------------------------------------
+PAGE: Splash
+--------------------------------------------------------------------
+Route:    /
+File:     app/index.tsx
+Purpose:  Branded splash shown while auth state resolves, then redirects.
+
+UI:
+  - Gradient background
+  - Animated UKTLogo with a pulsing ring behind it
+  - "UKTextiles / Employee Portal" wordmark
+  - 3 pulsing dots loader
+
+Actions:
+  - None — auto-redirects to /(tabs)/home if logged in, else /(auth)/login,
+    once useAuth().isLoading resolves.
+
+API calls:
+  - None directly; consumes useAuth() context state populated by
+    checkAuth() -> GET /auth/me (called from the root layout).
+
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Login
+--------------------------------------------------------------------
+Route:    /(auth)/login
+File:     app/(auth)/login.tsx
+Purpose:  Employee sign-in.
+
+UI:
+  - Decorative background circles
+  - UKTLogo + brand wordmark
+  - "Welcome back" chip
+  - Form card: Employee Code input, Password input (show/hide toggle)
+  - Sign In button
+  - "First time? Set your password" link
+  - Toast
+
+Actions:
+  - Submit login form
+  - Navigate to /(auth)/set-password
+
+API calls:
+  - loginRequest() -> POST /auth/employee-login
+
+Conditional content: none (pre-auth screen).
+
+
+--------------------------------------------------------------------
+PAGE: Set Password
+--------------------------------------------------------------------
+Route:    /(auth)/set-password
+File:     app/(auth)/set-password.tsx
+Purpose:  First-time password setup.
+
+UI:
+  - Form card: Employee Code, New Password, Confirm Password
+  - Set Password button
+  - Back to Login link
+  - Toast
+
+Actions:
+  - Submit -> sets password, auto-redirects to login after 1.5s
+
+API calls:
+  - setPasswordRequest() -> POST /auth/set-password
+
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Home (tab 1 of 5)
+--------------------------------------------------------------------
+Route:    /(tabs)/home
+File:     app/(tabs)/home.tsx
+Purpose:  Main dashboard — punch status, quick actions, attendance snapshot.
+
+UI:
+  - Header: hamburger (opens SideDrawer), greeting + live clock/date,
+    bell icon with unread-count badge -> /(tabs)/notifications
+  - "This Month's Overview" gradient banner: 4 stats (Working Days,
+    Present, Absent, Leave), skeleton while loading
+  - "Quick Actions" section: grid of tiles, first 6 shown by default,
+    "Show all N / Show less" toggle expands to the full list
+    (full 19-item list in Section 4 below)
+  - "My Punches Today" card: chips of today's IN/OUT punches with
+    times, or empty state
+  - "Live Attendance" section: LiveFeedTicker — scrolling ticker of
+    recent check-in/out events
+  - "Company Location" card (conditional): tap opens native Maps app
+    to the branch coordinates
+  - "Digital ID Card" mini card (conditional): mini avatar/name/code/
+    designation, QR icon -> /idcard
+  - "Recent Attendance" row (conditional): 7 AttendanceDot chips
+    (date + status icon)
+  - "Upcoming Holidays" list (conditional, up to 3): date box + name +
+    weekday + flag badge
+  - Skeleton cards while loading
+  - SlideToPunch bar pinned above the tab bar (slide-to-punch gesture)
+  - SideDrawer (hamburger menu)
+
+Actions:
+  - Pull-to-refresh
+  - Navigate to any Quick Action route
+  - Tap bell -> notifications
+  - Tap location card -> open native maps
+  - Tap ID card mini -> /idcard
+  - Slide-to-punch -> punch attendance, or hand off to On-Duty
+  - Open side drawer -> logout confirm (Alert)
+
+API calls:
+  - useDashboard(employeeId) -> GET /dashboard/employee-summary
+    (falls back to composing useLeaveBalances -> GET /leave-balances,
+    useLeaveRequests -> GET /leave-requests,
+    usePermissions -> GET /permissions)
+  - useAppNotifications(employeeId) -> GET /notifications?employeeId=
+  - useLiveFeed() -> GET /attendance/live-feed
+  - useIdCard(employeeId) -> GET /idcard
+  - useEmployee(employeeId) -> GET /employees/{id}
+  - useAttendance(employeeId, month, year) -> GET /attendance/employee/{id}
+  - (via SlideToPunch) useGeoPunchStatus() -> GET /attendance/geo-punch/status;
+    useGeoPunch() -> POST /attendance/geo-punch
+  - (via SideDrawer) useGeoPunchStatus(), useEmployee()
+
+Conditional content:
+  - Company Location card only if emp.branchLat/branchLng set
+  - Digital ID card mini only if idCard or emp data present
+  - Recent Attendance / Upcoming Holidays only if dashboard data present
+
+
+--------------------------------------------------------------------
+PAGE: Attendance (tab 2 of 5)
+--------------------------------------------------------------------
+Route:    /(tabs)/attendance
+File:     app/(tabs)/attendance.tsx
+Purpose:  Monthly attendance overview, calendar, trend chart.
+
+UI:
+  - Gradient header with hamburger + month pager (prev/next; next
+    disabled at current month)
+  - GeoPunchCard: compact status banner -> /geo-punch or /on-duty
+  - Sync-pending warning banner (conditional)
+  - "Assigned Shift" banner -> /shift
+  - 3x2 summary grid: Working Days / Present / Absent / Late /
+    Half Shift / Leave
+  - "Monthly Trend" card with AttendanceTrendChart (hand-drawn SVG bar chart)
+  - Casual Leave eligibility card: eligible/not-eligible badge, yearly
+    entitlement / used / remaining stats
+  - AttendanceCalendar grid card: tap a day -> detail BottomSheet
+    (status, first/last punch, punch count, quick-action chips for
+    Absent/Half Shift/Late days)
+  - Color legend row
+  - SideDrawer
+
+Actions:
+  - Pull-to-refresh
+  - Page months
+  - Tap shift banner -> /shift
+  - Tap calendar day -> detail sheet with contextual actions
+    (Apply Leave -> /(tabs)/leave, Missing Punch -> /missing-punch,
+    Permission -> /requests)
+  - Open drawer
+
+API calls:
+  - useAttendance(employeeId, month, year) -> GET /attendance/employee/{id}
+  - useShift(employeeId) -> GET /shift-assignments
+  - useAttendanceSyncStatus() -> GET /attendance/sync-status
+  - useCLEligibility(employeeId) -> GET /casual-leaves/my-eligibility
+  - (via GeoPunchCard) useGeoPunchStatus() -> GET /attendance/geo-punch/status
+
+Conditional content:
+  - Sync warning only if pendingSync
+  - Shift banner only if a shift is assigned
+  - CL card only if eligibility data present
+
+
+--------------------------------------------------------------------
+PAGE: My Shift (tab 3 of 5)
+--------------------------------------------------------------------
+Route:    /(tabs)/shift
+File:     app/(tabs)/shift.tsx  (thin wrapper — renders the shared
+          ShiftScreen component from app/shift/index.tsx with a
+          topInset prop so it manages its own status-bar inset; no
+          separate header on this tab)
+Purpose:  see the standalone /shift page below — identical content.
+
+
+--------------------------------------------------------------------
+PAGE: Approvals (tab 4 of 5 — MANAGER ONLY)
+--------------------------------------------------------------------
+Route:    /(tabs)/approvals
+File:     app/(tabs)/approvals.tsx
+Purpose:  Managers review and approve/reject team requests across
+          7 categories.
+
+UI:
+  - Gradient header ("Approvals / Review pending requests")
+  - Horizontal scroll of per-category stat cards: Leave, Permission,
+    Casual Leave*, Attendance*, Missing Punch*, Outpass*, Resignations*
+    (starred categories only appear if the manager has that specific
+    approval capability) — each shows a pending count, tap to switch tab
+  - FlatList of request cards for the active category: avatar initial,
+    employee name/code, type chip, date, reason preview, inline
+    Approve/Reject buttons, staggered entrance animation
+  - Empty state: "All caught up!"
+  - Detail BottomSheet (generic — leave/permission/casualLeave/
+    attendance/missingPunch/outpass): full fields + optional comment
+    TextInput + Approve/Reject buttons
+  - Separate detail BottomSheet for resignation: reason, last working
+    date, submitted date, survey Q&A, comment, Approve/Reject
+  - Toast
+
+Actions:
+  - Switch category tab
+  - Tap a card or its inline buttons to open the detail sheet
+  - Approve/reject with an optional comment
+  - Pull-to-refresh
+
+API calls:
+  - useManagerProfile(!!user) -> GET /manager/me
+  - usePendingRequests() -> GET /manager/pending-requests
+  - useApproveLeave() -> PATCH /manager/leave-requests/{id}/status
+  - useApprovePermission() -> PATCH /manager/permissions/{id}/status
+  - useResignationAction() -> PATCH /manager/resignations/{id}/action
+  - useApproveCasualLeave() -> PATCH /manager/casual-leaves/{id}/status
+  - useApproveAttendance() -> PATCH /manager/attendance-requests/{id}/status
+  - useApproveMissingPunch() -> PATCH /manager/missing-punch-requests/{id}/status
+  - useApproveOutpass() -> PATCH /manager/outpass-requests/{id}/status
+
+Conditional/role-gated:
+  - The whole tab is hidden from non-managers (href: isManager ?
+    undefined : null in the tab layout)
+  - Within the screen, Casual Leave / Attendance / Missing Punch /
+    Outpass / Resignation tabs each only appear if the matching
+    manager.canApprove* flag is true (Outpass reuses canApprovePermissions)
+
+
+--------------------------------------------------------------------
+PAGE: Leave (routable — no bottom tab button)
+--------------------------------------------------------------------
+Route:    /(tabs)/leave
+File:     app/(tabs)/leave.tsx
+Purpose:  Apply for and track regular leave + casual leave.
+
+UI:
+  - Gradient header with hamburger + "Apply" pill button
+  - 4-stat summary grid: Taken / Submitted / Approved / Rejected
+  - Casual Leave card: tap opens the CL apply sheet; shows count
+    applied this month, or an ineligibility reason
+  - Live / Confirmed Requests tab switch
+  - Filters toggle panel: leave-type chips + From/To DatePickerFields,
+    "Clear filters"
+  - List of LeaveCards (or EmptyState / skeletons)
+  - SideDrawer
+  - "Apply for Leave" BottomSheet: leave-type chips, Multi-day toggle,
+    Half-Day toggle + Morning/Afternoon chips, date field(s),
+    reason TextArea, submit
+  - "Apply for Casual Leave" BottomSheet: date picker, reason, submit
+  - Toast, SuccessOverlay
+
+Actions:
+  - Apply for leave (single-day, multi-day, or half-day —
+    Morning or Afternoon)
+  - Apply for casual leave
+  - Filter requests by type / date range
+  - Switch Live/Confirmed tab
+  - Pull-to-refresh
+  - Open drawer
+
+API calls:
+  - useLeaveRequests(employeeId) -> GET /leave-requests
+  - useLeaveTypes() -> GET /leave-types (falls back to a hardcoded
+    list if the backend returns an empty list)
+  - useApplyLeave(employeeId) -> POST /leave-requests
+  - useCLEligibility(employeeId) -> GET /casual-leaves/my-eligibility
+  - useCasualLeaves(employeeId, {month, year}) -> GET /casual-leaves
+  - useApplyCasualLeave(employeeId) -> POST /casual-leaves
+
+Conditional content:
+  - CL apply is blocked (card not tappable, no chevron shown) if
+    clEligibility.eligible === false
+
+
+--------------------------------------------------------------------
+PAGE: Notifications (routable — no bottom tab button)
+--------------------------------------------------------------------
+Route:    /(tabs)/notifications
+File:     app/(tabs)/notifications.tsx
+Purpose:  In-app notification inbox.
+
+UI:
+  - Gradient header: hamburger, title, unread count, "Mark all read"
+    pill (conditional), bell icon with badge
+  - FlatList of notification cards: icon by type, derived title,
+    message, relative time, unread dot; staggered entrance
+  - EmptyState
+  - SideDrawer
+
+Actions:
+  - Tap an unread notification -> marks it read
+  - "Mark all read"
+  - Pull-to-refresh
+  - Open drawer
+
+API calls:
+  - useAppNotifications(employeeId) -> GET /notifications?employeeId=
+  - useMarkNotificationRead() -> PATCH /notifications/{id}/read
+  - useMarkAllNotificationsRead() -> PATCH /notifications/mark-all-read
+
+Conditional content:
+  - Notification "title" is derived client-side from its type
+    (leave/casual_leave/permission/on_duty/missing_punch/attendance/
+    employee_request/resignation/general) since the backend sends no
+    title field.
+
+
+--------------------------------------------------------------------
+PAGE: Profile (tab 5 of 5)
+--------------------------------------------------------------------
+Route:    /(tabs)/profile
+File:     app/(tabs)/profile.tsx
+Purpose:  Employee's own profile, HR-record viewer, password change,
+          resignation entry point.
+
+UI:
+  - Parallax hero card (gradient, hamburger, tappable Avatar with a
+    camera-edit badge, name, code/designation, status badge,
+    Production/Staff chip, department chip) — shrinks/fades on scroll
+  - Phone / Join Date stat cards
+  - Collapsible ProfileSections: Personal Information (open by
+    default), Family Information, Employee Information, Bank
+    Information (masked account number), Compliance Information,
+    Address Information
+  - Actions card: "Change Password" row -> BottomSheet
+  - Resignation status row — one of:
+      * 3-step progress tracker (Submitted / Dept Head / HR Final)
+        if pending or dept_approved
+      * "Resignation Rejected" + Resubmit row if rejected
+      * "Submit Resignation" row if none exists
+  - Logout row (red)
+  - SideDrawer
+  - Change Password BottomSheet: Employee Code (read-only), New
+    Password, Confirm Password
+  - Toast
+
+Actions:
+  - Tap avatar -> pick / replace / remove a device-local profile
+    photo (NOTE: this photo is never sent to the server — see
+    Section 5, useLocalProfilePhoto)
+  - Expand/collapse each profile section
+  - Change password
+  - Navigate to /resignation/warning (new submission or resubmit)
+  - Logout (confirm Alert)
+  - Open drawer
+
+API calls:
+  - useEmployee(employeeId) -> GET /employees/{id}
+  - useMyResignation(employeeId) -> GET /my/resignation
+  - useLocalProfilePhoto(employeeId) — AsyncStorage only, no API call
+  - setPasswordRequest() -> POST /auth/set-password
+
+Conditional content:
+  - The resignation block renders one of 3 states depending on
+    resignation.status (pending/dept_approved vs rejected vs
+    none/already-approved-elsewhere)
+
+
+--------------------------------------------------------------------
+PAGE: Chat
+--------------------------------------------------------------------
+Route:    /chat
+File:     app/chat/index.tsx
+Purpose:  Company-wide and department team chat.
+
+UI:
+  - Header: back button, "Team Chat" title
+  - Company / Department tab switch
+  - Message list (FlatList): bubbles left/right by sender, sender
+    name, reply-preview block, message text, time, reaction pills
+  - Swipe-to-reply gesture (Swipeable)
+  - Long-press a message -> emoji-picker Modal (six quick emoji:
+    thumbs-up, heart, laugh, wow, cry, pray)
+  - Reply bar (shown while replying, dismissible)
+  - Composer: multiline TextInput + send button
+  - EmptyState for missing/unset-up channels
+  - Skeletons, Toast
+
+Actions:
+  - Switch channel type (Company / Department)
+  - Send a message (optionally as a reply to another message)
+  - Swipe a message to reply to it
+  - Long-press a message to react to it
+  - Tap an existing reaction pill to toggle it on/off
+  - Navigate back
+
+API calls:
+  - useChatChannels() -> GET /chat/channels
+  - useChatMessages(channelId) -> GET /chat/channels/{id}/messages
+    (polls every 4 seconds)
+  - useSendChatMessage(channelId) -> POST /chat/channels/{id}/messages
+  - useToggleReaction(channelId) -> POST /chat/messages/{id}/reactions
+    or DELETE /chat/messages/{id}/reactions
+
+Conditional content:
+  - Department tab may show "No department chat yet" if the employee
+    has no department/channel
+
+
+--------------------------------------------------------------------
+PAGE: Company
+--------------------------------------------------------------------
+Route:    /company
+File:     app/company/index.tsx
+Purpose:  Static "About UK Textiles" marketing/info page.
+
+UI:
+  - Hero image with scrim, logo, title, tagline
+  - 4-stat fact grid: Established / Monthly output / Based in / Model
+  - "Who We Are" card (2 paragraphs)
+  - "What we make": 3 product cards with images (Men's Knitwear,
+    Women's Apparel, Children's Garments)
+  - "How we work" card: 3 capability rows (Vertically integrated,
+    ERP-enabled, Export focused)
+  - "Get in touch" card: address, phone button (dials), email button
+    (opens mail app), "Visit uktextiles.in" button (external link)
+  - Footer copyright
+
+Actions:
+  - Tap phone -> dial
+  - Tap email -> mail app
+  - Tap website button -> open browser
+
+API calls: none — fully static content.
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Documents
+--------------------------------------------------------------------
+Route:    /documents
+File:     app/documents/index.tsx
+Purpose:  HR-uploaded personal document library.
+
+UI:
+  - FlatList of DocumentCategoryCards grouped by category (PAN card,
+    Aadhaar, educational certs, etc.), each listing files with view/
+    download icon buttons
+  - EmptyState, skeletons
+
+Actions:
+  - View a document (downloads then opens an in-app image preview
+    Modal, or a native share/Quick-Look sheet for non-images)
+  - Download a document (saves to persistent app storage)
+  - Pull-to-refresh
+
+API calls:
+  - useDocuments() -> GET /my/documents
+  - viewDocument() / downloadDocument() -> GET /employee-documents/{id}/file
+    (file download, not a react-query hook)
+
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Attendance Request (Office Geo Punch)
+--------------------------------------------------------------------
+Route:    /geo-punch
+File:     app/geo-punch/index.tsx
+Purpose:  Guided 3-step Office Geo Punch flow — permission, capture
+          location, review/punch.
+
+UI:
+  - StepDots progress indicator: Permission / Location / Review
+  - Step cards:
+      * "Allow location access"
+      * "Capture your current location"
+      * "Review": status banner (inside/outside radius), branch/
+        distance/punch#/time grid, Punch In/Out button (if inside
+        radius) or Re-check + Go On-Duty buttons (if outside radius)
+      * "Punch recorded" done card
+  - Blocking gate card if an On-Duty session is active or pending
+    ("Go to On-Duty" button)
+  - Link to /on-duty for off-site work
+  - Toast
+
+Actions:
+  - Grant location permission
+  - Capture GPS location
+  - Punch in/out (if inside radius)
+  - Re-check location
+  - Navigate to the On-Duty flow
+  - Start over
+
+API calls:
+  - useGeoPunchStatus() -> GET /attendance/geo-punch/status
+  - useGeoPunchPrecheck() -> GET /attendance/geo-punch/precheck
+  - useGeoPunch() -> POST /attendance/geo-punch
+
+Conditional content:
+  - The entire punch flow is replaced by an "On-Duty session in
+    progress" gate card if onDutySession.status is pending_hod,
+    pending_hr, or active
+
+
+--------------------------------------------------------------------
+PAGE: Live Tracking
+--------------------------------------------------------------------
+Route:    /geo-tracking
+File:     app/geo-tracking/index.tsx
+Purpose:  Opt-in live location sharing (HR dashboard visibility)
+          status/control screen.
+
+UI:
+  - EmptyState if HR hasn't enabled tracking for this employee
+  - Else: status card (colored dot, "Live tracking active" /
+    "Location access needed" / "Not sharing yet", last-update time,
+    failed-ping warning)
+  - Enable card ("Turn on location sharing", or re-request/"denied"
+    guidance pointing to OS Settings) if not currently active
+  - Info block explaining the conditions under which tracking
+    auto-stops
+
+Actions:
+  - Enable location sharing (requests OS permission)
+  - Open device Settings if permission was previously denied
+  - Permission is re-checked whenever the app returns to foreground
+
+API calls:
+  - useEmployee(employeeId) -> GET /employees/{id}
+    (reads locationTrackingEnabled)
+  - Background ping loop (module-level startLiveTracking) ->
+    POST /live-location/ping every 45 seconds while active
+
+Conditional content:
+  - The entire screen is gated on emp.locationTrackingEnabled
+    (an HR-only toggle)
+
+
+--------------------------------------------------------------------
+PAGE: Holidays
+--------------------------------------------------------------------
+Route:    /holidays
+File:     app/holidays/index.tsx
+Purpose:  Company holiday calendar by year.
+
+UI:
+  - Year selector (prev/next)
+  - "N holidays this month" chip
+  - "Next Holiday" hero card (name + date)
+  - SectionList grouped by month, holiday cards (name, weekday date,
+    type Badge: National/Regional/Company), past holidays dimmed
+  - EmptyState, skeletons
+
+Actions:
+  - Change year
+  - Pull-to-refresh
+
+API calls:
+  - useHolidays(year) -> GET /holidays?year=
+
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Digital ID Card
+--------------------------------------------------------------------
+Route:    /idcard
+File:     app/idcard/index.tsx
+Purpose:  Digital employee ID card with QR verification, flippable
+          front/back.
+
+UI:
+  - Header: back button, "Digital ID Card" title
+  - FlipCard — Staff variant (portrait) or Production variant
+    (landscape), chosen by employmentType:
+      Front: avatar, name, designation pill, employee-code strip,
+             department/joined dashed rows
+      Back:  blood group, DOB, emergency contact, address, QR code
+             ("SCAN TO VERIFY EMPLOYEE") if template.showQrOnBack,
+             legal instructions text, company signature image
+  - Tap-to-flip animation, "Tap card to flip" hint
+  - Info box about official ID usage
+  - Skeleton while loading
+
+Actions:
+  - Tap card to flip between front/back
+  - Navigate back
+
+API calls:
+  - useIdCard(employeeId) -> GET /idcard
+  - useIdCardSettings() -> GET /idcard-settings (branding/template
+    fallback)
+  - useEmployee(employeeId) -> GET /employees/{id} (fallback data
+    source if /idcard fails)
+
+Conditional content:
+  - Card layout (Staff vs Production) is driven by employmentType
+  - QR block only shown if template.showQrOnBack
+  - Signature image only if the company has one uploaded
+
+QR CODE DETAIL (relevant to the recently-fixed bug):
+  - QR value = `${WEB_ORIGIN}/verify/${employeeCode}`
+  - WEB_ORIGIN comes from EXPO_PUBLIC_WEB_APP_URL (set explicitly in
+    .env for local dev and in eas.json for preview/production builds)
+  - Scanning it opens the HR Portal's public /verify/:code page,
+    which calls GET /api/verify-employee/:code and shows a
+    verified/not-verified card with employee identity details
+
+
+--------------------------------------------------------------------
+PAGE: Missing Punch
+--------------------------------------------------------------------
+Route:    /missing-punch
+File:     app/missing-punch/index.tsx
+Purpose:  Report and track a missed biometric punch (2-stage
+          approval: Dept Head then HR).
+
+UI:
+  - Intro card explaining the flow
+  - Month pager
+  - 4-stat summary: Total / Pending / Approved / Rejected
+  - FlatList of request cards: punch-slot label, status Badge,
+    date/time, reason, HOD/HR reviewer lines, "Added to your
+    attendance" hint once approved
+  - EmptyState / skeletons
+  - FAB (+)
+  - "Report a Missing Punch" BottomSheet: 4 punch-slot chips
+    (Morning Check-In / Lunch Check-Out / Lunch Check-In / Evening
+    Check-Out), DatePickerField, TimePickerField, reason TextArea, submit
+  - Toast, SuccessOverlay
+
+Actions:
+  - Submit a missing-punch request
+  - Page months
+  - Pull-to-refresh
+
+API calls:
+  - useMissingPunch(employeeId, month, year) -> GET /missing-punch-requests
+  - useSubmitMissingPunch(employeeId) -> POST /missing-punch-requests
+
+Conditional content: none (all employees can submit).
+
+
+--------------------------------------------------------------------
+PAGE: On-Duty
+--------------------------------------------------------------------
+Route:    /on-duty
+File:     app/on-duty/index.tsx
+Purpose:  Off-site work session — request a destination, then
+          capture selfie+GPS punches for up to 4 slots over the day.
+
+UI (branches entirely on session state):
+  - No session / new request: destination TextArea, "Submit for
+    Approval" button
+  - Pending (HOD or HR): status banner, destination (read-only),
+    HOD-approved note if applicable, "Refresh Status" button
+  - Active:
+      * status banner (+ provisional note if still pending approval
+        upstream)
+      * destination/start-time cells
+      * punch-review card (photo preview, punch#/time, Retake/
+        Submit/Cancel) shown mid-capture
+      * "All 4 punches in" done banner
+      * "Today's Punches" list — 4 slots, tap an open slot to
+        capture via camera + GPS
+      * "Mark On-Duty as Done" button
+  - Completed / Rejected: done card with icon, destination,
+    completion/rejection reason, "Submit New On-Duty Request" +
+    "Back to Attendance" buttons
+  - Toast throughout
+
+Actions:
+  - Submit a destination request
+  - Capture a punch (camera photo + GPS) per open slot
+  - Retake / submit / cancel a captured punch
+  - Mark the session done early
+  - Start a new request after completion/rejection
+  - Refresh status
+
+API calls:
+  - useOnDutySessionStatus() -> GET /on-duty-sessions/status
+  - useSubmitOnDutySessionRequest() -> POST /on-duty-sessions/request
+  - useCompleteOnDutySession() -> POST /on-duty-sessions/complete
+  - useSubmitOnDutyPunch() -> POST /on-duty-sessions/punch
+    (multipart form, includes the captured photo)
+
+Conditional content:
+  - The whole UI branches on session.status: none / pending_hod /
+    pending_hr / active / completed / rejected
+
+
+--------------------------------------------------------------------
+PAGE: Outpass
+--------------------------------------------------------------------
+Route:    /outpass
+File:     app/outpass/index.tsx
+Purpose:  Request and track gate-exit outpasses; view the active
+          pass as a scannable card.
+
+UI:
+  - OutpassFlipCard for the current active/valid pass (if any),
+    pinned at the top of the list:
+      Front: employee, destination, date/time, QR ("SHOW THIS QR AT
+             THE GATE"), countdown timer pill
+      Back:  approver, comment, source, gate-exit info
+  - Live / Confirmed Requests tab switch
+  - FlatList of request cards: destination, status Badge, reason,
+    date/time, "(from On-Duty)" tag if auto-generated, approver note,
+    "Preview" button
+  - EmptyState / skeletons
+  - FAB (+)
+  - "Request an Outpass" BottomSheet: destination Input, reason
+    TextArea, submit
+  - Outpass card preview BottomSheet (reuses OutpassFlipCard for
+    any request tapped, regardless of status)
+  - Toast, SuccessOverlay
+
+Actions:
+  - Submit an outpass request
+  - Preview any request's flip-card (flip between trip details and
+    the approval trail)
+  - Pull-to-refresh
+  - Switch Live/Confirmed tab
+
+API calls:
+  - useOutpassRequests(employeeId) -> GET /outpass-requests
+    (polls every 30 seconds)
+  - useSubmitOutpassRequest(employeeId) -> POST /outpass-requests
+  - useEmployee(employeeId) -> GET /employees/{id} (for the card's
+    avatar/name/code)
+
+Conditional content:
+  - The active-pass card only shows if an approved, unexpired
+    request exists
+  - The QR block on a card only shows if a qrToken is present
+    (i.e. the pass is currently presentable at a gate)
+
+
+--------------------------------------------------------------------
+PAGE: Permission Requests
+--------------------------------------------------------------------
+Route:    /requests
+File:     app/requests/index.tsx
+Purpose:  Submit and track Early Out / Late In / Short Leave
+          permission requests; see monthly usage and salary-
+          deduction impact.
+
+UI:
+  - Usage stats card: ring showing "N left", monthly used/limit,
+    daily/weekly caps, Late Count / Shift Deduction / Salary
+    Deduction stat row
+  - "How this is calculated" info box
+  - Live / Confirmed tab switch
+  - FlatList of request cards: type, status Badge, date/time, reason
+  - EmptyState / skeletons
+  - FAB (+, dimmed if the monthly limit is reached)
+  - "New Permission Request" BottomSheet: cap-warning banner (if
+    limit hit), type chips, DatePickerField, TimePickerField, reason
+    TextArea, submit
+  - Toast, SuccessOverlay
+
+Actions:
+  - Submit a permission request
+  - Switch Live/Confirmed tab
+  - Pull-to-refresh
+
+API calls:
+  - usePermissions(employeeId, month, year) -> GET /permissions
+  - useShiftStats(month, year) -> GET /attendance/employee-shift-stats
+  - useSubmitPermission(employeeId) -> POST /permissions
+
+Conditional content:
+  - The cap-warning banner only shows when remaining === 0
+
+
+--------------------------------------------------------------------
+PAGE: Resignation — Step 0: Warning
+--------------------------------------------------------------------
+Route:    /resignation/warning
+File:     app/resignation/warning.tsx
+Purpose:  Serious-consequences warning gate before starting the
+          resignation flow.
+
+UI:
+  - Red gradient header, shaking alert-icon bubble, title, subtitle
+  - 4 warning cards: goes to Dept Head then HR; account deactivated
+    on approval; can't withdraw once approved at any stage; final
+    settlement processed after last day
+  - "Confirm chip" clarifying this step does not submit anything yet
+  - "I Understand, Continue" button -> /resignation/survey
+  - "Go Back" button
+
+Actions: proceed to survey; go back.
+API calls: none.
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Resignation — Step 1: Survey
+--------------------------------------------------------------------
+Route:    /resignation/survey
+File:     app/resignation/survey.tsx
+Purpose:  Collects reason, proposed last working date, and 3
+          exit-survey answers.
+
+UI:
+  - Header: back, "Resignation Survey", "Step 1 of 2"
+  - 2-segment StepBar
+  - Sections: Primary Reason (TextArea, required, min 10 chars),
+    Proposed Last Working Date (DatePickerField, optional, min
+    tomorrow), 3 numbered survey questions (optional TextAreas,
+    max 400 chars each)
+  - "Review & Confirm" button
+
+Actions: fill the form -> navigate to /resignation/confirm with the
+         data as route params.
+API calls: none (data passed via route params).
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Resignation — Step 2: Confirm
+--------------------------------------------------------------------
+Route:    /resignation/confirm
+File:     app/resignation/confirm.tsx
+Purpose:  Review-and-submit step.
+
+UI:
+  - Header: back, "Review & Submit", "Step 2 of 2"
+  - Full StepBar
+  - Warning banner ("cannot be undone")
+  - Cards for Primary Reason, Last Working Date, and each of the 3
+    survey answers
+  - Notice chip
+  - "Submit Resignation" button (native Alert double-confirm first)
+  - "Edit Answers" back link
+
+Actions: confirm-submit resignation; go back to edit.
+API calls: useSubmitResignation() -> POST /my/resignation
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Resignation — Success
+--------------------------------------------------------------------
+Route:    /resignation/success
+File:     app/resignation/success.tsx
+Purpose:  Confirmation screen after successful submission.
+
+UI:
+  - Green gradient background with decorative circles
+  - Animated checkmark bubble, title/subtitle
+  - 3 info cards: HR responds in 2-5 days; you'll be notified when
+    decided; account stays active until approved
+  - "Return to Home" button
+
+Actions: navigate to /(tabs)/home (replace).
+API calls: none.
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Resignation — Deactivated (terminal)
+--------------------------------------------------------------------
+Route:    /resignation/deactivated
+File:     app/resignation/deactivated.tsx
+Purpose:  Terminal screen shown once HR gives final approval —
+          forces logout. gestureEnabled: false (can't swipe-back).
+
+UI:
+  - Lock icon bubble
+  - "Account Deactivated" title/subtitle
+  - 3 info cards: records archived; final settlement per policy;
+    contact HR at hr@uktex.net
+  - "Go to Login" button
+
+Actions: navigate to /(auth)/login (replace).
+API calls: none — reached via ResignationGuard in the root layout
+           after useMyResignation reports status === 'approved',
+           which clears auth first.
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Salary Slips (list)
+--------------------------------------------------------------------
+Route:    /salary
+File:     app/salary/index.tsx
+Purpose:  List of monthly salary slips.
+
+UI:
+  - FlatList of SalarySlipCards (month/year, net salary,
+    Emailed/Generated Badge), newest first
+  - EmptyState, skeletons
+
+Actions: tap a slip -> /salary/{id}; pull-to-refresh.
+API calls: useSalarySlips() -> GET /my/salary-slips
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Salary Slip Detail
+--------------------------------------------------------------------
+Route:    /salary/[id]
+File:     app/salary/[id].tsx
+Purpose:  Full breakdown of one salary slip.
+
+UI:
+  - Header card: employee name/code/department, month/year,
+    Emailed/Generated Badge
+  - Attendance Summary: Working Days/Present/Absent/Late Days stat row
+  - Earnings section: Basic, HRA, Allowances, Total Earnings (highlighted)
+  - Deductions section: PF, ESI, Advance Recovered, Other Deductions,
+    Total Deductions (highlighted)
+  - Net Salary hero card
+  - "Download / Share PDF" button
+  - Skeletons
+
+Actions: download/share the slip as a real PDF (native share sheet —
+         this actually works on mobile).
+API calls:
+  - useSalarySlip(id) -> GET /salary-slips/{id}
+  - downloadAndShareSalarySlip() -> GET /salary-slips/{id}/pdf
+    (file download, not a react-query hook)
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Settlement (Advances & Loans)
+--------------------------------------------------------------------
+Route:    /settlement
+File:     app/settlement/index.tsx
+Purpose:  List the employee's salary advances/loans and repayment
+          history.
+
+UI:
+  - FlatList of advance cards: amount, purpose, date, remaining/
+    repaid amounts (colored by outstanding-vs-cleared)
+  - Expandable "Show repayment history (N)" section per card,
+    listing date/amount rows
+  - EmptyState, skeletons
+
+Actions: expand/collapse repayment history per advance; pull-to-refresh.
+API calls: useAdvances(employeeId) -> GET /advances
+Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: My Shift (standalone; also mounted as the "My Shift" tab)
+--------------------------------------------------------------------
+Route:    /shift
+File:     app/shift/index.tsx
+Purpose:  Assigned shift details, monthly attendance/permission
+          stats, weekly schedule.
+
+UI:
+  - Gradient shift card: shift name, Staff/Production badge, start/
+    end time, "Custom timing set by HR" chip if applicable
+  - "Shift Details" card: Grace Period, plus (for staff) Saturday
+    Off/Lunch Duration/First Half Ends, or (for production)
+    "Sunday: Working Day"
+  - "This Month's Summary" card: Present/Absent/Late Count/Half
+    Shifts/CL Approved 5-stat grid + Total Working Shifts row
+  - "Permission Usage & Deductions" card: explanatory note,
+    Permissions Used/Billable/Shift Deductions stat row, Salary
+    Impact (Rupee amount) row
+  - "Weekly Schedule" card: 7 day chips, working days highlighted
+  - Info box: contact HR to change shift
+  - Skeletons; EmptyState if no shift assigned
+
+Actions: none beyond viewing — read-only informational screen.
+API calls:
+  - useShift(employeeId) -> GET /shift-assignments
+  - useEmployee(employeeId) -> GET /employees/{id}
+  - useShiftStats(month, year) -> GET /attendance/employee-shift-stats
+  - useCasualLeaves(employeeId, {status:'approved', month, year}) ->
+    GET /casual-leaves
+
+Conditional content:
+  - Production vs staff employees see a different Shift Details
+    field set
+  - The entire screen is replaced by an EmptyState if no shift is
+    assigned
+
+
+====================================================================
+3. REUSABLE SHARED COMPONENTS (src/components/)
+====================================================================
+
+Non-"ui/" components (feature-level, cross-page):
+
+  AttendanceCalendar
+    Month grid calendar with per-day status coloring; tap-to-open
+    detail BottomSheet with contextual quick-action chips (Apply
+    Leave / Missing Punch / Permission).
+    Used by: Attendance tab.
+
+  AttendanceTrendChart
+    Hand-rolled inline SVG bar chart, one bar per day, height mapped
+    to status (Present=full, Half Shift=0.55, Absent=0.15, etc.).
+    Used by: Attendance tab.
+
+  DockTabIcon
+    macOS-dock-style magnifying/lifting tab icon with a tinted well
+    and a running-dot indicator.
+    Used by: bottom tab bar.
+
+  DocumentCategoryCard
+    Grouped-by-category document list card with view (in-app image
+    preview or share sheet) / download actions.
+    Used by: Documents screen.
+
+  GeoPunchCard
+    Compact status banner summarizing today's Office Geo Punch /
+    On-Duty state; links to /geo-punch or /on-duty.
+    Used by: Attendance tab.
+
+  GlassTabBar
+    A fully-built custom floating translucent-pill tab bar with
+    spring-animated items and badges. NOTE: this component exists in
+    the codebase but is currently UNUSED — the tab layout uses the
+    built-in Expo Router tab bar instead.
+
+  HamburgerToggle
+    Animated SVG hamburger<->X icon (line-morph).
+    Used by: Home, Attendance, Leave, Notifications, Profile headers.
+
+  KeyboardAvoider + useKeyboardVisible
+    iOS keyboard-avoiding wrapper (Android relies on native resize);
+    hook reports keyboard visibility.
+    Used by: Login, Set Password, Chat, Resignation Survey, BottomSheet.
+
+  LeaveCard
+    Leave-request list card: type icon, status badge, date range/
+    half-day label, day-count badge, reason; stagger-in animation.
+    Used by: Leave tab.
+
+  LiveFeedTicker
+    Auto-scrolling marquee of recent check-in/out events.
+    Used by: Home screen.
+
+  PermissionGate
+    Full-screen blocking overlay requesting Location/Camera (+
+    silent Notification) permission on first launch and on every
+    foreground; offers retry or "Open Settings".
+    Mounted globally in the root layout (app-wide).
+
+  ProfileSection
+    Collapsible titled section of label/value rows.
+    Used by: Profile screen.
+
+  Reveal
+    Staggered fade+slide entrance wrapper (Moti-based), respects OS
+    Reduce Motion setting.
+    Used by: Home (quick action tiles), and generally any list.
+
+  SalarySlipCard
+    Salary-slip list row (month/year, net pay, Emailed/Generated badge).
+    Used by: Salary Slips list.
+
+  SideDrawer
+    Full hamburger navigation drawer — see Section 4 for its full
+    contents.
+    Used by: Home, Attendance, Leave, Notifications, Profile.
+
+  SlideToPunch
+    Slide-to-unlock-style gesture control that punches attendance
+    (or hands off to On-Duty) with live location capture.
+    Used by: Home screen, pinned above the tab bar.
+
+  UKTLogo
+    Company logo as an inline SVG (traced artwork), size-configurable.
+    Used by: Splash, Login, Company, SideDrawer, ID Card.
+
+  outpass/OutpassFlipCard
+    Two-sided animated flip card for an outpass request. Front =
+    trip/employee details + QR code; back = approval trail. Card
+    height auto-sizes to whichever face's content is taller.
+    Used by: Outpass screen (active pass banner + preview sheet).
+
+
+UI primitives (src/components/ui/):
+
+  Avatar
+    Circular avatar with image or initials fallback, error handling.
+    Props: uri, name, size, borderColor, textColor, bgColor
+
+  Badge
+    Small pill status label.
+    Props: label, variant (present/absent/late/pending/approved/
+    rejected/onleave/generated/paid)
+
+  BottomSheet
+    Modal-based bottom sheet with drag handle, optional title,
+    scrollable content, keyboard-aware.
+    Props: visible, onClose, title, children, maxHeight
+
+  Button
+    Themed button with a press-scale animation.
+    Props: title, onPress, loading, disabled, variant
+    (primary=gradient / outline / ghost / secondary), icon
+
+  Card
+    Generic elevated container.
+    Props: children, style, padding
+
+  DatePickerField / TimePickerField
+    Native date/time picker trigger fields.
+    Props: label, value, onChange, error, minDate/maxDate (date only)
+
+  EmptyState
+    Centered icon + title + subtitle placeholder, with entrance animation.
+    Props: icon, title, subtitle
+
+  Input
+    Text input with label, left icon, password show/hide toggle,
+    error text, focus styling.
+    Props: label, error, leftIconName, isPassword, rightIcon
+
+  Skeleton / SkeletonCard
+    Pulsing loading placeholder — single bar, or a multi-line card.
+    Props: width, height, borderRadius / lines
+
+  SuccessOverlay
+    Full-screen success modal with an animated checkmark, auto-dismisses.
+    Props: visible, title, message, onDone, autoDismissMs
+
+  TextArea
+    Multiline input with char-count/min-length hints, auto-grow on iOS.
+    Props: label, error, minLength, maxLength
+
+  Toast
+    Bottom-pinned animated toast.
+    Props: message, type (success/error/info), visible
+
+
+====================================================================
+4. NAVIGATION STRUCTURE
+====================================================================
+
+--------------------------------------------------------------------
+4a. Bottom Tab Bar (app/(tabs)/_layout.tsx)
+--------------------------------------------------------------------
+Uses the BUILT-IN Expo Router Tabs bar (NOT the custom GlassTabBar
+component, which exists but is unused). Icons via DockTabIcon.
+Bottom padding computed from safe-area insets, raised higher on
+3-button Android navigation.
+
+Tab order, label, icon (focused/unfocused), route, notes:
+
+  1. Home           home / home-outline                    -> home
+  2. Attendance      calendar-check / calendar-check-outline -> attendance
+  3. My Shift        clock / clock-outline                   -> shift
+  4. Approvals       clipboard-check / clipboard-check-outline -> approvals
+                     MANAGER-ONLY (href: isManager ? undefined : null);
+                     red badge = pending count (sum of leaves/permissions/
+                     resignations, or a fallback pendingApprovalsCount)
+  5. Profile         account-circle / account-circle-outline  -> profile
+
+  (not a tab button) -> leave           href: null — reachable via
+                                        Quick Actions / drawer only
+  (not a tab button) -> notifications   href: null — reachable via
+                                        bell icon / drawer only
+
+--------------------------------------------------------------------
+4b. Side Drawer (src/components/SideDrawer.tsx)
+--------------------------------------------------------------------
+Slide-in drawer (78% width, max 300px), opened via the hamburger
+icon on Home/Attendance/Leave/Notifications/Profile.
+
+Group: Home & Attendance
+  - Home                    -> /(tabs)/home
+  - Attendance               -> /(tabs)/attendance
+  - Attendance Request       -> /geo-punch
+  - On-Duty                  -> /on-duty
+    (badge if a session is pending_hod/pending_hr/active)
+  - Outpass                  -> /outpass
+  - Live Tracking             -> /geo-tracking
+  - My Shift                  -> /shift
+  - Missing Punch             -> /missing-punch
+  - Holidays                  -> /holidays
+
+Group: HR Operations   (both entries are staffOnly — hidden for
+                        production employees)
+  - Leave                     -> /(tabs)/leave
+  - Permissions                -> /requests
+
+Group: Payroll & Salary
+  - Salary Slips               -> /salary
+  - Advances                    -> /settlement
+
+Group: Other
+  - Digital ID Card             -> /idcard
+  - My Documents                 -> /documents
+  - Chat                          -> /chat
+
+Group: Alerts & Profile   (separate section)
+  - Notifications                -> /(tabs)/notifications
+    (badge = unread count)
+  - My Profile                    -> /(tabs)/profile
+  - About Company                  -> /company
+  - Resignation (red)              -> /resignation/warning
+
+Footer:
+  - Dark Mode toggle (Switch + "Auto" chip to follow system theme)
+  - Logout button
+  - Version text ("uktextiles v2.0")
+
+--------------------------------------------------------------------
+4c. Home Screen "Quick Actions" grid (app/(tabs)/home.tsx)
+--------------------------------------------------------------------
+19 tiles total. First 6 shown by default; a "Show all 19 / Show
+less" toggle reveals the rest.
+
+TOP SIX (shown by default):
+  1. On-Duty              briefcase-outline               -> /on-duty              #815600
+  2. Missing Punch        fingerprint                      -> /missing-punch        #5e35b1
+  3. Leave                umbrella-outline                 -> /(tabs)/leave         #8e44ad
+  4. Permission           hand-pointing-right               -> /requests             #2980b9
+  5. Outpass              door-open                         -> /outpass              #009688
+  6. Salary Slips         cash-multiple                     -> /salary               #27ae60
+
+BEHIND "Show all":
+  7.  Attendance           calendar-check-outline            -> /(tabs)/attendance    theme primary
+  8.  Attendance Request   map-marker-radius-outline          -> /geo-punch            #0891b2
+  9.  My Shift             clock-outline                      -> /shift                #e67e22
+  10. Live Tracking        crosshairs-gps                     -> /geo-tracking         #0369a1
+  11. Advances             bank-transfer                      -> /settlement           #7f8c8d
+  12. Digital ID Card      card-account-details-outline        -> /idcard               #2c3e50
+  13. My Documents         folder-outline                      -> /documents            #00897b
+  14. Holidays             flag-outline                        -> /holidays             #c0392b
+  15. Notifications        bell-outline                        -> /(tabs)/notifications #735c00
+  16. Chat                 chat-outline                        -> /chat                 #0984e3
+  17. My Profile           account-circle-outline               -> /(tabs)/profile      #2c3e50
+  18. About Company        office-building-outline               -> /company            theme primary
+  19. Resignation          file-sign                             -> /resignation/warning #c62828
+
+
+====================================================================
+5. FULL HOOK / API ENDPOINT MAP (src/hooks/*.ts)
+====================================================================
+
+useAdvances.ts
+  useAdvances(employeeId)                    GET /advances
+
+useAppNotifications.ts
+  useAppNotifications(employeeId)            GET /notifications?employeeId=
+  useMarkNotificationRead()                  PATCH /notifications/{id}/read
+  useMarkAllNotificationsRead()              PATCH /notifications/mark-all-read
+
+useAttendance.ts
+  useAttendance(employeeId, month, year)     GET /attendance/employee/{employeeId}
+
+useAuth.ts
+  useAuth() (context)
+  loginRequest()                             POST /auth/employee-login
+  setPasswordRequest()                       POST /auth/set-password
+  checkAuth()                                GET /auth/me
+
+useCasualLeave.ts
+  useCasualLeaves(employeeId, params)        GET /casual-leaves
+  useCLEligibility(employeeId)               GET /casual-leaves/my-eligibility
+  useApplyCasualLeave(employeeId)            POST /casual-leaves
+
+useChat.ts
+  useChatChannels()                          GET /chat/channels
+  useChatMessages(channelId)                 GET /chat/channels/{id}/messages
+  useSendChatMessage(channelId)              POST /chat/channels/{id}/messages
+  useToggleReaction(channelId)               POST or DELETE /chat/messages/{id}/reactions
+
+useDashboard.ts
+  useDashboard(employeeId)                   GET /dashboard/employee-summary
+                                              (composes useLeaveBalances,
+                                              useLeaveRequests, usePermissions
+                                              as a fallback)
+
+useDocuments.ts
+  useDocuments()                             GET /my/documents
+  viewDocument() / downloadDocument()        GET /employee-documents/{id}/file
+
+useEmployee.ts
+  useEmployee(employeeId)                    GET /employees/{employeeId}
+
+useGeoAttendance.ts
+  useGeoPunchStatus()                        GET /attendance/geo-punch/status
+  useAttendanceSyncStatus()                  GET /attendance/sync-status
+  useGeoPunchPrecheck()                      GET /attendance/geo-punch/precheck
+  useGeoPunch()                              POST /attendance/geo-punch
+  useOnDutySessionStatus()                   GET /on-duty-sessions/status
+  useSubmitOnDutySessionRequest()            POST /on-duty-sessions/request
+  useCompleteOnDutySession()                 POST /on-duty-sessions/complete
+  useSubmitOnDutyPunch()                     POST /on-duty-sessions/punch (multipart)
+  startLiveTracking / stopLiveTracking /
+  isLiveTrackingActive / onLiveTrackingTick
+  (module-level, not hooks)                  POST /live-location/ping
+
+useHolidays.ts
+  useHolidays(year)                          GET /holidays?year=
+
+useHomeSummary.ts
+  useMobileHomeSummary()                     GET /dashboard/mobile-home-summary
+  useLiveFeed(limit)                         GET /attendance/live-feed
+
+useIdCard.ts
+  useIdCard(employeeId)                      GET /idcard
+  useIdCardSettings()                        GET /idcard-settings
+
+useLeave.ts
+  useLeaveBalances(employeeId)               GET /leave-balances
+  useLeaveRequests(employeeId)               GET /leave-requests
+  useLeaveTypes()                            GET /leave-types
+  useApplyLeave(employeeId)                  POST /leave-requests
+
+useLocalProfilePhoto.ts
+  useLocalProfilePhoto(employeeId)           none — AsyncStorage only,
+                                              deliberately never synced
+                                              to the server
+
+useManager.ts
+  useManagerProfile(enabled)                 GET /manager/me
+  usePendingRequests(enabled)                GET /manager/pending-requests
+  useApproveLeave()                          PATCH /manager/leave-requests/{id}/status
+  useApprovePermission()                     PATCH /manager/permissions/{id}/status
+  useResignationAction()                     PATCH /manager/resignations/{id}/action
+  useApproveCasualLeave()                    PATCH /manager/casual-leaves/{id}/status
+  useApproveAttendance()                     PATCH /manager/attendance-requests/{id}/status
+  useApproveOutpass()                        PATCH /manager/outpass-requests/{id}/status
+  useApproveMissingPunch()                   PATCH /manager/missing-punch-requests/{id}/status
+
+useNotifications.ts
+  requestNotificationPermission()            none — device-local
+  showNotification()                         expo-notifications API only
+  useNotificationObserver(onTap)
+
+useOutpass.ts
+  useOutpassRequests(employeeId)             GET /outpass-requests
+  useSubmitOutpassRequest(employeeId)        POST /outpass-requests
+
+usePushToken.ts
+  registerPushToken()                        POST /my/push-token
+
+useRequests.ts
+  usePermissions(employeeId, month, year)    GET /permissions
+  useSubmitPermission(employeeId)            POST /permissions
+  useMissingPunch(employeeId, month, year)   GET /missing-punch-requests
+  useSubmitMissingPunch(employeeId)          POST /missing-punch-requests
+
+useResignation.ts
+  useMyResignation(employeeId)               GET /my/resignation
+  useSubmitResignation()                     POST /my/resignation
+
+useSalarySlips.ts
+  useSalarySlips()                           GET /my/salary-slips
+  useSalarySlip(id)                          GET /salary-slips/{id}
+  downloadAndShareSalarySlip()               GET /salary-slips/{id}/pdf
+
+useShift.ts
+  useShift(employeeId)                       GET /shift-assignments
+
+useShiftStats.ts
+  useShiftStats(month, year)                 GET /attendance/employee-shift-stats
+
+
+====================================================================
+NOTES FOR PARITY / UI-RECREATION WORK
+====================================================================
+
+- Role gating is centered on three things:
+    1. manager.isManager (Approvals tab + its per-category
+       canApprove* capability flags)
+    2. employee.employmentType === 'production' (drawer's Leave/
+       Permissions items hidden for production staff; ID card & My
+       Shift layouts differ; weekly schedule differs)
+    3. resignation.status (Profile screen's action-card state machine)
+
+- Device-local-only data: the profile photo (useLocalProfilePhoto)
+  is intentionally never sent to the server on mobile — it overrides
+  the HR-uploaded photo only on that specific device. (The Employee
+  Web App's equivalent DOES upload to the server — worth deciding
+  whether these should match.)
+
+- Polling intervals worth replicating exactly for a faithful
+  recreation:
+    Notifications                60 seconds
+    Chat messages                4 seconds
+    Outpass requests             30 seconds
+    Geo-punch status             30 seconds
+    On-duty session status       15 seconds
+    Manager profile / pending    30 seconds
+    Live feed                    20 seconds
+    Mobile home summary          60 seconds
+
+- GlassTabBar exists fully built in the codebase but is NOT wired
+  into the tab layout — it's currently dead code, kept for possible
+  future use.
+
+- The root layout (app/_layout.tsx) also hosts several app-wide
+  singletons with no dedicated screen of their own:
+    ResignationGuard        polls /my/resignation, force-logs-out to
+                             /resignation/deactivated on approval
+    PushTokenRegistrar       registers the device's push token on login
+    LiveLocationTracker      auto-resumes background-safe foreground
+                             location pings
+    NotificationTapHandler   routes a tapped push notification to
+                             /(tabs)/notifications
+    PermissionGate           blocking Location/Camera onboarding overlay

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, interpolate, Extrapolation,
 } from 'react-native-reanimated';
@@ -25,6 +25,13 @@ import type { Employee } from '../../hooks/useEmployee';
  * red once rejected -recomputed from `request.status` on every render, never
  * fixed, so the same card component carries the request through its whole
  * lifecycle.
+ *
+ * Card height is MEASURED, not guessed: each face reports its own natural
+ * height via onLayout, and the shared flip box sizes itself to the taller of
+ * the two (never below MIN_CARD_HEIGHT). A fixed/estimated height fights
+ * variable content -a two-line Reason, an optional QR block, an optional
+ * gate-exit line on the back -so anything hand-tuned here eventually clips
+ * or leaves dead space. Measuring once removes that whole class of bug.
  */
 
 const APPROVER_LABEL: Record<string, string> = { dept_head: 'HOD', hr: 'HR', system: 'On-Duty approval' };
@@ -59,6 +66,8 @@ function toneFor(status: string, Colors: Palette) {
   return { bg: Colors.bgSurfaceMid, border: Colors.outline, accent: Colors.textMuted, chip: Colors.textMuted };
 }
 
+const MIN_CARD_HEIGHT = 210;
+
 export function OutpassFlipCard({
   request,
   employee,
@@ -77,7 +86,17 @@ export function OutpassFlipCard({
   // once exited/expired/never-approved it's simply omitted, so the QR block
   // only takes up card space when there's something real to scan.
   const showQr = !!request.qrToken;
-  const cardHeight = showQr ? CARD_HEIGHT + 96 : CARD_HEIGHT;
+
+  // Seed with a close estimate so the very first paint is already
+  // approximately right -onLayout below then corrects it exactly, usually
+  // with no visible change at all, instead of visibly growing from a small
+  // default the instant real content measures in.
+  const estimatedHeight = showQr ? 340 : 224;
+  const [frontHeight, setFrontHeight] = useState(estimatedHeight);
+  const [backHeight, setBackHeight] = useState(estimatedHeight);
+  const cardHeight = Math.max(frontHeight, backHeight, MIN_CARD_HEIGHT);
+  const onFrontLayout = (e: LayoutChangeEvent) => setFrontHeight(e.nativeEvent.layout.height);
+  const onBackLayout = (e: LayoutChangeEvent) => setBackHeight(e.nativeEvent.layout.height);
 
   const flip = useSharedValue(startFlipped ? 180 : 0);
   const [flipped, setFlipped] = useState(startFlipped);
@@ -104,21 +123,23 @@ export function OutpassFlipCard({
     <Pressable onPress={toggle} style={styles.wrap} accessibilityRole="button" accessibilityLabel="Outpass card, tap to flip">
       <View style={[styles.flipBox, { height: cardHeight }]}>
         {/* ── Front: employee + trip details ── */}
-        <Animated.View style={[styles.face, { backgroundColor: tone.bg, borderColor: tone.border }, frontStyle]}>
+        <Animated.View onLayout={onFrontLayout} style={[styles.face, { backgroundColor: tone.bg, borderColor: tone.border }, frontStyle]}>
           <View style={styles.topRow}>
             <View style={styles.topLeft}>
               <MaterialCommunityIcons name={statusIcon as any} size={16} color={tone.accent} />
-              <Text style={[styles.topLabel, { color: tone.accent }]}>{statusLabel}</Text>
+              <Text style={[styles.topLabel, { color: tone.accent }]} numberOfLines={1}>{statusLabel}</Text>
             </View>
-            {request.status === 'approved' && (
-              <View style={[styles.timerPill, { backgroundColor: Colors.bgCard }]}>
-                <MaterialCommunityIcons name="clock-outline" size={12} color={tone.accent} />
-                <Text style={[styles.timerText, { color: tone.accent }]}>
-                  {expired || remainingMs == null ? 'Expired' : formatRemaining(remainingMs)}
-                </Text>
-              </View>
-            )}
-            <MaterialCommunityIcons name="rotate-3d-variant" size={16} color={Colors.textMuted} style={styles.flipHint} />
+            <View style={styles.topRight}>
+              {request.status === 'approved' && (
+                <View style={[styles.timerPill, { backgroundColor: Colors.bgCard }]}>
+                  <MaterialCommunityIcons name="clock-outline" size={12} color={tone.accent} />
+                  <Text style={[styles.timerText, { color: tone.accent }]}>
+                    {expired || remainingMs == null ? 'Expired' : formatRemaining(remainingMs)}
+                  </Text>
+                </View>
+              )}
+              <MaterialCommunityIcons name="rotate-3d-variant" size={16} color={Colors.textMuted} style={styles.flipHint} />
+            </View>
           </View>
 
           <View style={styles.empRow}>
@@ -138,7 +159,7 @@ export function OutpassFlipCard({
               <Text style={styles.gridLabel}>Date</Text>
               <Text style={styles.gridValue}>{format(new Date(request.createdAt), 'dd MMM yyyy')}</Text>
             </View>
-            <View style={[styles.gridItem, { width: '100%' }]}>
+            <View style={styles.gridItemFull}>
               <Text style={styles.gridLabel}>Reason</Text>
               <Text style={styles.gridValue} numberOfLines={2}>{request.reason}</Text>
             </View>
@@ -150,8 +171,8 @@ export function OutpassFlipCard({
 
           {showQr && (
             <View style={styles.qrWrap}>
-              <View style={styles.qrBox}>
-                <QRCode value={request.qrToken!} size={72} color="#0f172a" backgroundColor="#fff" />
+              <View style={[styles.qrBox, { borderColor: tone.border }]}>
+                <QRCode value={request.qrToken!} size={92} color="#0f172a" backgroundColor="#fff" />
               </View>
               <Text style={[styles.qrCaption, { color: tone.accent }]}>SHOW THIS QR AT THE GATE</Text>
             </View>
@@ -161,43 +182,45 @@ export function OutpassFlipCard({
         </Animated.View>
 
         {/* ── Back: approval trail ── */}
-        <Animated.View style={[styles.face, styles.backFace, { backgroundColor: tone.bg, borderColor: tone.border }, backStyle]}>
-          <View style={styles.backCenter}>
-            <MaterialCommunityIcons name={statusIcon as any} size={34} color={tone.accent} />
-            <Text style={[styles.backStatus, { color: tone.accent }]}>{statusLabel}</Text>
-          </View>
-
-          <View style={styles.backDetails}>
-            {request.approvedBy && (
-              <View style={styles.backRow}>
-                <Text style={styles.backLabel}>{request.status === 'rejected' ? 'Rejected by' : 'Approved by'}</Text>
-                <Text style={styles.backValue}>
-                  {request.approvedBy}{request.approverRole ? ` (${APPROVER_LABEL[request.approverRole] ?? request.approverRole})` : ''}
-                </Text>
-              </View>
-            )}
-            {request.reviewComment && (
-              <View style={styles.backRow}>
-                <Text style={styles.backLabel}>Comment</Text>
-                <Text style={styles.backValue}>{request.reviewComment}</Text>
-              </View>
-            )}
-            <View style={styles.backRow}>
-              <Text style={styles.backLabel}>Source</Text>
-              <Text style={styles.backValue}>{SOURCE_LABEL[request.source] ?? request.source}</Text>
+        <Animated.View onLayout={onBackLayout} style={[styles.face, styles.backFace, { backgroundColor: tone.bg, borderColor: tone.border }, backStyle]}>
+          <View>
+            <View style={styles.backCenter}>
+              <MaterialCommunityIcons name={statusIcon as any} size={34} color={tone.accent} />
+              <Text style={[styles.backStatus, { color: tone.accent }]}>{statusLabel}</Text>
             </View>
-            {request.exitedAt && (
+
+            <View style={styles.backDetails}>
+              {request.approvedBy && (
+                <View style={styles.backRow}>
+                  <Text style={styles.backLabel}>{request.status === 'rejected' ? 'Rejected by' : 'Approved by'}</Text>
+                  <Text style={styles.backValue}>
+                    {request.approvedBy}{request.approverRole ? ` (${APPROVER_LABEL[request.approverRole] ?? request.approverRole})` : ''}
+                  </Text>
+                </View>
+              )}
+              {request.reviewComment && (
+                <View style={styles.backRow}>
+                  <Text style={styles.backLabel}>Comment</Text>
+                  <Text style={styles.backValue}>{request.reviewComment}</Text>
+                </View>
+              )}
               <View style={styles.backRow}>
-                <Text style={styles.backLabel}>Gate Exit</Text>
-                <Text style={styles.backValue}>
-                  {request.exitGateName ? `Via ${request.exitGateName}, ` : ''}
-                  {format(new Date(request.exitedAt), 'dd MMM, h:mm a')}
-                </Text>
+                <Text style={styles.backLabel}>Source</Text>
+                <Text style={styles.backValue}>{SOURCE_LABEL[request.source] ?? request.source}</Text>
               </View>
-            )}
-            {request.status === 'pending' && (
-              <Text style={styles.backPendingNote}>Waiting for HOD or HR to review this request.</Text>
-            )}
+              {request.exitedAt && (
+                <View style={styles.backRow}>
+                  <Text style={styles.backLabel}>Gate Exit</Text>
+                  <Text style={styles.backValue}>
+                    {request.exitGateName ? `Via ${request.exitGateName}, ` : ''}
+                    {format(new Date(request.exitedAt), 'dd MMM, h:mm a')}
+                  </Text>
+                </View>
+              )}
+              {request.status === 'pending' && (
+                <Text style={styles.backPendingNote}>Waiting for HOD or HR to review this request.</Text>
+              )}
+            </View>
           </View>
 
           <Text style={styles.flipCue}>Tap to flip back</Text>
@@ -207,45 +230,46 @@ export function OutpassFlipCard({
   );
 }
 
-const CARD_HEIGHT = 240;
-
 const makeStyles = (Colors: Palette) => StyleSheet.create({
-  wrap: { marginBottom: 14 },
-  flipBox: { height: CARD_HEIGHT },
+  wrap: { marginBottom: 16 },
+  flipBox: {},
   face: {
     position: 'absolute',
-    top: 0, left: 0, right: 0, bottom: 0,
+    top: 0, left: 0, right: 0,
     borderRadius: BorderRadius.xl,
     borderWidth: 1.5,
     padding: 16,
     backfaceVisibility: 'hidden',
+    justifyContent: 'space-between',
   },
-  backFace: { justifyContent: 'space-between' },
+  backFace: {},
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   topLabel: { fontSize: 12, fontWeight: '800' },
   timerPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 4, borderRadius: BorderRadius.full, marginRight: 8,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: BorderRadius.full,
   },
   timerText: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
   flipHint: { opacity: 0.6 },
-  empRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14 },
+  empRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 },
   empName: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800' },
   empCode: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 },
-  gridItem: { width: '45%' },
-  gridLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
-  gridValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '600', marginTop: 2 },
-  flipCue: { position: 'absolute', bottom: 10, right: 16, color: Colors.textMuted, fontSize: 10, fontStyle: 'italic' },
-  qrWrap: { alignItems: 'center', gap: 6, marginTop: 14 },
-  qrBox: { padding: 6, borderRadius: BorderRadius.md, backgroundColor: '#fff' },
-  qrCaption: { fontSize: 9, fontWeight: '800', letterSpacing: 0.6 },
-  backCenter: { alignItems: 'center', gap: 6, marginTop: 8 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 16 },
+  gridItem: { flexBasis: '44%', flexGrow: 1 },
+  gridItemFull: { flexBasis: '100%' },
+  gridLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
+  gridValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '600', marginTop: 3 },
+  flipCue: { alignSelf: 'flex-end', color: Colors.textMuted, fontSize: 10, fontStyle: 'italic', marginTop: 12 },
+  qrWrap: { alignItems: 'center', gap: 8, marginTop: 16 },
+  qrBox: { padding: 10, borderRadius: BorderRadius.md, backgroundColor: '#fff', borderWidth: 1 },
+  qrCaption: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
+  backCenter: { alignItems: 'center', gap: 6 },
   backStatus: { fontSize: 18, fontWeight: '900' },
-  backDetails: { gap: 10, marginTop: 10 },
-  backRow: { gap: 2 },
-  backLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  backDetails: { gap: 12, marginTop: 16 },
+  backRow: { gap: 3 },
+  backLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
   backValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '600' },
   backPendingNote: { color: Colors.textMuted, fontSize: 12, fontStyle: 'italic', marginTop: 4 },
 });

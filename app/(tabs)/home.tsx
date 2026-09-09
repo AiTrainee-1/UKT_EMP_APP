@@ -35,27 +35,25 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 
-// Ordered by how often an employee actually reaches for each one:
-//   1. Attendance group  -the daily-driver actions (punching, corrections, shift)
-//   2. Leave             -next most common request
-//   3. Permission        -short-duration variant of the above
-//   4. Everything else   -pay, identity/documents, then reference and account
-//                         screens, with Resignation deliberately last since
-//                         it's rare and consequential.
+// The first six are exactly what shows before "Show all" (see visibleActions
+// below) -deliberately the six approval/request flows an employee reaches
+// for most, not the attendance-tracking screens (those are one tap away on
+// their own tab already). Everything after is staged behind "Show all",
+// pay/identity/reference/account screens in roughly that order of use, with
+// Resignation deliberately last since it's rare and consequential.
 const makeQuickActions = (Colors: Palette) => ([
-  // ── Attendance ──
+  // ── Top six -requests & approvals ──
+  { label: 'On-Duty', icon: 'briefcase-outline', route: '/on-duty' as const, color: '#815600' },
+  { label: 'Missing Punch', icon: 'fingerprint', route: '/missing-punch' as const, color: '#5e35b1' },
+  { label: 'Leave', icon: 'umbrella-outline', route: '/(tabs)/leave' as const, color: '#8e44ad' },
+  { label: 'Permission', icon: 'hand-pointing-right', route: '/requests' as const, color: '#2980b9' },
+  { label: 'Outpass', icon: 'door-open', route: '/outpass' as const, color: '#009688' },
+  { label: 'Salary Slips', icon: 'cash-multiple', route: '/salary' as const, color: '#27ae60' },
+  // ── Everything else, behind "Show all" ──
   { label: 'Attendance', icon: 'calendar-check-outline', route: '/(tabs)/attendance' as const, color: Colors.primary },
   { label: 'Attendance Request', icon: 'map-marker-radius-outline', route: '/geo-punch' as const, color: '#0891b2' },
-  { label: 'Missing Punch', icon: 'fingerprint', route: '/missing-punch' as const, color: '#5e35b1' },
   { label: 'My Shift', icon: 'clock-outline', route: '/shift' as const, color: '#e67e22' },
-  { label: 'On-Duty', icon: 'briefcase-outline', route: '/on-duty' as const, color: '#815600' },
-  { label: 'Live Tracking', icon: 'crosshairs-gps', route: '/geo-tracking' as const, color: '#0891b2' },
-  // ── Leave ──
-  { label: 'Apply Leave', icon: 'umbrella-outline', route: '/(tabs)/leave' as const, color: '#8e44ad' },
-  // ── Permission ──
-  { label: 'Permission', icon: 'hand-pointing-right', route: '/requests' as const, color: '#2980b9' },
-  // ── Everything else, by how often it's used ──
-  { label: 'Salary Slips', icon: 'cash-multiple', route: '/salary' as const, color: '#27ae60' },
+  { label: 'Live Tracking', icon: 'crosshairs-gps', route: '/geo-tracking' as const, color: '#0369a1' },
   { label: 'Advances', icon: 'bank-transfer', route: '/settlement' as const, color: '#7f8c8d' },
   { label: 'Digital ID Card', icon: 'card-account-details-outline', route: '/idcard' as const, color: '#2c3e50' },
   { label: 'My Documents', icon: 'folder-outline', route: '/documents' as const, color: '#00897b' },
@@ -171,9 +169,8 @@ export default function HomeScreen() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showAllActions, setShowAllActions] = useState(false);
   const [clock, setClock] = useState(new Date());
-  // The attendance group leads QUICK_ACTIONS, so the first six are exactly
-  // the daily-driver actions -a sensible default without a second list to
-  // keep in sync.
+  // The top six requests/approvals lead QUICK_ACTIONS, so slicing it is a
+  // sensible default without a second list to keep in sync.
   const visibleActions = showAllActions ? QUICK_ACTIONS : QUICK_ACTIONS.slice(0, 6);
   const today = format(new Date(), 'EEEE, d MMMM yyyy');
   const unreadCount = notifs?.filter(n => !n.isRead).length ?? 0;
