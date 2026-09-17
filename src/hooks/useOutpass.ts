@@ -23,7 +23,17 @@ export interface OutpassRequestItem {
   qrToken?: string | null;
   exitGateName?: string | null;
   exitedAt?: string | null;
-  scanStatus?: 'not_applicable' | 'pending_exit' | 'exited' | 'expired_unscanned';
+  // Return/re-entry leg -returnQrToken is only present once the employee has
+  // tapped "Generate Return QR" (see useGenerateReturnOutpassQr below) AND
+  // it hasn't expired/been superseded yet -mirrors qrToken's own rule.
+  entryGateName?: string | null;
+  enteredAt?: string | null;
+  returnQrToken?: string | null;
+  returnQrExpiresAt?: string | null;
+  canGenerateReturnQr?: boolean;
+  scanStatus?:
+    | 'not_applicable' | 'pending_exit' | 'exited' | 'expired_unscanned'
+    | 'pending_return' | 'return_expired' | 'completed';
 }
 
 // GET/POST both self-scope to the logged-in employee token server-side —
@@ -46,6 +56,22 @@ export function useSubmitOutpassRequest(employeeId: number | null) {
   return useMutation({
     mutationFn: async (data: { destination: string; reason: string }) => {
       const res = await api.post('/outpass-requests', data);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['outpass-requests', employeeId] });
+    },
+  });
+}
+
+// The "Generate Return QR" button on an already-exited Outpass card -see
+// backend/api/outpass_request_views.py::generate_return_qr. Self-scoped
+// server-side, so no employeeId needed in the body, only in the cache key.
+export function useGenerateReturnOutpassQr(employeeId: number | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (requestId: number): Promise<OutpassRequestItem> => {
+      const res = await api.post(`/outpass-requests/${requestId}/generate-return-qr`);
       return res.data;
     },
     onSuccess: () => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, type LayoutChangeEvent } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Alert, type LayoutChangeEvent } from 'react-native';
 import Animated, {
   useSharedValue, useAnimatedStyle, withTiming, interpolate, Extrapolation,
 } from 'react-native-reanimated';
@@ -11,7 +11,7 @@ import { Avatar } from '../ui/Avatar';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
-import type { OutpassRequestItem } from '../../hooks/useOutpass';
+import { useGenerateReturnOutpassQr, type OutpassRequestItem } from '../../hooks/useOutpass';
 import type { Employee } from '../../hooks/useEmployee';
 
 /**
@@ -80,18 +80,36 @@ export function OutpassFlipCard({
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { expired, remainingMs } = useCountdown(request.expiresAt);
+  const { expired: returnExpired, remainingMs: returnRemainingMs } = useCountdown(request.returnQrExpiresAt);
   const tone = toneFor(request.status, Colors);
   // qrToken is only ever present while the pass is actually presentable at a
   // gate (see backend/api/outpass_request_views.py::_outpass_request_json) —
   // once exited/expired/never-approved it's simply omitted, so the QR block
   // only takes up card space when there's something real to scan.
   const showQr = !!request.qrToken;
+  // Return leg -mutually exclusive with showQr (the backend never sets both
+  // qrToken and returnQrToken at once). returnQrToken only appears once the
+  // employee has tapped "Generate Return QR" below and it hasn't expired or
+  // been superseded by a newer one yet.
+  const showReturnQr = !!request.returnQrToken;
+  const showGenerateReturnQr = !showReturnQr && !!request.canGenerateReturnQr;
+  const isReturned = !!request.enteredAt;
+
+  const generateReturnQr = useGenerateReturnOutpassQr(employee?.id ?? null);
+  const handleGenerateReturnQr = async () => {
+    try {
+      await generateReturnQr.mutateAsync(request.id);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || 'Could not generate the return QR. Please try again.';
+      Alert.alert('Return QR', msg);
+    }
+  };
 
   // Seed with a close estimate so the very first paint is already
   // approximately right -onLayout below then corrects it exactly, usually
   // with no visible change at all, instead of visibly growing from a small
   // default the instant real content measures in.
-  const estimatedHeight = showQr ? 340 : 224;
+  const estimatedHeight = showQr || showReturnQr ? 340 : showGenerateReturnQr || isReturned ? 260 : 224;
   const [frontHeight, setFrontHeight] = useState(estimatedHeight);
   const [backHeight, setBackHeight] = useState(estimatedHeight);
   const cardHeight = Math.max(frontHeight, backHeight, MIN_CARD_HEIGHT);
@@ -178,6 +196,40 @@ export function OutpassFlipCard({
             </View>
           )}
 
+          {showReturnQr && (
+            <View style={styles.qrWrap}>
+              <View style={[styles.qrBox, { borderColor: Colors.statusBlue }]}>
+                <QRCode value={request.returnQrToken!} size={92} color="#0f172a" backgroundColor="#fff" />
+              </View>
+              <Text style={[styles.qrCaption, { color: Colors.statusBlue }]}>SHOW THIS QR TO RETURN</Text>
+              {!returnExpired && returnRemainingMs != null && (
+                <Text style={styles.qrSubCaption}>Valid for {formatRemaining(returnRemainingMs)}</Text>
+              )}
+            </View>
+          )}
+
+          {showGenerateReturnQr && (
+            <Pressable
+              onPress={handleGenerateReturnQr}
+              disabled={generateReturnQr.isPending}
+              style={[styles.generateBtn, { borderColor: tone.border }]}
+            >
+              <MaterialCommunityIcons name="qrcode-plus" size={16} color={tone.accent} />
+              <Text style={[styles.generateBtnText, { color: tone.accent }]}>
+                {generateReturnQr.isPending ? 'Generating…' : 'Generate Return QR'}
+              </Text>
+            </Pressable>
+          )}
+
+          {isReturned && (
+            <View style={styles.returnedBanner}>
+              <MaterialCommunityIcons name="check-circle" size={16} color={Colors.statusGreen} />
+              <Text style={[styles.returnedBannerText, { color: Colors.statusGreen }]}>
+                Returned {format(new Date(request.enteredAt!), 'h:mm a')}
+              </Text>
+            </View>
+          )}
+
           <Text style={styles.flipCue}>Tap to flip</Text>
         </Animated.View>
 
@@ -214,6 +266,15 @@ export function OutpassFlipCard({
                   <Text style={styles.backValue}>
                     {request.exitGateName ? `Via ${request.exitGateName}, ` : ''}
                     {format(new Date(request.exitedAt), 'dd MMM, h:mm a')}
+                  </Text>
+                </View>
+              )}
+              {request.enteredAt && (
+                <View style={styles.backRow}>
+                  <Text style={styles.backLabel}>Gate Return</Text>
+                  <Text style={styles.backValue}>
+                    {request.entryGateName ? `Via ${request.entryGateName}, ` : ''}
+                    {format(new Date(request.enteredAt), 'dd MMM, h:mm a')}
                   </Text>
                 </View>
               )}
@@ -265,6 +326,17 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   qrWrap: { alignItems: 'center', gap: 8, marginTop: 16 },
   qrBox: { padding: 10, borderRadius: BorderRadius.md, backgroundColor: '#fff', borderWidth: 1 },
   qrCaption: { fontSize: 10, fontWeight: '800', letterSpacing: 0.8 },
+  qrSubCaption: { fontSize: 10, fontWeight: '600', color: Colors.textMuted, fontVariant: ['tabular-nums'] },
+  generateBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: 16, paddingVertical: 11, borderRadius: BorderRadius.md, borderWidth: 1.5, borderStyle: 'dashed',
+  },
+  generateBtnText: { fontSize: 13, fontWeight: '800' },
+  returnedBanner: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    marginTop: 16, paddingVertical: 10, borderRadius: BorderRadius.md, backgroundColor: Colors.badgeGreenBg,
+  },
+  returnedBannerText: { fontSize: 12, fontWeight: '800' },
   backCenter: { alignItems: 'center', gap: 6 },
   backStatus: { fontSize: 18, fontWeight: '900' },
   backDetails: { gap: 12, marginTop: 16 },

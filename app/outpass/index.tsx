@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   RefreshControl,
 } from 'react-native';
@@ -18,6 +19,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { useOutpassRequests, useSubmitOutpassRequest, type OutpassRequestItem } from '../../src/hooks/useOutpass';
 import { OutpassFlipCard } from '../../src/components/outpass/OutpassFlipCard';
+import { TeaBreakPanel } from '../../src/components/tea-break/TeaBreakPanel';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Button } from '../../src/components/ui/Button';
 import { Input } from '../../src/components/ui/Input';
@@ -30,6 +32,8 @@ import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+
+type Section = 'outpass' | 'teaBreak';
 
 const schema = z.object({
   destination: z.string().min(2, 'Please enter where you are going'),
@@ -48,6 +52,7 @@ export default function OutpassScreen() {
   const styles = useThemedStyles(makeStyles);
 
   const { user } = useAuth();
+  const [section, setSection] = useState<Section>('outpass');
   const [showNew, setShowNew] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [tab, setTab] = useState<ReqTab>('live');
@@ -87,127 +92,165 @@ export default function OutpassScreen() {
   const confirmedList = items.filter((i) => i.status !== 'pending');
   const activeList = tab === 'live' ? liveList : confirmedList;
 
-  // Most recent still-valid approved request -source can be "manual" or
+  // Most recent still-relevant approved request -source can be "manual" or
   // "on_duty" (an On-Duty request whose final approval just fired, see
   // backend/api/geo_attendance_views.py::_create_outpass_from_on_duty);
-  // either way it renders here the same way.
+  // either way it renders here the same way. Once exited but not yet
+  // returned, the card stays pinned here regardless of the original
+  // approval window (expiresAt only bounds the EXIT leg) -the employee may
+  // be out well past that 60-minute mark, and still needs "Generate Return
+  // QR" to be easy to find.
   const activePass = [...items]
-    .filter((i) => i.status === 'approved' && i.expiresAt && new Date(i.expiresAt).getTime() > Date.now())
+    .filter((i) => {
+      if (i.status !== 'approved') return false;
+      if (i.exitedAt && !i.enteredAt) return true;
+      return !!i.expiresAt && new Date(i.expiresAt).getTime() > Date.now();
+    })
     .sort((a, b) => new Date(b.approvedAt ?? 0).getTime() - new Date(a.approvedAt ?? 0).getTime())[0];
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <FlatList
-        data={activeList}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={[styles.pad, !activeList.length && styles.center]}
-        refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
-        }
-        ListHeaderComponent={
-          <>
-            {activePass && <OutpassFlipCard request={activePass} employee={employee} />}
+      {/* Section switcher -"a new header tab under the Outpass section":
+          Outpass and Tea Break are two independent bodies sharing this one
+          screen/route, exactly like the HR portal's Outpass/Visitors/Tea
+          Break sidebar group shares one page component. */}
+      <View style={styles.sectionBar}>
+        {([
+          { key: 'outpass' as Section, label: 'Outpass' },
+          { key: 'teaBreak' as Section, label: 'Tea Break' },
+        ]).map((s) => (
+          <TouchableOpacity
+            key={s.key}
+            style={[styles.sectionBtn, section === s.key && styles.sectionBtnActive]}
+            onPress={() => setSection(s.key)}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.sectionLabel, section === s.key && styles.sectionLabelActive]}>{s.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-            <View style={styles.tabBar}>
-              {([
-                { key: 'live' as ReqTab, label: 'Live Requests', count: liveList.length },
-                { key: 'confirmed' as ReqTab, label: 'Confirmed Requests', count: confirmedList.length },
-              ]).map((t) => (
-                <TouchableOpacity
-                  key={t.key}
-                  style={[styles.tabBtn, tab === t.key && styles.tabBtnActive]}
-                  onPress={() => setTab(t.key)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[styles.tabLabel, tab === t.key && styles.tabLabelActive]}>
-                    {t.label} ({t.count})
+      {section === 'teaBreak' ? (
+        <ScrollView contentContainerStyle={styles.pad}>
+          <TeaBreakPanel employeeId={user?.employeeId ?? null} />
+        </ScrollView>
+      ) : (
+        <FlatList
+          data={activeList}
+          keyExtractor={(item) => String(item.id)}
+          contentContainerStyle={[styles.pad, !activeList.length && styles.center]}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
+          }
+          ListHeaderComponent={
+            <>
+              {activePass && <OutpassFlipCard request={activePass} employee={employee} />}
+
+              <View style={styles.tabBar}>
+                {([
+                  { key: 'live' as ReqTab, label: 'Live Requests', count: liveList.length },
+                  { key: 'confirmed' as ReqTab, label: 'Confirmed Requests', count: confirmedList.length },
+                ]).map((t) => (
+                  <TouchableOpacity
+                    key={t.key}
+                    style={[styles.tabBtn, tab === t.key && styles.tabBtnActive]}
+                    onPress={() => setTab(t.key)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.tabLabel, tab === t.key && styles.tabLabelActive]}>
+                      {t.label} ({t.count})
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          }
+          ListEmptyComponent={
+            isLoading ? (
+              <View>{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</View>
+            ) : (
+              <EmptyState
+                icon="hand-pointing-right"
+                title={tab === 'live' ? 'No live requests' : 'No confirmed requests'}
+                subtitle="Your outpass requests will appear here"
+              />
+            )
+          }
+          renderItem={({ item }) => {
+            const variant = item.status === 'approved' ? 'approved' : item.status === 'rejected' ? 'rejected' : 'pending';
+            return (
+              <View style={styles.card}>
+                <View style={styles.cardTop}>
+                  <Text style={styles.destination}>{item.destination}</Text>
+                  <Badge label={item.status === 'approved' ? 'Approved' : item.status === 'rejected' ? 'Not Approved' : 'Pending'} variant={variant} />
+                </View>
+                <Text style={styles.reason}>{item.reason}</Text>
+                <View style={styles.cardBottom}>
+                  <Text style={styles.dateTime}>
+                    {format(new Date(item.createdAt), 'dd MMM yyyy · h:mm a')}
+                    {item.source === 'on_duty' && ' · from On-Duty'}
+                    {item.approverRole && item.status === 'approved' && ` · Approved by ${APPROVER_LABEL[item.approverRole] ?? item.approverRole}`}
                   </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </>
-        }
-        ListEmptyComponent={
-          isLoading ? (
-            <View>{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</View>
-          ) : (
-            <EmptyState
-              icon="hand-pointing-right"
-              title={tab === 'live' ? 'No live requests' : 'No confirmed requests'}
-              subtitle="Your outpass requests will appear here"
-            />
-          )
-        }
-        renderItem={({ item }) => {
-          const variant = item.status === 'approved' ? 'approved' : item.status === 'rejected' ? 'rejected' : 'pending';
-          return (
-            <View style={styles.card}>
-              <View style={styles.cardTop}>
-                <Text style={styles.destination}>{item.destination}</Text>
-                <Badge label={item.status === 'approved' ? 'Approved' : item.status === 'rejected' ? 'Not Approved' : 'Pending'} variant={variant} />
+                  <TouchableOpacity style={styles.previewBtn} onPress={() => setPreviewItem(item)} activeOpacity={0.7}>
+                    <MaterialCommunityIcons name="card-account-details-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.previewBtnText}>Preview</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              <Text style={styles.reason}>{item.reason}</Text>
-              <View style={styles.cardBottom}>
-                <Text style={styles.dateTime}>
-                  {format(new Date(item.createdAt), 'dd MMM yyyy · h:mm a')}
-                  {item.source === 'on_duty' && ' · from On-Duty'}
-                  {item.approverRole && item.status === 'approved' && ` · Approved by ${APPROVER_LABEL[item.approverRole] ?? item.approverRole}`}
-                </Text>
-                <TouchableOpacity style={styles.previewBtn} onPress={() => setPreviewItem(item)} activeOpacity={0.7}>
-                  <MaterialCommunityIcons name="card-account-details-outline" size={13} color={Colors.primary} />
-                  <Text style={styles.previewBtnText}>Preview</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        }}
-      />
-
-      {/* FAB */}
-      <TouchableOpacity style={styles.fab} onPress={() => setShowNew(true)}>
-        <MaterialCommunityIcons name="plus" size={26} color="#fff" />
-      </TouchableOpacity>
-
-      {/* New Request Sheet */}
-      <BottomSheet visible={showNew} onClose={() => { setShowNew(false); reset(); }} title="Request an Outpass">
-        <Controller
-          control={control}
-          name="destination"
-          render={({ field: { onChange, value, onBlur } }) => (
-            <Input
-              label="Where are you going?"
-              value={value}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              error={errors.destination?.message}
-            />
-          )}
+            );
+          }}
         />
+      )}
 
-        <Controller
-          control={control}
-          name="reason"
-          render={({ field: { onChange, value, onBlur } }) => (
-            <TextArea
-              label="Reason"
-              placeholder="Describe your reason..."
-              value={value}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              minLength={5}
-              maxLength={300}
-              error={errors.reason?.message}
+      {section === 'outpass' && (
+        <>
+          {/* FAB */}
+          <TouchableOpacity style={styles.fab} onPress={() => setShowNew(true)}>
+            <MaterialCommunityIcons name="plus" size={26} color="#fff" />
+          </TouchableOpacity>
+
+          {/* New Request Sheet */}
+          <BottomSheet visible={showNew} onClose={() => { setShowNew(false); reset(); }} title="Request an Outpass">
+            <Controller
+              control={control}
+              name="destination"
+              render={({ field: { onChange, value, onBlur } }) => (
+                <Input
+                  label="Where are you going?"
+                  value={value}
+                  onChangeText={onChange}
+                  onBlur={onBlur}
+                  error={errors.destination?.message}
+                />
+              )}
             />
-          )}
-        />
 
-        <Button title="Submit Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} />
-      </BottomSheet>
+            <Controller
+              control={control}
+              name="reason"
+              render={({ field: { onChange, value, onBlur } }) => (
+                <TextArea
+                  label="Reason"
+                  placeholder="Describe your reason..."
+                  value={value}
+                  onChangeText={onChange}
+                  onBlur={onBlur}
+                  minLength={5}
+                  maxLength={300}
+                  error={errors.reason?.message}
+                />
+              )}
+            />
 
-      {/* Outpass card preview -any request, any status, opened from its row */}
-      <BottomSheet visible={!!previewItem} onClose={() => setPreviewItem(null)} title="Outpass Card">
-        {previewItem && <OutpassFlipCard request={previewItem} employee={employee} />}
-      </BottomSheet>
+            <Button title="Submit Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} />
+          </BottomSheet>
+
+          {/* Outpass card preview -any request, any status, opened from its row */}
+          <BottomSheet visible={!!previewItem} onClose={() => setPreviewItem(null)} title="Outpass Card">
+            {previewItem && <OutpassFlipCard request={previewItem} employee={employee} />}
+          </BottomSheet>
+        </>
+      )}
 
       <Toast {...toast} />
       <SuccessOverlay
@@ -224,6 +267,20 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   pad: { padding: 16, paddingBottom: 100 },
   center: { flex: 1 },
+
+  sectionBar: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginTop: 12,
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.lg,
+    padding: 4,
+    gap: 4,
+  },
+  sectionBtn: { flex: 1, borderRadius: BorderRadius.md, paddingVertical: 11, alignItems: 'center' },
+  sectionBtnActive: { backgroundColor: Colors.primary },
+  sectionLabel: { color: Colors.textMuted, fontSize: 13, fontWeight: '800' },
+  sectionLabelActive: { color: '#fff' },
 
   tabBar: {
     flexDirection: 'row',
