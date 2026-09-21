@@ -78,7 +78,7 @@ export function Button({
       >
         {variant === 'primary' ? (
           <LinearGradient
-            colors={['#006496', '#0080bf']}
+            colors={Colors.gradientPrimary}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={[styles.gradient, ...(ClayElevation.button ? [ClayElevation.button as ViewStyle] : [])]}
@@ -120,12 +120,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: '#fff',
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
-        shadowOffset: { width: 3, height: 4 },
-        shadowOpacity: 0.08,
-        shadowRadius: 8,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
       },
-      android: { elevation: 2 },
+      android: { elevation: 1 },
     }),
   },
   ghost: {
@@ -135,12 +135,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: Colors.secondaryContainer,
     ...Platform.select({
       ios: {
-        shadowColor: '#735c00',
-        shadowOffset: { width: 3, height: 4 },
-        shadowOpacity: 0.12,
-        shadowRadius: 8,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 5,
       },
-      android: { elevation: 4 },
+      android: { elevation: 1 },
     }),
   },
   disabled: { opacity: 0.5 },

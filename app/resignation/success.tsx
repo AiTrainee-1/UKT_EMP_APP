@@ -17,6 +17,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 export default function ResignationSuccessScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -46,9 +47,9 @@ export default function ResignationSuccessScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor="#1b5e20" />
+      <StatusBar barStyle="light-content" backgroundColor="#047857" />
 
-      <LinearGradient colors={['#2e7d32', '#1b5e20']} style={styles.bg}>
+      <LinearGradient colors={['#059669', '#047857']} style={styles.bg}>
         {/* Deco circles */}
         <View style={styles.deco1} />
         <View style={styles.deco2} />
@@ -57,7 +58,7 @@ export default function ResignationSuccessScreen() {
         {/* Animated checkmark */}
         <Animated.View style={[styles.checkBubble, { transform: [{ scale }] }]}>
           <View style={styles.checkInner}>
-            <MaterialCommunityIcons name="check-bold" size={52} color="#2e7d32" />
+            <MaterialCommunityIcons name="check-bold" size={52} color="#059669" />
           </View>
         </Animated.View>
 
@@ -76,7 +77,7 @@ export default function ResignationSuccessScreen() {
           ].map(({ icon, text }, i) => (
             <View key={i} style={styles.infoCard}>
               <View style={styles.infoIcon}>
-                <MaterialCommunityIcons name={icon as any} size={18} color="#2e7d32" />
+                <MaterialCommunityIcons name={icon as any} size={18} color="#059669" />
               </View>
               <Text style={styles.infoText}>{text}</Text>
             </View>
@@ -89,7 +90,7 @@ export default function ResignationSuccessScreen() {
             onPress={() => router.replace('/(tabs)/home')}
             activeOpacity={0.85}
           >
-            <MaterialCommunityIcons name="home-outline" size={20} color="#2e7d32" />
+            <MaterialCommunityIcons name="home-outline" size={20} color="#059669" />
             <Text style={styles.homeBtnText}>Return to Home</Text>
           </TouchableOpacity>
         </Animated.View>
@@ -145,7 +146,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
 
   textBlock: { alignItems: 'center', gap: 10, paddingHorizontal: 8 },
-  title: { color: '#fff', fontSize: 24, fontWeight: '900', textAlign: 'center' },
+  title: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 24, textAlign: 'center' },
   subtitle: {
     color: 'rgba(255,255,255,0.85)',
     fontSize: 14,
@@ -185,9 +186,9 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderRadius: BorderRadius.full,
     paddingVertical: 15,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.18, shadowRadius: 16 },
-      android: { elevation: 8 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 10 },
+      android: { elevation: 5 },
     }),
   },
-  homeBtnText: { color: '#2e7d32', fontSize: 15, fontWeight: '800' },
+  homeBtnText: { color: '#059669', fontSize: 15, fontWeight: '800' },
 });

@@ -27,6 +27,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 const EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -99,14 +100,21 @@ export default function ChatScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor="#006496" />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color="#fff" />
+          <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Team Chat</Text>
-        <View style={{ width: 38 }} />
+        <View style={{ flex: 1 }}>
+          <View style={styles.headerTitleRow}>
+            <Text style={styles.headerTitle}>Team Chat</Text>
+            <View style={styles.liveDot} />
+          </View>
+          <Text style={styles.headerSubtitle}>
+            {channelType === 'department' ? (deptChannel?.departmentName ?? 'Department') : 'Company-wide'}
+          </Text>
+        </View>
       </View>
 
       <View style={styles.tabBar}>
@@ -278,28 +286,34 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    backgroundColor: '#006496',
+    paddingVertical: 14,
+    backgroundColor: Colors.bgCard,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: {
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: Colors.bgSurfaceLow,
     alignItems: 'center', justifyContent: 'center',
   },
-  headerTitle: { flex: 1, textAlign: 'center', color: '#fff', fontSize: 16, fontWeight: '800' },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+  liveDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: Colors.statusGreen },
+  headerSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 1 },
 
   tabBar: {
     flexDirection: 'row',
     backgroundColor: Colors.bgCard,
     margin: 12,
     borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 4,
     gap: 4,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 6 },
-      android: { elevation: 2 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   tabBtn: {
@@ -330,9 +344,11 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   bubbleTheirs: {
     backgroundColor: Colors.bgCard,
     borderTopLeftRadius: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 2, height: 3 }, shadowOpacity: 0.07, shadowRadius: 8 },
-      android: { elevation: 2 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   bubbleMine: {
@@ -439,12 +455,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   emojiPicker: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.full,
     padding: 8,
     gap: 6,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.2, shadowRadius: 16 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 15 },
       android: { elevation: 10 },
     }),
   },

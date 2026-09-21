@@ -11,7 +11,6 @@ import {
   Alert,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { router } from 'expo-router';
@@ -20,35 +19,39 @@ import { useAttendance } from '../../src/hooks/useAttendance';
 import { useShift } from '../../src/hooks/useShift';
 import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
 import { useCLEligibility } from '../../src/hooks/useCasualLeave';
+import { useGeoPunchStatus } from '../../src/hooks/useGeoAttendance';
 import { AttendanceCalendar } from '../../src/components/AttendanceCalendar';
 import { AttendanceTrendChart } from '../../src/components/AttendanceTrendChart';
-import { GeoPunchCard } from '../../src/components/GeoPunchCard';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
-import { BorderRadius, Spacing } from '../../src/constants/theme';
+import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily, TabularNums } from '../../src/constants/typography';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-// Six figures in a 3×2 grid. Working Days leads because it's the
-// denominator the rest are read against; Present/Absent are ordered to
-// match the Home screen's overview card so the two never look reversed.
-// Takes the palette explicitly -a plain builder, not a component, so it
-// cannot reach the theme through a hook.
-const SUMMARY = (Colors: Palette, data: any) => [
-  { label: 'Working Days', value: data?.workingDays ?? 0, color: Colors.primary, bg: Colors.badgeBlueBg, icon: 'calendar-month-outline' },
-  { label: 'Present', value: data?.present ?? 0, color: Colors.statusGreen, bg: Colors.badgeGreenBg, icon: 'check-circle' },
-  { label: 'Absent', value: data?.absent ?? 0, color: Colors.statusRed, bg: Colors.badgeRedBg, icon: 'close-circle' },
-  { label: 'Late', value: data?.late ?? 0, color: Colors.statusYellow, bg: Colors.badgeYellowBg, icon: 'clock-alert' },
-  { label: 'Half Shift', value: data?.halfShift ?? 0, color: Colors.statusYellow, bg: Colors.badgeYellowBg, icon: 'clock-time-four-outline' },
-  { label: 'Leave', value: data?.onLeave ?? 0, color: Colors.primary, bg: Colors.primaryFixed, icon: 'umbrella' },
-];
+// Working Days leads because it's the denominator the other five are read
+// against. Each entry drives its own standalone stat card (3×2 grid), so the
+// `badge` text/tone is the card's headline detail, not a caption.
+const SUMMARY = (Colors: Palette, data: any) => {
+  const present = data?.present ?? 0;
+  const workingDays = data?.workingDays ?? 0;
+  const presentPct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
+  return [
+    { label: 'Working', value: workingDays, unit: 'days', dot: Colors.textMuted, badge: null, badgeBg: null, badgeText: null },
+    { label: 'Present', value: present, unit: null, dot: Colors.statusGreen, badge: `${presentPct}%`, badgeBg: Colors.badgeGreenBg, badgeText: Colors.statusGreen },
+    { label: 'Absent', value: data?.absent ?? 0, unit: null, dot: Colors.statusRed, badge: (data?.absent ?? 0) > 0 ? `${data?.absent} day${data?.absent === 1 ? '' : 's'}` : null, badgeBg: Colors.badgeRedBg, badgeText: Colors.statusRed },
+    { label: 'Late', value: data?.late ?? 0, unit: null, dot: Colors.statusYellow, badge: (data?.late ?? 0) > 0 ? 'Alert' : null, badgeBg: Colors.badgeYellowBg, badgeText: Colors.statusYellow },
+    { label: 'Half Shift', value: data?.halfShift ?? 0, unit: null, dot: Colors.textMuted, badge: null, badgeBg: null, badgeText: null },
+    { label: 'Leave', value: data?.onLeave ?? 0, unit: null, dot: Colors.categoryTracking, badge: (data?.onLeave ?? 0) > 0 ? 'Approved' : null, badgeBg: Colors.badgeBlueBg, badgeText: Colors.categoryTracking },
+  ];
+};
 
 export default function AttendanceScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -77,6 +80,7 @@ export default function AttendanceScreen() {
   const { data: shift } = useShift(user?.employeeId ?? null);
   const { data: syncStatus } = useAttendanceSyncStatus();
   const { data: clEligibility } = useCLEligibility(user?.employeeId ?? null);
+  const { data: geoStatus } = useGeoPunchStatus();
 
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear((y) => y - 1); }
@@ -92,36 +96,13 @@ export default function AttendanceScreen() {
 
   const atCurrent = year === now.getFullYear() && month === now.getMonth() + 1;
 
+  const punchCount = geoStatus?.punches?.length ?? 0;
+  const nextType = geoStatus?.nextPunchType;
+  const onDutyActive = geoStatus?.onDutySession?.status === 'active';
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#006496" />
-
-      <LinearGradient
-        colors={Colors.gradientPrimary}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerDeco} />
-        <View style={styles.headerContent}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
-            <View>
-              <Text style={styles.title}>Attendance</Text>
-              <Text style={styles.subtitle}>Track your daily attendance</Text>
-            </View>
-          </View>
-          <View style={styles.monthPill}>
-            <TouchableOpacity onPress={prevMonth} style={styles.navBtn}>
-              <MaterialCommunityIcons name="chevron-left" size={20} color="#fff" />
-            </TouchableOpacity>
-            <Text style={styles.monthLabel}>{MONTHS[month - 1].slice(0, 3)} {year}</Text>
-            <TouchableOpacity onPress={nextMonth} style={[styles.navBtn, atCurrent && styles.navBtnDisabled]}>
-              <MaterialCommunityIcons name="chevron-right" size={20} color={atCurrent ? 'rgba(255,255,255,0.35)' : '#fff'} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </LinearGradient>
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -130,94 +111,171 @@ export default function AttendanceScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        <GeoPunchCard />
+        {/* ─── Top bar: hamburger · brand mark + wordmark · bell · avatar ─── */}
+        <View style={styles.topBar}>
+          <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
+          <View style={styles.brandBadge}>
+            <Text style={styles.brandBadgeText}>XT</Text>
+          </View>
+          <View style={styles.brandTextWrap}>
+            <Text style={styles.brandName}>UKTEXTILES</Text>
+            <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
+          </View>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.push('/(tabs)/notifications')}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Notifications"
+          >
+            <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.avatarBtn}
+            onPress={() => router.push('/(tabs)/profile')}
+            activeOpacity={0.85}
+          >
+            <MaterialCommunityIcons name="account" size={18} color="#fff" />
+          </TouchableOpacity>
+        </View>
 
-        {syncStatus?.pendingSync && (
-          <View style={styles.syncWarning}>
-            <MaterialCommunityIcons name="alert-outline" size={18} color={Colors.statusYellow} />
-            <Text style={styles.syncWarningText}>
-              Today's attendance may be incomplete — biometric punches haven't synced yet. It'll update once HR runs the next sync.
+        {/* ─── Month nav + sync status ─── */}
+        <View style={styles.monthCard}>
+          <TouchableOpacity onPress={prevMonth} style={styles.monthNavBtn} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="chevron-left" size={20} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <View style={styles.monthLabelWrap}>
+            <MaterialCommunityIcons name="calendar-month-outline" size={15} color={Colors.textMuted} />
+            <Text style={styles.monthLabel}>{MONTHS[month - 1]} {year}</Text>
+          </View>
+          <TouchableOpacity
+            onPress={nextMonth}
+            style={styles.monthNavBtn}
+            activeOpacity={0.7}
+            disabled={atCurrent}
+          >
+            <MaterialCommunityIcons name="chevron-right" size={20} color={atCurrent ? Colors.outline : Colors.textPrimary} />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <View style={[styles.syncPill, syncStatus?.pendingSync ? styles.syncPillWarn : styles.syncPillOk]}>
+            <View style={[styles.syncDot, { backgroundColor: syncStatus?.pendingSync ? Colors.statusYellow : Colors.statusGreen }]} />
+            <Text style={[styles.syncText, { color: syncStatus?.pendingSync ? Colors.statusYellow : Colors.statusGreen }]}>
+              {syncStatus?.pendingSync ? 'Pending Sync' : 'Synced'}
             </Text>
+          </View>
+        </View>
+
+        {/* ─── Office Geo-Punch ─── */}
+        <TouchableOpacity
+          style={styles.geoCard}
+          onPress={() => router.push(onDutyActive ? '/on-duty' : '/geo-punch')}
+          activeOpacity={0.85}
+        >
+          <View style={styles.geoIconWrap}>
+            <MaterialCommunityIcons name={onDutyActive ? 'briefcase-outline' : 'navigation-variant-outline'} size={18} color={Colors.categoryTracking} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.geoTitleRow}>
+              <Text style={styles.geoTitle}>{onDutyActive ? 'On-Duty' : 'Office Geo-Punch'}</Text>
+              <View style={[styles.geoBadge, punchCount > 0 ? styles.geoBadgeOn : styles.geoBadgeOff]}>
+                <Text style={[styles.geoBadgeText, { color: punchCount > 0 ? Colors.statusGreen : Colors.textMuted }]}>
+                  {punchCount > 0 ? 'Active' : 'No Punch'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.geoSubtitle} numberOfLines={1}>
+              {punchCount === 0
+                ? 'No punches recorded yet today'
+                : `${punchCount} punch${punchCount === 1 ? '' : 'es'} today · next is ${nextType === 'IN' ? 'Check-In' : 'Check-Out'}`}
+            </Text>
+          </View>
+          <View style={styles.geoViewBtn}>
+            <Text style={styles.geoViewBtnText}>View Details</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* ─── Assigned shift ─── */}
+        {shift && (
+          <TouchableOpacity style={styles.shiftBanner} onPress={() => router.push('/shift')} activeOpacity={0.85}>
+            <View style={styles.shiftBannerIcon}>
+              <MaterialCommunityIcons name="clock-outline" size={16} color={Colors.primary} />
+            </View>
+            <Text style={styles.shiftBannerText} numberOfLines={1}>
+              <Text style={styles.shiftBannerBold}>Shift: {shift.shiftName}</Text>
+              {'  '}{shift.startTime} – {shift.endTime} · Grace Period: {shift.gracePeriod} mins
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* ─── Summary grid: 6 individual stat cards ─── */}
+        {isLoading ? (
+          <SkeletonCard lines={2} />
+        ) : (
+          <View style={styles.statsGrid}>
+            {SUMMARY(Colors, data).map(({ label, value, unit, dot, badge, badgeBg, badgeText }) => (
+              <View key={label} style={styles.statCard}>
+                <View style={styles.statTopRow}>
+                  <View style={[styles.statDot, { backgroundColor: dot }]} />
+                  <Text style={styles.statLabel}>{label}</Text>
+                </View>
+                <Text style={styles.statValue} numberOfLines={1}>
+                  {value}{unit ? <Text style={styles.statUnit}> {unit}</Text> : null}
+                </Text>
+                {badge ? (
+                  <View style={[styles.statBadge, { backgroundColor: badgeBg }]}>
+                    <Text style={[styles.statBadgeText, { color: badgeText }]}>{badge}</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.statBadgeDash}>—</Text>
+                )}
+              </View>
+            ))}
           </View>
         )}
 
-        {/* Assigned shift */}
-        {shift && (
-          <TouchableOpacity style={styles.shiftBanner} onPress={() => router.push('/shift')} activeOpacity={0.8}>
-            <View style={styles.shiftBannerIcon}>
-              <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.primary} />
+        {/* ─── Casual Leave Status ─── */}
+        {clEligibility && (
+          <TouchableOpacity style={styles.clCard} onPress={() => router.push('/(tabs)/leave')} activeOpacity={0.85}>
+            <View style={styles.clIconWrap}>
+              <MaterialCommunityIcons name="shield-check-outline" size={18} color={Colors.statusGreen} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.shiftBannerLabel}>Assigned Shift</Text>
-              <Text style={styles.shiftBannerValue}>
-                {shift.shiftName} · {shift.startTime} – {shift.endTime}
+              <View style={styles.clTitleRow}>
+                <Text style={styles.clTitle}>Casual Leave Status</Text>
+                <View style={[styles.clBadge, clEligibility.eligible ? styles.clBadgeOk : styles.clBadgeNo]}>
+                  <Text style={[styles.clBadgeText, { color: clEligibility.eligible ? Colors.statusGreen : Colors.statusRed }]}>
+                    {clEligibility.eligible ? 'Eligible' : 'Not Eligible'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.clSubtitle} numberOfLines={1}>
+                {clEligibility.eligible && clEligibility.yearlyEntitlement != null
+                  ? `${clEligibility.remainingThisYear} Remaining of ${clEligibility.yearlyEntitlement} yearly entitlement`
+                  : clEligibility.reason ?? 'Not eligible this period'}
               </Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
           </TouchableOpacity>
         )}
 
-        {/* Summary row */}
-        {isLoading ? (
-          <SkeletonCard lines={2} />
-        ) : (
-          <View style={styles.summaryRow}>
-            {SUMMARY(Colors, data).map(({ label, value, color, bg, icon }) => (
-              <View key={label} style={styles.summaryItem}>
-                <View style={[styles.summaryIcon, { backgroundColor: bg }]}>
-                  <MaterialCommunityIcons name={icon as any} size={18} color={color} />
-                </View>
-                <Text style={[styles.summaryNum, { color }]}>{value}</Text>
-                <Text style={styles.summaryLabel}>{label}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Monthly trend chart */}
+        {/* ─── Monthly trend ─── */}
         {!isLoading && (
-          <View style={styles.trendCard}>
-            <Text style={styles.trendTitle}>Monthly Trend</Text>
+          <View style={styles.card}>
+            <View style={styles.cardHeaderRow}>
+              <Text style={styles.cardTitle}>Monthly Trend</Text>
+              <Text style={styles.cardHint}>Daily breakdown</Text>
+            </View>
             <AttendanceTrendChart records={data?.records ?? []} />
           </View>
         )}
 
-        {/* Casual Leave eligibility */}
-        {clEligibility && (
-          <View style={styles.clCard}>
-            <View style={styles.clHeader}>
-              <MaterialCommunityIcons name="calendar-heart" size={16} color={Colors.primary} />
-              <Text style={styles.clTitle}>Casual Leave</Text>
-              <View style={[styles.clBadge, clEligibility.eligible ? styles.clBadgeOk : styles.clBadgeNo]}>
-                <Text style={[styles.clBadgeText, clEligibility.eligible ? styles.clBadgeTextOk : styles.clBadgeTextNo]}>
-                  {clEligibility.eligible ? 'Eligible' : 'Not Eligible'}
-                </Text>
-              </View>
-            </View>
-            {!clEligibility.eligible && !!clEligibility.reason && (
-              <Text style={styles.clReason}>{clEligibility.reason}</Text>
-            )}
-            {clEligibility.yearlyEntitlement != null && (
-              <View style={styles.clStatsRow}>
-                <View style={styles.clStat}>
-                  <Text style={styles.clStatNum}>{clEligibility.yearlyEntitlement}</Text>
-                  <Text style={styles.clStatLabel}>Yearly Entitlement</Text>
-                </View>
-                <View style={styles.clStat}>
-                  <Text style={[styles.clStatNum, { color: Colors.statusYellow }]}>{clEligibility.usedThisYear}</Text>
-                  <Text style={styles.clStatLabel}>Used</Text>
-                </View>
-                <View style={styles.clStat}>
-                  <Text style={[styles.clStatNum, { color: Colors.statusGreen }]}>{clEligibility.remainingThisYear}</Text>
-                  <Text style={styles.clStatLabel}>Remaining</Text>
-                </View>
-              </View>
-            )}
+        {/* ─── Attendance calendar ─── */}
+        <View style={styles.card}>
+          <View style={styles.cardHeaderRow}>
+            <Text style={styles.cardTitle}>Attendance Calendar</Text>
+            <Text style={styles.cardHintBlue}>{MONTHS[month - 1]} {year}</Text>
           </View>
-        )}
-
-        {/* Calendar card */}
-        <View style={styles.calendarCard}>
           {isLoading ? (
             <SkeletonCard lines={5} />
           ) : (
@@ -225,14 +283,13 @@ export default function AttendanceScreen() {
           )}
         </View>
 
-        {/* Legend */}
+        {/* ─── Legend ─── */}
         <View style={styles.legend}>
           {[
-            { label: 'Present', color: Colors.clayGreen },
-            { label: 'Half Shift', color: Colors.clayYellow },
-            { label: 'Absent', color: Colors.clayRed },
-            { label: 'Late', color: Colors.clayYellow },
-            { label: 'On Leave', color: Colors.clayBlue },
+            { label: 'Present', color: Colors.statusGreen },
+            { label: 'Late', color: Colors.statusYellow },
+            { label: 'Absent', color: Colors.statusRed },
+            { label: 'On Leave', color: Colors.categoryTracking },
           ].map(({ label, color }) => (
             <View key={label} style={styles.legendItem}>
               <View style={[styles.legendDot, { backgroundColor: color }]} />
@@ -252,150 +309,149 @@ export default function AttendanceScreen() {
   );
 }
 
+const cardShadow = Platform.select({
+  ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+  android: { elevation: 1 },
+}) as object;
+
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 20,
-    overflow: 'hidden',
-  },
-  headerDeco: {
-    position: 'absolute', top: -20, right: -20,
-    width: 100, height: 100, borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: { color: '#fff', fontSize: 22, fontWeight: '900' },
-  subtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2 },
-  monthPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: BorderRadius.full,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
-    paddingVertical: 4,
-    paddingHorizontal: 4,
-    gap: 2,
-  },
-  navBtn: { padding: 4, borderRadius: 20 },
-  navBtnDisabled: { opacity: 0.4 },
-  monthLabel: { color: '#fff', fontSize: 13, fontWeight: '700', minWidth: 64, textAlign: 'center' },
+  content: { paddingHorizontal: 16, paddingBottom: 32, paddingTop: 8 },
 
-  content: { padding: 16, paddingBottom: 32, gap: 16 },
-
-  syncWarning: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    backgroundColor: Colors.badgeYellowBg,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-  },
-  syncWarningText: {
-    flex: 1,
-    color: Colors.textPrimary,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-
-  shiftBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    padding: 12,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10 },
-      android: { elevation: 2 },
-    }),
-  },
-  shiftBannerIcon: {
-    width: 34, height: 34, borderRadius: 10,
-    backgroundColor: Colors.primaryFixed,
+  // Top bar (matches Home)
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+  brandBadge: {
+    width: 30, height: 30, borderRadius: 8,
+    backgroundColor: Colors.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  shiftBannerLabel: { color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
-  shiftBannerValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '700', marginTop: 1 },
-
-  summaryRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    rowGap: 18,          // breathing room between the two rows of the 3×2 grid
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    paddingVertical: 18,
-    paddingHorizontal: 4,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 4, height: 6 }, shadowOpacity: 0.10, shadowRadius: 14 },
-      android: { elevation: 4 },
-    }),
-  },
-  // 33.33% = three per row, so the six stats form an even 3×2 grid.
-  // (At the previous 20% the sixth stat wrapped to a row of its own.)
-  summaryItem: { alignItems: 'center', gap: 6, width: '33.33%' },
-  summaryIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  summaryNum: { fontSize: 22, fontWeight: '900' },
-  summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
-
-  calendarCard: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    padding: 16,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 4, height: 6 }, shadowOpacity: 0.09, shadowRadius: 14 },
-      android: { elevation: 4 },
-    }),
+  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
+  brandTextWrap: { gap: 1 },
+  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
+  brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
+  iconBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  avatarBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
   },
 
-  trendCard: {
+  // Month nav card
+  monthCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
     backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    padding: 16,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    paddingVertical: 8, paddingHorizontal: 10,
     marginBottom: 14,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
-      android: { elevation: 3 },
-    }),
+    ...cardShadow,
   },
-  trendTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800', marginBottom: 10 },
+  monthNavBtn: { padding: 4 },
+  monthLabelWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  monthLabel: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  syncPill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 5 },
+  syncPillOk: { backgroundColor: Colors.badgeGreenBg },
+  syncPillWarn: { backgroundColor: Colors.badgeYellowBg },
+  syncDot: { width: 6, height: 6, borderRadius: 3 },
+  syncText: { fontSize: 10.5, fontWeight: '700' },
 
+  // Office Geo-Punch card
+  geoCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 14,
+    marginBottom: 14,
+    ...cardShadow,
+  },
+  geoIconWrap: {
+    width: 38, height: 38, borderRadius: BorderRadius.md,
+    backgroundColor: Colors.badgeBlueBg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  geoTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  geoTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
+  geoBadge: { borderRadius: BorderRadius.full, paddingHorizontal: 8, paddingVertical: 2 },
+  geoBadgeOn: { backgroundColor: Colors.badgeGreenBg },
+  geoBadgeOff: { backgroundColor: Colors.bgSurfaceLow },
+  geoBadgeText: { fontSize: 9.5, fontWeight: '800' },
+  geoSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 3 },
+  geoViewBtn: { paddingHorizontal: 4 },
+  geoViewBtnText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12 },
+
+  // Shift banner
+  shiftBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.primaryFixed,
+    borderRadius: BorderRadius.lg,
+    padding: 12,
+    marginBottom: 14,
+  },
+  shiftBannerIcon: {
+    width: 30, height: 30, borderRadius: 9,
+    backgroundColor: Colors.bgCard,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  shiftBannerText: { flex: 1, color: Colors.textSecondary, fontSize: 12, lineHeight: 17 },
+  shiftBannerBold: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
+
+  // Stats grid (3×2, individual cards)
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
+  statCard: {
+    width: '31.6%',
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 10,
+    gap: 6,
+    ...cardShadow,
+  },
+  statTopRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  statDot: { width: 6, height: 6, borderRadius: 3 },
+  statLabel: { color: Colors.textMuted, fontSize: 10.5, fontWeight: '600', flexShrink: 1 },
+  statValue: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 20, ...TabularNums },
+  statUnit: { color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 10, fontWeight: '600' },
+  statBadge: { alignSelf: 'flex-start', borderRadius: BorderRadius.full, paddingHorizontal: 7, paddingVertical: 2 },
+  statBadgeText: { fontSize: 9.5, fontWeight: '800' },
+  statBadgeDash: { color: Colors.outline, fontSize: 11, fontWeight: '700' },
+
+  // Casual Leave card
   clCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
-    padding: 16,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 14,
     marginBottom: 14,
-    gap: 8,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
-      android: { elevation: 3 },
-    }),
+    ...cardShadow,
   },
-  clHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  clTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800', flex: 1 },
-  clBadge: { borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  clIconWrap: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: Colors.badgeGreenBg,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  clTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  clTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
+  clBadge: { borderRadius: BorderRadius.full, paddingHorizontal: 8, paddingVertical: 2 },
   clBadgeOk: { backgroundColor: Colors.badgeGreenBg },
   clBadgeNo: { backgroundColor: Colors.badgeRedBg },
-  clBadgeText: { fontSize: 10, fontWeight: '800' },
-  clBadgeTextOk: { color: Colors.badgeGreenText },
-  clBadgeTextNo: { color: Colors.badgeRedText },
-  clReason: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
-  clStatsRow: { flexDirection: 'row', marginTop: 4 },
-  clStat: { flex: 1, alignItems: 'center', gap: 2 },
-  clStatNum: { color: Colors.textPrimary, fontSize: 18, fontWeight: '900' },
-  clStatLabel: { color: Colors.textMuted, fontSize: 9.5, fontWeight: '600', textAlign: 'center' },
+  clBadgeText: { fontSize: 9.5, fontWeight: '800' },
+  clSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 3 },
+
+  // Shared white card
+  card: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 16,
+    marginBottom: 14,
+    ...cardShadow,
+  },
+  cardHeaderRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 },
+  cardTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 15 },
+  cardHint: { color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
+  cardHintBlue: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
 
   legend: {
     flexDirection: 'row',

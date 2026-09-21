@@ -23,6 +23,7 @@ import { Colors } from '../constants/colors';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
+import { FontFamily } from '../constants/typography';
 
 const DRAWER_WIDTH = Math.min(Dimensions.get('window').width * 0.78, 300);
 
@@ -48,36 +49,36 @@ const NAV_GROUPS: NavGroup[] = [
       // primary. Naming Colors.primary here would freeze it to the light-mode
       // blue, which is close to unreadable on a dark drawer.
       { icon: 'home-outline', label: 'Home', route: '/(tabs)/home' },
-      { icon: 'calendar-check-outline', label: 'Attendance', route: '/(tabs)/attendance', color: '#27ae60' },
-      { icon: 'map-marker-radius-outline', label: 'Attendance Request', route: '/geo-punch', color: '#0891b2' },
+      { icon: 'calendar-check-outline', label: 'Attendance', route: '/(tabs)/attendance', color: '#059669' },
+      { icon: 'map-marker-radius-outline', label: 'Attendance Request', route: '/geo-punch', color: '#0369A1' },
       { icon: 'briefcase-outline', label: 'On-Duty', route: '/on-duty', color: '#815600' },
-      { icon: 'exit-run', label: 'Outpass', route: '/outpass', color: '#006496' },
-      { icon: 'crosshairs-gps', label: 'Live Tracking', route: '/geo-tracking', color: '#0891b2' },
-      { icon: 'clock-outline', label: 'My Shift', route: '/shift', color: '#16a085' },
-      { icon: 'fingerprint', label: 'Missing Punch', route: '/missing-punch', color: '#5e35b1' },
+      { icon: 'exit-run', label: 'Outpass', route: '/outpass', color: '#009688' },
+      { icon: 'crosshairs-gps', label: 'Live Tracking', route: '/geo-tracking', color: '#0369A1' },
+      { icon: 'clock-outline', label: 'My Shift', route: '/shift', color: '#E67E22' },
+      { icon: 'fingerprint', label: 'Missing Punch', route: '/missing-punch', color: '#5E35B1' },
       { icon: 'flag-outline', label: 'Holidays', route: '/holidays', color: '#c0392b' },
     ],
   },
   {
     heading: 'HR Operations',
     items: [
-      { icon: 'umbrella-outline', label: 'Leave', route: '/(tabs)/leave', color: '#2980b9', staffOnly: true },
-      { icon: 'hand-wave-outline', label: 'Permissions', route: '/requests', color: '#e67e22', staffOnly: true },
+      { icon: 'umbrella-outline', label: 'Leave', route: '/(tabs)/leave', color: '#8E44AD', staffOnly: true },
+      { icon: 'hand-wave-outline', label: 'Permissions', route: '/requests', color: '#2980B9', staffOnly: true },
     ],
   },
   {
     heading: 'Payroll & Salary',
     items: [
-      { icon: 'cash-multiple', label: 'Salary Slips', route: '/salary', color: '#8e44ad' },
+      { icon: 'cash-multiple', label: 'Salary Slips', route: '/salary', color: '#27AE60' },
       { icon: 'bank-transfer', label: 'Advances', route: '/settlement', color: '#7f8c8d' },
     ],
   },
   {
-    heading: 'Other',
+    heading: 'Records & Community',
     items: [
       { icon: 'card-account-details-outline', label: 'Digital ID Card', route: '/idcard', color: '#2c3e50' },
-      { icon: 'folder-outline', label: 'My Documents', route: '/documents', color: '#00897b' },
-      { icon: 'chat-outline', label: 'Chat', route: '/chat', color: '#0984e3' },
+      { icon: 'folder-outline', label: 'My Documents', route: '/documents', color: '#00897B' },
+      { icon: 'chat-outline', label: 'Team Chat', route: '/chat', color: '#0984E3' },
     ],
   },
 ];
@@ -224,9 +225,9 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
             </View>
           ))}
 
-          {/* Notifications */}
+          {/* Account & System */}
           <View style={styles.navGroup}>
-            <Text style={styles.navGroupHeading}>Alerts & Profile</Text>
+            <Text style={styles.navGroupHeading}>Account & System</Text>
             <TouchableOpacity
               style={styles.navItem}
               onPress={() => navigate('/(tabs)/notifications')}
@@ -243,48 +244,48 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
               )}
               <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
             </TouchableOpacity>
+
+            {/* Profile */}
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => navigate('/(tabs)/profile')}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.navIcon, { backgroundColor: `${Colors.primary}15` }]}>
+                <MaterialCommunityIcons name="account-circle-outline" size={20} color={Colors.primary} />
+              </View>
+              <Text style={styles.navLabel}>My Profile</Text>
+              <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
+            </TouchableOpacity>
+
+            {/* Company */}
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => navigate('/company')}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.navIcon, { backgroundColor: `${Colors.primary}15` }]}>
+                <MaterialCommunityIcons name="office-building-outline" size={20} color={Colors.primary} />
+              </View>
+              <Text style={styles.navLabel}>About Company</Text>
+              <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
+            </TouchableOpacity>
+
+            <View style={styles.divider} />
+
+            {/* Resignation */}
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => navigate('/resignation/warning')}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.navIcon, { backgroundColor: Colors.badgeRedBg }]}>
+                <MaterialCommunityIcons name="file-sign" size={20} color={Colors.statusRed} />
+              </View>
+              <Text style={[styles.navLabel, { color: Colors.statusRed }]}>Resignation</Text>
+              <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
+            </TouchableOpacity>
           </View>
-
-          <View style={styles.divider} />
-
-          {/* Profile */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => navigate('/(tabs)/profile')}
-            activeOpacity={0.75}
-          >
-            <View style={[styles.navIcon, { backgroundColor: `${Colors.primary}15` }]}>
-              <MaterialCommunityIcons name="account-circle-outline" size={20} color={Colors.primary} />
-            </View>
-            <Text style={styles.navLabel}>My Profile</Text>
-            <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
-          </TouchableOpacity>
-
-          {/* Company */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => navigate('/company')}
-            activeOpacity={0.75}
-          >
-            <View style={[styles.navIcon, { backgroundColor: `${Colors.primary}15` }]}>
-              <MaterialCommunityIcons name="office-building-outline" size={20} color={Colors.primary} />
-            </View>
-            <Text style={styles.navLabel}>About Company</Text>
-            <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
-          </TouchableOpacity>
-
-          {/* Resignation */}
-          <TouchableOpacity
-            style={styles.navItem}
-            onPress={() => navigate('/resignation/warning')}
-            activeOpacity={0.75}
-          >
-            <View style={[styles.navIcon, { backgroundColor: Colors.badgeRedBg }]}>
-              <MaterialCommunityIcons name="file-sign" size={20} color={Colors.statusRed} />
-            </View>
-            <Text style={[styles.navLabel, { color: Colors.statusRed }]}>Resignation</Text>
-            <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
-          </TouchableOpacity>
         </ScrollView>
 
         {/* Footer */}
@@ -346,7 +347,7 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   backdrop: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(15,23,42,0.4)',
   },
   drawer: {
     position: 'absolute',
@@ -355,7 +356,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     bottom: 0,
     backgroundColor: Colors.bgLight,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 8, height: 0 }, shadowOpacity: 0.18, shadowRadius: 20 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 8, height: 0 }, shadowOpacity: 0.12, shadowRadius: 20 },
       android: { elevation: 16 },
     }),
   },
@@ -381,8 +382,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   companyName: {
     color: '#fff',
+    fontFamily: FontFamily.displayBold,
     fontSize: 15,
-    fontWeight: '800',
     letterSpacing: 1.6,
     textTransform: 'uppercase',
   },
@@ -397,8 +398,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   navGroup: { marginBottom: 6 },
   navGroupHeading: {
     color: Colors.textMuted,
+    fontFamily: FontFamily.bodySemibold,
     fontSize: 10.5,
-    fontWeight: '800',
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     paddingHorizontal: 12,
@@ -415,14 +416,14 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: 'transparent',
   },
   navIcon: {
-    width: 36, height: 36, borderRadius: 10,
+    width: 36, height: 36, borderRadius: BorderRadius.md,
     alignItems: 'center', justifyContent: 'center',
   },
   navLabel: {
     flex: 1,
     color: Colors.textPrimary,
+    fontFamily: FontFamily.bodySemibold,
     fontSize: 14,
-    fontWeight: '600',
   },
   navBadge: {
     backgroundColor: Colors.statusRed,

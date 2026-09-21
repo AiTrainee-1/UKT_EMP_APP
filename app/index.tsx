@@ -7,6 +7,8 @@ import { UKTLogo } from '../src/components/UKTLogo';
 import { Colors } from '../src/constants/colors';
 import { useTheme, useThemedStyles } from '../src/theme/ThemeProvider';
 import type { Palette } from '../src/theme/palettes';
+import { FontFamily } from '../src/constants/typography';
+import { BorderRadius } from '../src/constants/theme';
 
 /**
  * Custom JS splash shown while auth state resolves — layered on top of the
@@ -61,7 +63,7 @@ export default function SplashScreen() {
 
   if (isLoading) {
     return (
-      <LinearGradient colors={['#eaf6ff', Colors.bgLight]} style={styles.container}>
+      <LinearGradient colors={[Colors.clayBlue, Colors.bgLight]} style={styles.container}>
         <View style={styles.logoStack}>
           <Animated.View
             style={[styles.pulseRing, { transform: [{ scale: pulseScale }], opacity: pulseOpacity }]}
@@ -74,6 +76,10 @@ export default function SplashScreen() {
         <Animated.View style={{ opacity: textOpacity, transform: [{ translateY: textTranslate }], alignItems: 'center' }}>
           <Text style={styles.title}>UKTextiles</Text>
           <Text style={styles.subtitle}>Employee Portal</Text>
+          <View style={styles.versionPill}>
+            <View style={styles.versionDot} />
+            <Text style={styles.versionText}>Employee Portal v2.0</Text>
+          </View>
         </Animated.View>
 
         <Animated.View style={[styles.dotsRow, { opacity: textOpacity }]}>
@@ -137,18 +143,27 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   title: {
     fontSize: 26,
-    fontWeight: '900',
+    fontFamily: FontFamily.displayBold,
     color: Colors.textPrimary,
     letterSpacing: 1.5,
   },
   subtitle: {
     fontSize: 13,
-    fontWeight: '600',
+    fontFamily: FontFamily.bodySemibold,
     color: Colors.textMuted,
     letterSpacing: 3,
     textTransform: 'uppercase',
     marginTop: 2,
   },
+  versionPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.primaryFixed,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+    marginTop: 14,
+  },
+  versionDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.statusGreen },
+  versionText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12 },
   dotsRow: {
     flexDirection: 'row',
     gap: 8,

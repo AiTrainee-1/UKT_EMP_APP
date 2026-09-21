@@ -38,12 +38,12 @@ const styles = StyleSheet.create({
   shadow: {
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
-        shadowOffset: { width: 4, height: 8 },
-        shadowOpacity: 0.22,
-        shadowRadius: 14,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.10,
+        shadowRadius: 10,
       },
-      android: { elevation: 8 },
+      android: { elevation: 5 },
     }),
   },
 });

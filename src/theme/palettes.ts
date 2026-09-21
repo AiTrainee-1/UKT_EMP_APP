@@ -6,36 +6,24 @@ import { Colors as LightPalette } from '../constants/colors';
  * `light` is re-exported from constants/colors so there is exactly one
  * definition of it.
  *
- * `dark` is built from the five brand colours supplied for dark mode:
+ * `dark` is derived from the same source the light palette already draws
+ * from: the light tokens (`#F8FAFC`/`#0F172A`/`#334155`/`#64748B`/`#E2E8F0`/
+ * `#CBD5E1`) are literally Tailwind's slate-50/900/700/500/200/300. Reading
+ * that same slate ramp the other direction (950/900/800/700/600/500→400)
+ * gives a dark surface/text/border scale with the hue held automatically
+ * consistent, instead of a hand-picked, unrelated set of hex constants.
+ * Brand and status hues keep their identity but move lighter/more saturated
+ * for legibility on a dark ground, following the same technique this file
+ * already used for its previous (teal) dark palette.
  *
- *   #091413  ink      the app ground, and text sitting on a filled accent
- *   #285A48  moss     the top of the surface ramp, borders, dividers
- *   #408A71  jade     mid accent -fills, success, secondary emphasis
- *   #B0E4CC  mint     the primary text/icon accent on dark ground
- *   #234C6A  slate    the cool counterpoint -active pills, info, links
- *
- * Only the neutral steps BETWEEN ink and moss are derived; every accent is
- * one of the five. Two rules govern the assignment:
- *
- *  1. Surfaces climb in lightness with elevation. On a dark ground raised
- *     means lighter, the opposite of the light ramp, so bgLight is deepest
- *     and each "higher" surface moves toward moss.
- *  2. Anything used as text or an icon on the ground gets mint, not jade.
- *     Jade on ink is around 5:1 -fine for a fill or a bold label, short of
- *     comfortable for 11px secondary text, which this app has a lot of.
+ * Two rules:
+ *  1. Surfaces climb in lightness with elevation — on a dark ground,
+ *     "raised" means lighter, the opposite of the light ramp.
+ *  2. Brand/status colors used as text or icon fills get a lighter step
+ *     than the light-mode value; colors used only as a soft tint block get
+ *     a deep, low-lightness tint of the same hue instead of a pastel.
  */
 
-const INK = '#091413';
-const MOSS = '#285A48';
-const JADE = '#408A71';
-const MINT = '#B0E4CC';
-const SLATE = '#234C6A';
-
-/** The gradients are declared `as const` in constants/colors, which types
- *  them as their exact literal hex tuples -so a dark palette supplying any
- *  other colour fails to match. Widen just those three to string tuples;
- *  every flat colour key stays exactly as inferred, so a dark palette that
- *  misses a key is still a compile error. */
 export type Palette = Omit<
   typeof LightPalette,
   'gradientPrimary' | 'gradientRoyal' | 'gradientGoldAccent'
@@ -49,84 +37,95 @@ export const light: Palette = LightPalette;
 
 export const dark: Palette = {
   // ─── Brand / Primary ───────────────────────────────────
-  // Mint is the primary, because `primary` is used as a text and icon colour
-  // far more often than as a fill in this app (active tab, links, headings).
-  primary: MINT,
-  primaryLight: '#d6f2e5',
-  primaryFixed: SLATE,     // the tinted pill behind an active icon
-  onPrimary: INK,          // text on a mint-filled button
-  onPrimaryContainer: MINT,
+  // Deep Sapphire reads as near-black on a dark ground; lighten to a
+  // legible blue for icon/text use (primary's dominant role in this app).
+  primary: '#60A5FA',
+  primaryLight: '#3B82F6',
+  primaryFixed: '#1E3A5F',
+  onPrimary: '#0B1220',
+  onPrimaryContainer: '#93C5FD',
 
-  // Headers keep their weight but move to the dark family. The old blue
-  // gradient over a near-black app read as a bright slab floating on ink.
-  gradientPrimary: [INK, MOSS] as const,
-  gradientRoyal: [INK, '#132A24', MOSS] as const,
-  gradientGoldAccent: [SLATE, JADE] as const,
+  gradientPrimary: ['#0B1220', '#1E3A5F'] as const,
+  gradientRoyal: ['#0B1220', '#111827', '#1E3A5F'] as const,
+  gradientGoldAccent: ['#1E3A5F', '#78350F'] as const,
 
-  // ─── Secondary (golden → jade) ─────────────────────────
-  // The light theme's gold has no counterpart in the dark five; jade takes
-  // the "secondary emphasis" role so nothing falls back to an unmapped hue.
-  secondary: MINT,
-  secondaryContainer: MOSS,
-  secondaryFixed: '#1A3229',
-  onSecondaryContainer: MINT,
+  // ─── Secondary (warm amber) ────────────────────────────
+  secondary: '#FBBF24',
+  secondaryContainer: '#78350F',
+  secondaryFixed: '#5C2E0A',
+  onSecondaryContainer: '#FCD34D',
 
-  // ─── Tertiary ──────────────────────────────────────────
-  tertiary: JADE,
-  tertiaryContainer: '#1A3229',
+  // ─── Tertiary (on-duty brown-amber) ────────────────────
+  tertiary: '#D9A441',
+  tertiaryContainer: '#4A3208',
 
   // ─── Backgrounds ───────────────────────────────────────
-  // Derived ramp: ink → moss, so elevation reads correctly.
-  bgLight: INK,
-  bgCard: '#10201C',
-  bgSurface: INK,
-  bgSurfaceLow: '#142822',
-  bgSurfaceMid: '#1A3229',
-  bgSurfaceHigh: '#1F4235',
-  bgSurfaceHighest: MOSS,
-  bgInput: '#142822',
+  // Derived ramp: slate-950 → slate-700, so elevation reads correctly.
+  bgLight: '#0B1220',
+  bgCard: '#111827',
+  bgSurface: '#0B1220',
+  bgSurfaceLow: '#0F172A',
+  bgSurfaceMid: '#152238',
+  bgSurfaceHigh: '#1E293B',
+  bgSurfaceHighest: '#334155',
+  bgInput: '#111827',
 
   // ─── Text ──────────────────────────────────────────────
-  textPrimary: '#e7f5ee',
-  textSecondary: MINT,
-  textMuted: '#7fae9b',
+  textPrimary: '#F1F5F9',
+  textSecondary: '#CBD5E1',
+  textMuted: '#94A3B8',
 
-  // ─── Status (clay pastel → deep tints) ─────────────────
-  // Light mode fills these large blocks with pastels; at full strength on a
-  // dark ground they glow, so each becomes a deep tint carrying the same hue.
-  clayGreen: '#17392c',
-  clayRed: '#4a1f1f',
-  clayYellow: '#3d3413',
-  clayOrange: '#432a12',
-  clayBlue: '#152f42',
+  // ─── Status (soft tint blocks → deep tints) ────────────
+  // Light mode fills these with pale tints; at full strength on a dark
+  // ground they'd glow, so each becomes a deep tint carrying the same hue.
+  clayGreen: '#0F2E22',
+  clayRed: '#3F1720',
+  clayYellow: '#3D2E0A',
+  clayOrange: '#3D220A',
+  clayBlue: '#0F2A4A',
 
   // ─── Status (vivid, for badges/icons) ─────────────────
-  statusGreen: '#7fd3ad',
-  statusRed: '#ff9c92',
-  statusYellow: '#e8c46a',
-  statusOrange: '#f5a869',
-  statusBlue: '#8fc4ea',
-  statusGrey: '#7fae9b',
+  statusGreen: '#34D399',
+  statusRed: '#FB7185',
+  statusYellow: '#FBBF24',
+  statusOrange: '#FB923C',
+  statusBlue: '#38BDF8',
+  statusGrey: '#94A3B8',
+  statusLeave: '#C084FC',
 
   // ─── Badge backgrounds ─────────────────────────────────
-  badgeGreenBg: '#17392c',
-  badgeGreenText: MINT,
-  badgeRedBg: '#4a1f1f',
-  badgeRedText: '#ffb4ab',
-  badgeYellowBg: '#3d3413',
-  badgeYellowText: '#e8c46a',
-  badgePendingBg: '#3d3413',
-  badgePendingText: '#e8c46a',
-  badgeBlueBg: SLATE,
-  badgeBlueText: '#cfe6f7',
+  badgeGreenBg: '#0F2E22',
+  badgeGreenText: '#6EE7B7',
+  badgeRedBg: '#3F1720',
+  badgeRedText: '#FCA5A5',
+  badgeYellowBg: '#3D2E0A',
+  badgeYellowText: '#FCD34D',
+  badgePendingBg: '#1E293B',
+  badgePendingText: '#94A3B8',
+  badgeBlueBg: '#0F2A4A',
+  badgeBlueText: '#93C5FD',
+  badgeLeaveBg: '#2E1065',
+  badgeLeaveText: '#D8B4FE',
+
+  // ─── Category action colors ────────────────────────────
+  categoryOnDuty: '#D9A441',
+  categoryPunch: '#9575CD',
+  categoryPermission: '#5DADE2',
+  categoryOutpass: '#2DD4BF',
+  categorySalary: '#4ADE80',
+  categoryShift: '#FB923C',
+  categoryTracking: '#38BDF8',
+  categoryDocs: '#2DD4BF',
+  categoryChat: '#38BDF8',
+  categoryDestructive: '#FB7185',
 
   // ─── Error ─────────────────────────────────────────────
-  error: '#ff9c92',
+  error: '#FF9C92',
   errorContainer: '#4a1f1f',
   onErrorContainer: '#ffdad6',
 
   // ─── Borders ───────────────────────────────────────────
-  border: MOSS,
-  outline: '#7fae9b',
-  outlineVariant: '#1F4235',
+  border: '#1E293B',
+  outline: '#64748B',
+  outlineVariant: '#334155',
 };

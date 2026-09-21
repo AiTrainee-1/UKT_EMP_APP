@@ -12,8 +12,8 @@ interface ToastProps {
 }
 
 const makeTypeConfig = (Colors: Palette) => ({
-  success: { bg: '#e8f5e9', border: '#a5d6a7', text: '#1b5e20', icon: 'check-circle-outline' as const, iconColor: '#2e7d32' },
-  error:   { bg: '#ffebee', border: '#ef9a9a', text: '#b71c1c', icon: 'alert-circle-outline' as const, iconColor: '#c62828' },
+  success: { bg: Colors.badgeGreenBg, border: Colors.statusGreen, text: Colors.badgeGreenText, icon: 'check-circle-outline' as const, iconColor: Colors.statusGreen },
+  error:   { bg: Colors.badgeRedBg, border: Colors.statusRed, text: Colors.badgeRedText, icon: 'alert-circle-outline' as const, iconColor: Colors.statusRed },
   info:    { bg: Colors.primaryFixed, border: Colors.primaryLight, text: Colors.onPrimaryContainer, icon: 'information-outline' as const, iconColor: Colors.primary },
 });
 
@@ -72,10 +72,10 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     zIndex: 9999,
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.08,
+        shadowRadius: 15,
       },
       android: { elevation: 8 },
     }),

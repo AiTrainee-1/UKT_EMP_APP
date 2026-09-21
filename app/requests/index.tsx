@@ -10,39 +10,22 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useForm, Controller } from 'react-hook-form';
-import { z } from 'zod';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { router } from 'expo-router';
 import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
-import { usePermissions, useSubmitPermission } from '../../src/hooks/useRequests';
+import { usePermissions } from '../../src/hooks/useRequests';
 import { useShiftStats } from '../../src/hooks/useShiftStats';
-import { BottomSheet } from '../../src/components/ui/BottomSheet';
-import { Button } from '../../src/components/ui/Button';
-import { TextArea } from '../../src/components/ui/TextArea';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
-import { Toast } from '../../src/components/ui/Toast';
-import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
-import { DatePickerField, TimePickerField } from '../../src/components/ui/DatePickerField';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
-const PERMISSION_TYPES = ['Early Out', 'Late In', 'Short Leave'];
 const now = new Date();
-const todayStr = format(now, 'yyyy-MM-dd');
-
-const schema = z.object({
-  type: z.string().min(1, 'Select a type'),
-  date: z.string().min(1, 'Date is required'),
-  time: z.string().min(1, 'Time is required'),
-  reason: z.string().min(5, 'Provide a reason (min 5 characters)').max(200, 'Reason is too long (max 200 characters)'),
-});
-type FormData = z.infer<typeof schema>;
 
 type ReqTab = 'live' | 'confirmed';
 
@@ -57,41 +40,13 @@ export default function RequestsScreen() {
   const styles = useThemedStyles(makeStyles);
 
   const { user } = useAuth();
-  const [showNew, setShowNew] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
   const [tab, setTab] = useState<ReqTab>('live');
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
-    message: '', type: 'success', visible: false,
-  });
 
   const month = now.getMonth() + 1;
   const year = now.getFullYear();
 
   const { data, isLoading, refetch, isRefetching } = usePermissions(user?.employeeId ?? null, month, year);
   const { data: shiftStats } = useShiftStats(month, year);
-  const submit = useSubmitPermission(user?.employeeId ?? null);
-
-  const { control, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-    defaultValues: { type: '', date: todayStr, time: '09:30', reason: '' },
-  });
-
-  const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type, visible: true });
-    setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
-  };
-
-  const onSubmit = async (formData: FormData) => {
-    try {
-      await submit.mutateAsync(formData);
-      setShowNew(false);
-      reset({ type: '', date: todayStr, time: '09:30', reason: '' });
-      setShowSuccess(true);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.message || 'Failed to submit. Please try again.';
-      showToast(msg, 'error');
-    }
-  };
 
   const items = data?.items ?? [];
   const monthlyUsed = data?.monthlyUsed ?? 0;
@@ -105,7 +60,17 @@ export default function RequestsScreen() {
   const activeList = tab === 'live' ? liveList : confirmedList;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.75}>
+          <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Permission Requests</Text>
+          <Text style={styles.headerSubtitle}>Late In • Early Out • Short Leave</Text>
+        </View>
+      </View>
+
       <FlatList
         data={activeList}
         keyExtractor={(item) => String(item.id)}
@@ -124,32 +89,37 @@ export default function RequestsScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.usageTitle}>Permissions this month</Text>
-                  <Text style={styles.usageSub}>{monthlyUsed} of {monthlyLimit} used</Text>
-                  <Text style={styles.usageSub}>Max {dailyLimit}/day · {weeklyLimit}/week</Text>
+                  <Text style={styles.usageSub}>Quota used {monthlyUsed} of {monthlyLimit}</Text>
+                  <View style={styles.policyPill}>
+                    <Text style={styles.policyPillText}>Monthly Policy</Text>
+                  </View>
                 </View>
               </View>
-              <View style={styles.statsDivider} />
-              <View style={styles.statsGrid}>
-                <View style={styles.statItem}>
-                  <Text style={styles.statNum}>{shiftStats?.totalLateCount ?? '—'}</Text>
-                  <Text style={styles.statLabel}>Late Count</Text>
+              <View style={styles.statsGrid2}>
+                <View style={styles.statCell}>
+                  <Text style={styles.statCellLabel}>Weekly Cap</Text>
+                  <Text style={styles.statCellValue}>{weeklyLimit}</Text>
                 </View>
-                <View style={styles.statItem}>
-                  <Text style={styles.statNum}>{shiftStats?.summary.shiftDeductions ?? '—'}</Text>
-                  <Text style={styles.statLabel}>Shift Deduction</Text>
+                <View style={styles.statCell}>
+                  <Text style={styles.statCellLabel}>Daily Cap</Text>
+                  <Text style={styles.statCellValue}>{dailyLimit}</Text>
                 </View>
-                <View style={styles.statItem}>
-                  <Text style={[styles.statNum, { color: Colors.statusRed }]}>
+                <View style={styles.statCell}>
+                  <Text style={styles.statCellLabel}>Shift Deduction</Text>
+                  <Text style={[styles.statCellValue, { color: Colors.statusGreen }]}>{shiftStats?.summary.shiftDeductions ?? '—'}</Text>
+                </View>
+                <View style={styles.statCell}>
+                  <Text style={styles.statCellLabel}>Salary Cut</Text>
+                  <Text style={[styles.statCellValue, { color: Colors.statusGreen }]}>
                     {shiftStats ? currency(shiftStats.summary.salaryDeductionAmount) : '—'}
                   </Text>
-                  <Text style={styles.statLabel}>Salary Deduction</Text>
                 </View>
               </View>
             </View>
 
             {/* How this is calculated */}
             <View style={styles.calcInfoBox}>
-              <MaterialCommunityIcons name="information-outline" size={16} color={Colors.textMuted} />
+              <MaterialCommunityIcons name="information-outline" size={16} color={Colors.primary} />
               <Text style={styles.calcInfoText}>
                 Every employee gets 3 free lates/permissions a month (combined pool). Each additional 3 beyond that
                 costs a ¼ shift deduction from salary — the same rule and numbers HR sees on the Report Log.
@@ -159,8 +129,8 @@ export default function RequestsScreen() {
             {/* Tab switch */}
             <View style={styles.tabBar}>
               {([
-                { key: 'live' as ReqTab, label: 'Live Requests', count: liveList.length },
-                { key: 'confirmed' as ReqTab, label: 'Confirmed Requests', count: confirmedList.length },
+                { key: 'live' as ReqTab, label: 'Active', count: liveList.length },
+                { key: 'confirmed' as ReqTab, label: 'Past Records', count: confirmedList.length },
               ]).map((t) => (
                 <TouchableOpacity
                   key={t.key}
@@ -182,7 +152,7 @@ export default function RequestsScreen() {
           ) : (
             <EmptyState
               icon="hand-pointing-right"
-              title={tab === 'live' ? 'No live requests' : 'No confirmed requests'}
+              title={tab === 'live' ? 'No active requests' : 'No past records'}
               subtitle="Your permission requests will appear here"
             />
           )
@@ -191,120 +161,78 @@ export default function RequestsScreen() {
           const variant = item.status === 'Approved' ? 'approved' : item.status === 'Rejected' ? 'rejected' : 'pending';
           return (
             <View style={styles.card}>
-              <View style={styles.cardTop}>
-                <Text style={styles.type}>{item.type}</Text>
+              <View style={styles.cardTopRow}>
+                <View style={styles.cardIconWrap}>
+                  <MaterialCommunityIcons
+                    name={item.type === 'Early Out' ? 'exit-run' : item.type === 'Late In' ? 'login' : 'timer-sand'}
+                    size={16} color={Colors.tertiary}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.type}>{item.type}</Text>
+                  <Text style={styles.dateTime}>
+                    {format(new Date(item.date), 'dd MMM yyyy')} · {item.time}
+                  </Text>
+                </View>
                 <Badge label={item.status} variant={variant} />
               </View>
-              <Text style={styles.dateTime}>
-                {format(new Date(item.date), 'dd MMM yyyy')} · {item.time}
-              </Text>
-              {item.reason && <Text style={styles.reason}>{item.reason}</Text>}
+              {item.reason && <Text style={styles.reason}><Text style={styles.reasonLabel}>Reason: </Text>{item.reason}</Text>}
+              <View style={styles.cardFooterRow}>
+                <Text style={styles.refText}>Req ID: #PR-{item.id}</Text>
+                {!!item.durationMinutes && <Text style={styles.durationText}>{item.durationMinutes} min</Text>}
+              </View>
             </View>
           );
         }}
       />
 
-      {/* FAB */}
-      <TouchableOpacity
-        style={[styles.fab, remaining === 0 && styles.fabDisabled]}
-        onPress={() => setShowNew(true)}
-      >
-        <MaterialCommunityIcons name="plus" size={26} color="#fff" />
-      </TouchableOpacity>
-
-      {/* New Request Sheet */}
-      <BottomSheet visible={showNew} onClose={() => { setShowNew(false); reset(); }} title="New Permission Request">
-        {remaining === 0 && (
-          <View style={styles.capWarning}>
-            <MaterialCommunityIcons name="alert-circle-outline" size={16} color={Colors.statusRed} />
-            <Text style={styles.capWarningText}>
-              You've used all {monthlyLimit} permissions this month. Submitting will likely be rejected.
-            </Text>
-          </View>
-        )}
-
-        <Text style={styles.fieldLabel}>Request Type</Text>
-        <Controller
-          control={control}
-          name="type"
-          render={({ field: { onChange, value } }) => (
-            <View style={styles.typeRow}>
-              {PERMISSION_TYPES.map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  style={[styles.chip, value === t && styles.chipActive]}
-                  onPress={() => onChange(t)}
-                >
-                  <Text style={[styles.chipText, value === t && styles.chipTextActive]}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-        />
-        {errors.type && <Text style={styles.errorText}>{errors.type.message}</Text>}
-
-        <Controller
-          control={control}
-          name="date"
-          render={({ field: { onChange, value } }) => (
-            <DatePickerField label="Date" value={value} onChange={onChange} error={errors.date?.message} />
-          )}
-        />
-
-        <Controller
-          control={control}
-          name="time"
-          render={({ field: { onChange, value } }) => (
-            <TimePickerField label="Time" value={value} onChange={onChange} error={errors.time?.message} />
-          )}
-        />
-
-        <Controller
-          control={control}
-          name="reason"
-          render={({ field: { onChange, value, onBlur } }) => (
-            <TextArea
-              label="Reason"
-              placeholder="Describe your reason..."
-              value={value}
-              onChangeText={onChange}
-              onBlur={onBlur}
-              minLength={5}
-              maxLength={200}
-              error={errors.reason?.message}
-            />
-          )}
-        />
-
-        <Button title="Submit Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} />
-      </BottomSheet>
-
-      <Toast {...toast} />
-      <SuccessOverlay
-        visible={showSuccess}
-        title="Request Submitted!"
-        message="Your permission request has been sent for approval."
-        onDone={() => setShowSuccess(false)}
-      />
+      {/* Footer CTA */}
+      <View style={styles.footer}>
+        <TouchableOpacity
+          style={[styles.newBtn, remaining === 0 && styles.newBtnDisabled]}
+          onPress={() => router.push('/requests/new' as any)}
+          activeOpacity={0.85}
+        >
+          <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#fff" />
+          <Text style={styles.newBtnText}>New Permission Request</Text>
+        </TouchableOpacity>
+        <Text style={styles.footerHint}>
+          {remaining} free quota remaining this calendar cycle
+        </Text>
+      </View>
     </SafeAreaView>
   );
 }
 
+const cardShadow = Platform.select({
+  ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+  android: { elevation: 1 },
+}) as object;
+
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
-  pad: { padding: 16, paddingBottom: 100 },
+  header: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14,
+    backgroundColor: Colors.bgCard,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  backBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceLow },
+  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+  headerSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 1 },
+
+  pad: { padding: 16, paddingBottom: 120 },
   center: { flex: 1 },
 
   statsCard: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 16,
     marginBottom: 14,
-    gap: 12,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 4, height: 6 }, shadowOpacity: 0.10, shadowRadius: 12 },
-      android: { elevation: 4 },
-    }),
+    gap: 14,
+    ...cardShadow,
   },
   statsTopRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   usageRing: {
@@ -315,51 +243,52 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   usageNum: { color: Colors.primary, fontSize: 18, fontWeight: '900' },
   usageLabel: { color: Colors.primary, fontSize: 8, fontWeight: '700', marginTop: -2 },
-  usageTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800' },
-  usageSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
-  statsDivider: { height: 1, backgroundColor: Colors.outlineVariant },
-  statsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
-  statItem: { alignItems: 'center', gap: 2, flex: 1 },
-  statNum: { color: Colors.textPrimary, fontSize: 15, fontWeight: '900' },
-  statLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600', textAlign: 'center' },
+  usageTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
+  usageSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2, marginBottom: 6 },
+  policyPill: { alignSelf: 'flex-start', backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 3 },
+  policyPillText: { color: Colors.textSecondary, fontSize: 9.5, fontWeight: '800' },
+
+  statsGrid2: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  statCell: { flexBasis: '47%', flexGrow: 1, backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.md, padding: 10, gap: 2 },
+  statCellLabel: { color: Colors.textMuted, fontSize: 10.5, fontWeight: '700' },
+  statCellValue: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 16 },
 
   tabBar: {
     flexDirection: 'row',
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 4,
     gap: 4,
     marginBottom: 12,
-    ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 6 },
-      android: { elevation: 2 },
-    }),
+    ...cardShadow,
   },
   tabBtn: { flex: 1, borderRadius: BorderRadius.md, paddingVertical: 10, alignItems: 'center' },
   tabBtnActive: { backgroundColor: Colors.primary },
   tabLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
   tabLabelActive: { color: '#fff' },
 
-  card: { backgroundColor: Colors.bgCard, borderRadius: 16, padding: 14, marginBottom: 10, gap: 6 },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  type: { color: Colors.textPrimary, fontSize: 15, fontWeight: '600' },
-  dateTime: { color: Colors.textMuted, fontSize: 13 },
-  reason: { color: Colors.textSecondary, fontSize: 12, fontStyle: 'italic' },
-  fab: {
-    position: 'absolute', bottom: 24, right: 20, width: 56, height: 56, borderRadius: 28,
-    backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
-    elevation: 8, shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8,
+  card: { backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 10, gap: 8, ...cardShadow },
+  cardTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  cardIconWrap: { width: 32, height: 32, borderRadius: 10, backgroundColor: Colors.badgeYellowBg, alignItems: 'center', justifyContent: 'center' },
+  type: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14.5 },
+  dateTime: { color: Colors.textMuted, fontSize: 12, marginTop: 1 },
+  reason: { color: Colors.textSecondary, fontSize: 12, lineHeight: 17 },
+  reasonLabel: { color: Colors.textPrimary, fontWeight: '700' },
+  refText: { color: Colors.outline, fontSize: 10.5, fontWeight: '700' },
+
+  footer: { padding: 16, paddingTop: 10, backgroundColor: Colors.bgLight, borderTopWidth: 1, borderTopColor: Colors.border, gap: 6 },
+  newBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.full,
+    paddingVertical: 15,
   },
-  fabDisabled: { opacity: 0.7 },
-  capWarning: {
-    flexDirection: 'row',
-    gap: 8,
-    backgroundColor: Colors.badgeRedBg,
-    borderRadius: BorderRadius.lg,
-    padding: 12,
-    marginBottom: 14,
-  },
-  capWarningText: { flex: 1, color: Colors.badgeRedText, fontSize: 12, fontWeight: '600', lineHeight: 17 },
+  newBtnDisabled: { opacity: 0.7 },
+  newBtnText: { color: '#fff', fontSize: 14.5, fontWeight: '800' },
+  footerHint: { textAlign: 'center', color: Colors.textMuted, fontSize: 11 },
+
   calcInfoBox: {
     flexDirection: 'row',
     gap: 8,
@@ -370,11 +299,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'flex-start',
   },
   calcInfoText: { flex: 1, color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
-  fieldLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1.5, borderColor: Colors.outlineVariant },
-  chipActive: { borderColor: Colors.primary, backgroundColor: `${Colors.primary}22` },
-  chipText: { color: Colors.textMuted, fontSize: 13 },
-  chipTextActive: { color: Colors.primary, fontWeight: '600' },
-  errorText: { color: Colors.statusRed, fontSize: 12, marginBottom: 8 },
+
+  cardFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  durationText: { color: Colors.primary, fontSize: 10.5, fontWeight: '800' },
 });

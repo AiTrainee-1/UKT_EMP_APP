@@ -24,14 +24,16 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
-        shadowOffset: { width: 4, height: 6 },
-        shadowOpacity: 0.10,
-        shadowRadius: 14,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 3,
       },
-      android: { elevation: 4 },
+      android: { elevation: 1 },
     }),
   },
 });

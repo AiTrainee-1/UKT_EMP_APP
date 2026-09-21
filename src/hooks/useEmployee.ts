@@ -1,6 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
+export interface ReportingManager {
+  id: number;
+  name: string;
+  designationTitle: string | null;
+}
+
 export interface Employee {
   id: number;
   employeeCode: string;
@@ -32,6 +38,40 @@ export interface Employee {
   branchAddress?: string | null;
   branchLat?: number | null;
   branchLng?: number | null;
+  hasPassword?: boolean;
+  passwordUpdatedAt?: string | null;
+  nationality?: string | null;
+  workstation?: string | null;
+  zone?: string | null;
+  staffTier?: string | null;
+  reportingManager?: ReportingManager | null;
+  isConfirmed?: boolean;
+  confirmationDate?: string | null;
+}
+
+// Known Employee.status literals mapped to a friendly badge label. `status`
+// stays a free-text field on the backend (see api/models.py) so this is
+// display-only formatting, not a schema/validation change — any unmapped
+// value just falls back to itself, capitalized.
+const STATUS_LABELS: Record<string, string> = {
+  active: 'Active Duty',
+  on_leave: 'On Leave',
+  leave: 'On Leave',
+  suspended: 'Suspended',
+  probation: 'On Probation',
+  resigned: 'Resigned',
+  terminated: 'Terminated',
+};
+
+export function statusLabel(status?: string | null): string {
+  if (!status) return 'Active Duty';
+  const key = status.toLowerCase().trim();
+  if (STATUS_LABELS[key]) return STATUS_LABELS[key];
+  return status
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
 }
 
 export function useEmployee(employeeId: number | null) {

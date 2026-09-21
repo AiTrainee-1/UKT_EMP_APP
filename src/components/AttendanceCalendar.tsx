@@ -95,7 +95,7 @@ function actionsFor(rec: AttendanceRecord): DayAction[] {
     actions.push({
       label: 'Apply Leave',
       icon: 'umbrella-outline',
-      color: '#8e44ad',
+      color: '#8E44AD',
       route: '/(tabs)/leave',
     });
   }
@@ -106,7 +106,7 @@ function actionsFor(rec: AttendanceRecord): DayAction[] {
     actions.push({
       label: 'Missing Punch',
       icon: 'fingerprint',
-      color: '#5e35b1',
+      color: '#5E35B1',
       route: '/missing-punch',
     });
   }
@@ -117,7 +117,7 @@ function actionsFor(rec: AttendanceRecord): DayAction[] {
     actions.push({
       label: 'Permission',
       icon: 'hand-pointing-right',
-      color: '#2980b9',
+      color: '#2980B9',
       route: '/requests',
     });
   }

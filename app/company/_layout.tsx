@@ -5,11 +5,7 @@ export default function CompanyLayout() {
     <Stack
       screenOptions={{
         animation: 'slide_from_right',
-        headerStyle: { backgroundColor: '#006496' },
-        headerTintColor: '#fff',
-        headerTitleStyle: { fontWeight: '800', color: '#fff' },
-        headerTitle: 'About Us',
-        headerBackTitle: 'Back',
+        headerShown: false,
       }}
     />
   );

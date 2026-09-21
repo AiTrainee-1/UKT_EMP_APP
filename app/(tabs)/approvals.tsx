@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import { MotiView } from 'moti';
 import { format } from 'date-fns';
 
@@ -46,6 +47,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch' | 'outpass';
 type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest | TeamOutpassRequest;
@@ -90,7 +92,7 @@ const makeTabMeta = (Colors: Palette): Record<Tab, { label: string; icon: string
   resignation: { label: 'Resignations', icon: 'file-sign', iconOutline: 'file-outline', color: Colors.badgeRedText, bg: Colors.badgeRedBg },
   casualLeave: { label: 'Casual Leave', icon: 'calendar-star', iconOutline: 'calendar-star', color: Colors.secondary, bg: Colors.secondaryFixed },
   attendance: { label: 'Attendance', icon: 'calendar-edit', iconOutline: 'calendar-edit', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-  missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: '#5e35b1', bg: '#ede7f6' },
+  missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: Colors.categoryPunch, bg: Colors.badgeLeaveBg },
   outpass: { label: 'Outpass', icon: 'exit-run', iconOutline: 'exit-run', color: Colors.primary, bg: Colors.primaryFixed },
 });
 
@@ -267,23 +269,26 @@ export default function ApprovalsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#006496" />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
 
-      {/* Header */}
-      <LinearGradient
-        colors={Colors.gradientPrimary}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerDeco} />
-        <View style={styles.headerContent}>
-          <View>
-            <Text style={styles.title}>Approvals</Text>
-            <Text style={styles.subtitle}>Review pending requests</Text>
-          </View>
+      {/* Top bar */}
+      <View style={styles.topBar}>
+        <View style={styles.brandBadge}>
+          <Text style={styles.brandBadgeText}>XT</Text>
         </View>
-      </LinearGradient>
+        <View style={styles.brandTextWrap}>
+          <Text style={styles.brandName}>UKTEXTILES</Text>
+          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity style={styles.avatarBtn} onPress={() => router.push('/(tabs)/profile')} activeOpacity={0.85}>
+          <MaterialCommunityIcons name="account" size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
+      <View style={styles.pageTitleRow}>
+        <Text style={styles.title}>Approvals</Text>
+        <Text style={styles.subtitle}>Review pending requests</Text>
+      </View>
 
       {/* Per-category pending counts */}
       <ScrollView
@@ -347,7 +352,7 @@ export default function ApprovalsScreen() {
               >
                 <View style={styles.cardTop}>
                   <View style={styles.empRow}>
-                    <LinearGradient colors={['#c62828', '#ef5350']} style={styles.avatar}>
+                    <LinearGradient colors={['#C62828', '#E11D48']} style={styles.avatar}>
                       <Text style={styles.avatarText}>{r.employeeName?.[0]?.toUpperCase() ?? '?'}</Text>
                     </LinearGradient>
                     <View>
@@ -410,7 +415,7 @@ export default function ApprovalsScreen() {
             >
               <View style={styles.cardTop}>
                 <View style={styles.empRow}>
-                  <LinearGradient colors={['#006496', '#5dbbff']} style={styles.avatar}>
+                  <LinearGradient colors={Colors.gradientPrimary} style={styles.avatar}>
                     <Text style={styles.avatarText}>{initial}</Text>
                   </LinearGradient>
                   <View>
@@ -465,7 +470,7 @@ export default function ApprovalsScreen() {
         {selected && selected.kind !== 'resignation' && (
           <View>
             <View style={styles.sheetEmpRow}>
-              <LinearGradient colors={['#006496', '#5dbbff']} style={styles.sheetAvatar}>
+              <LinearGradient colors={Colors.gradientPrimary} style={styles.sheetAvatar}>
                 <Text style={styles.sheetAvatarText}>{empName(selected.item)[0]?.toUpperCase() ?? '?'}</Text>
               </LinearGradient>
               <View>
@@ -544,7 +549,7 @@ export default function ApprovalsScreen() {
           return (
             <View>
               <View style={styles.sheetEmpRow}>
-                <LinearGradient colors={['#c62828', '#ef5350']} style={styles.sheetAvatar}>
+                <LinearGradient colors={['#C62828', '#E11D48']} style={styles.sheetAvatar}>
                   <Text style={styles.sheetAvatarText}>{r.employeeName?.[0]?.toUpperCase() ?? '?'}</Text>
                 </LinearGradient>
                 <View>
@@ -622,27 +627,20 @@ export default function ApprovalsScreen() {
 
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 20,
-    overflow: 'hidden',
-  },
-  headerDeco: {
-    position: 'absolute', top: -20, right: -20,
-    width: 100, height: 100, borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: { color: '#fff', fontSize: 22, fontWeight: '900' },
-  subtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2 },
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  brandBadge: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
+  brandTextWrap: { gap: 1 },
+  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
+  brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
+  avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+
+  pageTitleRow: { paddingHorizontal: 16, paddingTop: 4 },
+  title: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 22 },
+  subtitle: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
 
   statsRow: {
-    marginTop: -16,
+    marginTop: 12,
     marginBottom: 14,
   },
   statsRowContent: {
@@ -659,8 +657,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderWidth: 1.5,
     borderColor: 'transparent',
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 10 },
-      android: { elevation: 3 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   statCardActive: { borderColor: Colors.primary },
@@ -679,11 +677,13 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 16,
     gap: 10,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 4, height: 6 }, shadowOpacity: 0.10, shadowRadius: 14 },
-      android: { elevation: 4 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -695,8 +695,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { color: '#fff', fontWeight: '800', fontSize: 16 },
-  empName: { color: Colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  avatarText: { color: '#fff', fontFamily: FontFamily.headlineSemibold, fontSize: 16 },
+  empName: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
   empCode: { color: Colors.textMuted, fontSize: 11, marginTop: 1 },
 
   requestInfo: { gap: 4 },

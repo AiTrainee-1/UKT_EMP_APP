@@ -10,36 +10,24 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useForm, Controller } from 'react-hook-form';
-import { z } from 'zod';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { router } from 'expo-router';
 import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
-import { useOutpassRequests, useSubmitOutpassRequest, type OutpassRequestItem } from '../../src/hooks/useOutpass';
+import { useOutpassRequests, type OutpassRequestItem } from '../../src/hooks/useOutpass';
 import { OutpassFlipCard } from '../../src/components/outpass/OutpassFlipCard';
 import { TeaBreakPanel } from '../../src/components/tea-break/TeaBreakPanel';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
-import { Button } from '../../src/components/ui/Button';
-import { Input } from '../../src/components/ui/Input';
-import { TextArea } from '../../src/components/ui/TextArea';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
-import { Toast } from '../../src/components/ui/Toast';
-import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 type Section = 'outpass' | 'teaBreak';
-
-const schema = z.object({
-  destination: z.string().min(2, 'Please enter where you are going'),
-  reason: z.string().min(5, 'Provide a reason (min 5 characters)').max(300, 'Reason is too long (max 300 characters)'),
-});
-type FormData = z.infer<typeof schema>;
 
 type ReqTab = 'live' | 'confirmed';
 
@@ -53,39 +41,11 @@ export default function OutpassScreen() {
 
   const { user } = useAuth();
   const [section, setSection] = useState<Section>('outpass');
-  const [showNew, setShowNew] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
   const [tab, setTab] = useState<ReqTab>('live');
   const [previewItem, setPreviewItem] = useState<OutpassRequestItem | null>(null);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
-    message: '', type: 'success', visible: false,
-  });
 
   const { data: employee } = useEmployee(user?.employeeId ?? null);
   const { data, isLoading, refetch, isRefetching } = useOutpassRequests(user?.employeeId ?? null);
-  const submit = useSubmitOutpassRequest(user?.employeeId ?? null);
-
-  const { control, handleSubmit, reset, formState: { errors } } = useForm<FormData>({
-    resolver: zodResolver(schema),
-    defaultValues: { destination: '', reason: '' },
-  });
-
-  const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type, visible: true });
-    setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
-  };
-
-  const onSubmit = async (formData: FormData) => {
-    try {
-      await submit.mutateAsync(formData);
-      setShowNew(false);
-      reset({ destination: '', reason: '' });
-      setShowSuccess(true);
-    } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.message || 'Failed to submit. Please try again.';
-      showToast(msg, 'error');
-    }
-  };
 
   const items = data ?? [];
   const liveList = items.filter((i) => i.status === 'pending');
@@ -109,7 +69,17 @@ export default function OutpassScreen() {
     .sort((a, b) => new Date(b.approvedAt ?? 0).getTime() - new Date(a.approvedAt ?? 0).getTime())[0];
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.75}>
+          <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
+        </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle}>Gate Outpass</Text>
+          <Text style={styles.headerSubtitle}>Digital Transit Clearance</Text>
+        </View>
+      </View>
+
       {/* Section switcher -"a new header tab under the Outpass section":
           Outpass and Tea Break are two independent bodies sharing this one
           screen/route, exactly like the HR portal's Outpass/Visitors/Tea
@@ -205,45 +175,9 @@ export default function OutpassScreen() {
       {section === 'outpass' && (
         <>
           {/* FAB */}
-          <TouchableOpacity style={styles.fab} onPress={() => setShowNew(true)}>
+          <TouchableOpacity style={styles.fab} onPress={() => router.push('/outpass/request' as any)} activeOpacity={0.85}>
             <MaterialCommunityIcons name="plus" size={26} color="#fff" />
           </TouchableOpacity>
-
-          {/* New Request Sheet */}
-          <BottomSheet visible={showNew} onClose={() => { setShowNew(false); reset(); }} title="Request an Outpass">
-            <Controller
-              control={control}
-              name="destination"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <Input
-                  label="Where are you going?"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  error={errors.destination?.message}
-                />
-              )}
-            />
-
-            <Controller
-              control={control}
-              name="reason"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <TextArea
-                  label="Reason"
-                  placeholder="Describe your reason..."
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  minLength={5}
-                  maxLength={300}
-                  error={errors.reason?.message}
-                />
-              )}
-            />
-
-            <Button title="Submit Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} />
-          </BottomSheet>
 
           {/* Outpass card preview -any request, any status, opened from its row */}
           <BottomSheet visible={!!previewItem} onClose={() => setPreviewItem(null)} title="Outpass Card">
@@ -251,20 +185,22 @@ export default function OutpassScreen() {
           </BottomSheet>
         </>
       )}
-
-      <Toast {...toast} />
-      <SuccessOverlay
-        visible={showSuccess}
-        title="Request Submitted!"
-        message="Your outpass request has been sent for approval."
-        onDone={() => setShowSuccess(false)}
-      />
     </SafeAreaView>
   );
 }
 
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
+  header: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingHorizontal: 16, paddingVertical: 14,
+    backgroundColor: Colors.bgCard,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
+  },
+  backBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceLow },
+  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+  headerSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 1 },
+
   pad: { padding: 16, paddingBottom: 100 },
   center: { flex: 1 },
 
@@ -274,18 +210,22 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     marginTop: 12,
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 4,
     gap: 4,
   },
   sectionBtn: { flex: 1, borderRadius: BorderRadius.md, paddingVertical: 11, alignItems: 'center' },
   sectionBtnActive: { backgroundColor: Colors.primary },
-  sectionLabel: { color: Colors.textMuted, fontSize: 13, fontWeight: '800' },
+  sectionLabel: { color: Colors.textMuted, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
   sectionLabelActive: { color: '#fff' },
 
   tabBar: {
     flexDirection: 'row',
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 4,
     gap: 4,
     marginBottom: 12,
@@ -295,9 +235,9 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   tabLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
   tabLabelActive: { color: '#fff' },
 
-  card: { backgroundColor: Colors.bgCard, borderRadius: 16, padding: 14, marginBottom: 10, gap: 6 },
+  card: { backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 10, gap: 6 },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  destination: { color: Colors.textPrimary, fontSize: 15, fontWeight: '600', flex: 1, marginRight: 8 },
+  destination: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 15, flex: 1, marginRight: 8 },
   dateTime: { color: Colors.textMuted, fontSize: 12, flex: 1 },
   reason: { color: Colors.textSecondary, fontSize: 13 },
   cardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 2 },

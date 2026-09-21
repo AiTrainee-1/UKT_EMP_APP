@@ -18,6 +18,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 const WARNINGS = [
   {
@@ -37,6 +38,26 @@ const WARNINGS = [
     text: 'Your final settlement and dues will be processed after the last working date.',
   },
 ];
+
+function StepBar() {
+  const step = useThemedStyles(makeStepStyles);
+  return (
+    <View style={step.row}>
+      <View style={step.active} />
+      <View style={step.divider} />
+      <View style={step.inactive} />
+      <View style={step.divider} />
+      <View style={step.inactive} />
+    </View>
+  );
+}
+
+const makeStepStyles = (Colors: Palette) => StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6, width: '100%', marginTop: 4 },
+  active: { flex: 1, height: 4, borderRadius: 2, backgroundColor: '#fff' },
+  divider: { width: 8 },
+  inactive: { flex: 1, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.3)' },
+});
 
 export default function ResignationWarningScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -67,12 +88,12 @@ export default function ResignationWarningScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor="#b71c1c" />
+      <StatusBar barStyle="light-content" backgroundColor="#C62828" />
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
         {/* Red header */}
         <LinearGradient
-          colors={['#c62828', '#b71c1c']}
+          colors={['#C62828', '#E11D48']}
           style={styles.header}
         >
           <View style={styles.headerDeco} />
@@ -85,6 +106,8 @@ export default function ResignationWarningScreen() {
           <Text style={styles.headerSub}>
             Submitting a resignation is a serious step. Please read the following carefully.
           </Text>
+          <Text style={styles.stepLabel}>STEP 1 OF 3 · POLICY & IMPACT</Text>
+          <StepBar />
         </LinearGradient>
 
         {/* Warning cards */}
@@ -156,8 +179,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   headerTitle: {
     color: '#fff',
+    fontFamily: FontFamily.displayBold,
     fontSize: 24,
-    fontWeight: '900',
     textAlign: 'center',
     letterSpacing: 0.3,
   },
@@ -167,6 +190,14 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
     paddingHorizontal: 8,
+  },
+  stepLabel: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    alignSelf: 'flex-start',
+    marginTop: 6,
   },
 
   body: {
@@ -182,10 +213,10 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderRadius: BorderRadius.lg,
     padding: 16,
     borderLeftWidth: 3,
-    borderLeftColor: Colors.clayRed,
+    borderLeftColor: Colors.statusRed,
     ...Platform.select({
-      ios: { shadowColor: '#c62828', shadowOffset: { width: 3, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10 },
-      android: { elevation: 2 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   warnIcon: {

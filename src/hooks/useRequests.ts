@@ -1,12 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 
+export type PermissionDurationMinutes = 30 | 45 | 60 | 90;
+
 export interface PermissionRequest {
   id: number;
   type: 'Early Out' | 'Late In' | 'Short Leave';
   date: string;
   time: string;
   reason: string;
+  durationMinutes?: PermissionDurationMinutes | null;
   status: 'Pending' | 'Approved' | 'Rejected';
   appliedOn: string;
 }
@@ -25,14 +28,38 @@ export interface PermissionsResult {
   weeklyLimit: number;
 }
 
+// Backend sends lowercase status ("pending"/"approved"/"rejected") and
+// "permissionTime" (never "time") — see EmployeePermission.STATUS_CHOICES
+// and _permission_json in backend/api/leave_views.py. Both were previously
+// read directly as PermissionRequest without this mapping, which silently
+// broke the Live/Confirmed tab split (status was never really "Pending",
+// so the Live tab was always empty) and left every row's time blank.
+const STATUS_MAP: Record<string, PermissionRequest['status']> = {
+  pending: 'Pending', approved: 'Approved', rejected: 'Rejected',
+};
+
+function normalizePermission(raw: any): PermissionRequest {
+  return {
+    id: raw.id,
+    type: raw.type,
+    date: raw.date,
+    time: raw.time ?? raw.permissionTime,
+    reason: raw.reason,
+    durationMinutes: raw.durationMinutes ?? null,
+    status: STATUS_MAP[raw.status] ?? raw.status,
+    appliedOn: raw.appliedOn ?? raw.createdAt,
+  };
+}
+
 export function usePermissions(employeeId: number | null, month?: number, year?: number) {
   return useQuery({
     queryKey: ['permissions', employeeId, month, year],
     queryFn: async (): Promise<PermissionsResult> => {
       const res = await api.get('/permissions', { params: { employeeId, month, year } });
       const raw = res.data;
-      const items: PermissionRequest[] = Array.isArray(raw) ? raw : (raw?.items ?? raw?.results ?? []);
-      const first: any = items[0] ?? {};
+      const rawItems: any[] = Array.isArray(raw) ? raw : (raw?.items ?? raw?.results ?? []);
+      const items = rawItems.map(normalizePermission);
+      const first: any = rawItems[0] ?? {};
       return {
         items,
         monthlyUsed: raw?.monthlyUsed ?? items.filter((r) => r.status !== 'Rejected').length,
@@ -53,6 +80,7 @@ export function useSubmitPermission(employeeId: number | null) {
       date: string;
       time: string;
       reason: string;
+      durationMinutes?: PermissionDurationMinutes;
     }) => {
       const { time, ...rest } = data;
       const res = await api.post('/permissions', { employeeId, ...rest, permissionTime: time });

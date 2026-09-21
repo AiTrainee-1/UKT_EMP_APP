@@ -4,11 +4,21 @@ import api from '../lib/api';
 // See backend/api/outpass_request_views.py::_outpass_request_json. Approving
 // (from either HOD or HR) sets approvedAt/expiresAt -expiresAt is always
 // exactly approvedAt + 60 minutes, computed server-side.
+export type OutpassPassType = 'official' | 'personal' | 'early_dismissal';
+
+export const OUTPASS_PASS_TYPE_LABEL: Record<OutpassPassType, string> = {
+  official: 'Official / Mill Duty',
+  personal: 'Personal Emergency',
+  early_dismissal: 'Early Shift Dismissal',
+};
+
 export interface OutpassRequestItem {
   id: number;
   employeeId: number;
   destination: string;
   reason: string;
+  passType?: OutpassPassType | null;
+  expectedReturnAt?: string | null;
   status: 'pending' | 'approved' | 'rejected';
   source: 'manual' | 'on_duty';
   approverRole?: 'hr' | 'dept_head' | 'system' | null;
@@ -54,7 +64,12 @@ export function useOutpassRequests(employeeId: number | null) {
 export function useSubmitOutpassRequest(employeeId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { destination: string; reason: string }) => {
+    mutationFn: async (data: {
+      destination: string;
+      reason: string;
+      passType?: OutpassPassType;
+      expectedReturnAt?: string;
+    }) => {
       const res = await api.post('/outpass-requests', data);
       return res.data;
     },

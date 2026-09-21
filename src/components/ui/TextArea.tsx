@@ -128,10 +128,10 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderRadius: BorderRadius.md,
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.06,
-        shadowRadius: 6,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 3,
       },
       android: {},
     }),

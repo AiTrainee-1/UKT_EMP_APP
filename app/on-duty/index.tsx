@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -14,7 +14,8 @@ import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
-import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
+import { BorderRadius, Spacing } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 import {
   useOnDutySessionStatus, useSubmitOnDutySessionRequest, useCompleteOnDutySession,
   useSubmitOnDutyPunch, OnDutyPunchVerification, PunchSlot,
@@ -199,7 +200,7 @@ export default function OnDutyScreen() {
             <SkeletonCard lines={4} />
           </View>
         ) : showRequestForm ? (
-          <View style={[CardStyle.clay, { gap: Spacing.sm }]}>
+          <View style={[styles.card, { gap: Spacing.sm }]}>
             <View style={styles.introRow}>
               <MaterialCommunityIcons name="briefcase-outline" size={22} color={Colors.tertiary} />
               <Text style={styles.introTitle}>Request On-Duty</Text>
@@ -229,7 +230,7 @@ export default function OnDutyScreen() {
             )}
           </View>
         ) : session && (session.status === 'pending_hod' || session.status === 'pending_hr') ? (
-          <View style={[CardStyle.clay, { gap: Spacing.md }]}>
+          <View style={[styles.card, { gap: Spacing.md }]}>
             <View style={[styles.statusBanner, { backgroundColor: Colors.badgePendingBg }]}>
               <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.badgePendingText} />
               <Text style={[styles.statusBannerText, { color: Colors.badgePendingText }]}>
@@ -253,7 +254,7 @@ export default function OnDutyScreen() {
           </View>
         ) : session && session.status === 'active' ? (
           <>
-            <View style={[CardStyle.clay, { gap: Spacing.sm }]}>
+            <View style={[styles.card, { gap: Spacing.sm }]}>
               <View style={[styles.statusBanner, { backgroundColor: Colors.badgeGreenBg }]}>
                 <MaterialCommunityIcons name="check-circle-outline" size={18} color={Colors.statusGreen} />
                 <Text style={[styles.statusBannerText, { color: Colors.statusGreen }]}>On-Duty session active</Text>
@@ -279,9 +280,23 @@ export default function OnDutyScreen() {
             </View>
 
             {punchStage === 'review' && punchPhotoUri && punchSlot ? (
-              <View style={[CardStyle.clay, { gap: Spacing.md }]}>
-                <Text style={styles.reviewLabel}>REVIEW YOUR PUNCH</Text>
-                <Image source={{ uri: punchPhotoUri }} style={styles.photoPreview} />
+              <View style={[styles.card, { gap: Spacing.md }]}>
+                <View style={styles.photoHeaderRow}>
+                  <Text style={styles.reviewLabel}>CAMERA & GEO VERIFICATION</Text>
+                  {punchLocation?.accuracy != null && (
+                    <View style={styles.accuracyPill}>
+                      <View style={styles.accuracyDot} />
+                      <Text style={styles.accuracyText}>Accuracy ±{Math.round(punchLocation.accuracy)}m</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.photoFrame}>
+                  <Image source={{ uri: punchPhotoUri }} style={styles.photoPreview} />
+                  <View style={[styles.photoCorner, styles.photoCornerTL]} />
+                  <View style={[styles.photoCorner, styles.photoCornerTR]} />
+                  <View style={[styles.photoCorner, styles.photoCornerBL]} />
+                  <View style={[styles.photoCorner, styles.photoCornerBR]} />
+                </View>
                 <View style={styles.reviewGrid}>
                   <View style={styles.reviewCell}>
                     <Text style={styles.reviewLabel}>Punch</Text>
@@ -318,7 +333,7 @@ export default function OnDutyScreen() {
             {/* Today's punches -each empty slot is its own entry point, so a
                 missed punch never blocks a later one, and nothing here waits
                 on HR reviewing the punch before it. */}
-            <View style={[CardStyle.clay, { gap: Spacing.sm }]}>
+            <View style={[styles.card, { gap: Spacing.sm }]}>
               <Text style={styles.reviewLabel}>TODAY'S PUNCHES</Text>
               <Text style={styles.hintText}>
                 Tap any open slot to record it. You can submit them in any order.
@@ -360,7 +375,7 @@ export default function OnDutyScreen() {
             <Button title="Mark On-Duty as Done" variant="outline" onPress={handleMarkDone} loading={completeMutation.isPending} />
           </>
         ) : session ? (
-          <View style={[CardStyle.clay, styles.doneCard]}>
+          <View style={[styles.card, styles.doneCard]}>
             <MaterialCommunityIcons
               name={session.status === 'completed' ? 'check-circle' : 'close-circle'}
               size={40}
@@ -400,17 +415,29 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   content: { padding: 16, gap: 16, paddingBottom: 32 },
 
+  card: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.base,
+    ...Platform.select({
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
+    }),
+  },
+
   introRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  introTitle: { fontSize: 15, fontWeight: '800', color: Colors.textPrimary },
+  introTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 15, color: Colors.textPrimary },
   introBody: { fontSize: 12.5, color: Colors.textSecondary, lineHeight: 18 },
 
   gateCard: { alignItems: 'center' },
   gateIcon: { marginBottom: Spacing.sm },
-  gateTitle: { fontSize: 14, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center', marginBottom: 4 },
+  gateTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 14, color: Colors.textPrimary, textAlign: 'center', marginBottom: 4 },
   gateBody: { fontSize: 12.5, color: Colors.textSecondary, textAlign: 'center', lineHeight: 18 },
 
   doneCard: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
-  doneTitle: { fontSize: 15, fontWeight: '800', color: Colors.textPrimary },
+  doneTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 15, color: Colors.textPrimary },
 
   doneBanner: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
@@ -435,7 +462,17 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   addPunchText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
 
+  photoHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  accuracyPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.badgeGreenBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
+  accuracyDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: Colors.statusGreen },
+  accuracyText: { fontSize: 10, fontWeight: '800', color: Colors.statusGreen },
+  photoFrame: { position: 'relative' },
   photoPreview: { width: '100%', aspectRatio: 1.2, borderRadius: BorderRadius.md },
+  photoCorner: { position: 'absolute', width: 22, height: 22, borderColor: Colors.tertiary },
+  photoCornerTL: { top: 8, left: 8, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 6 },
+  photoCornerTR: { top: 8, right: 8, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 6 },
+  photoCornerBL: { bottom: 8, left: 8, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 6 },
+  photoCornerBR: { bottom: 8, right: 8, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 6 },
 
   slotRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

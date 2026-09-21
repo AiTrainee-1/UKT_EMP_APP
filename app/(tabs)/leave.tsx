@@ -16,12 +16,13 @@ import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useLeaveRequests, useLeaveTypes, useApplyLeave, LeaveRequest } from '../../src/hooks/useLeave';
 import { useCasualLeaves, useCLEligibility, useApplyCasualLeave } from '../../src/hooks/useCasualLeave';
+import { useHolidays } from '../../src/hooks/useHolidays';
 import { LeaveCard } from '../../src/components/LeaveCard';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
@@ -38,6 +39,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily, TabularNums } from '../../src/constants/typography';
 
 const todayStr = format(new Date(), 'yyyy-MM-dd');
 
@@ -105,6 +107,13 @@ export default function LeaveScreen() {
     year: new Date().getFullYear(),
   });
   const applyCL = useApplyCasualLeave(user?.employeeId ?? null);
+  const { data: holidays } = useHolidays(new Date().getFullYear());
+  const nextHoliday = (holidays ?? [])
+    .filter((h) => new Date(h.date) >= new Date(todayStr))
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  const clProgress = clEligibility?.yearlyEntitlement
+    ? Math.max(0, Math.min(1, (clEligibility.remainingThisYear ?? 0) / clEligibility.yearlyEntitlement))
+    : 0;
 
   const allRequests = requests ?? [];
   const uniqueTypes = Array.from(new Set(allRequests.map((r) => r.leaveType).filter(Boolean)));
@@ -223,29 +232,33 @@ export default function LeaveScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#006496" />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
 
-      <LinearGradient
-        colors={Colors.gradientPrimary}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerDeco} />
-        <View style={styles.headerContent}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
-            <View>
-              <Text style={styles.title}>Leave</Text>
-              <Text style={styles.subtitle}>Manage your leave requests</Text>
-            </View>
-          </View>
-          <TouchableOpacity onPress={() => setShowApply(true)} style={styles.applyBtn} activeOpacity={0.8}>
-            <MaterialCommunityIcons name="plus" size={18} color="#006496" />
-            <Text style={styles.applyText}>Apply</Text>
-          </TouchableOpacity>
+      <View style={styles.topBar}>
+        <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
+        <View style={styles.brandBadge}>
+          <Text style={styles.brandBadgeText}>XT</Text>
         </View>
-      </LinearGradient>
+        <View style={styles.brandTextWrap}>
+          <Text style={styles.brandName}>UKTEXTILES</Text>
+          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.iconBtn}
+          onPress={() => router.push('/(tabs)/notifications')}
+          activeOpacity={0.75}
+        >
+          <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.textPrimary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.avatarBtn}
+          onPress={() => router.push('/(tabs)/profile')}
+          activeOpacity={0.85}
+        >
+          <MaterialCommunityIcons name="account" size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -259,22 +272,15 @@ export default function LeaveScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {/* Summary cards */}
-        <View style={styles.summaryGrid}>
-          {[
-            { label: 'Taken', value: totalTaken, icon: 'umbrella', color: Colors.primary, bg: Colors.primaryFixed },
-            { label: 'Submitted', value: submittedCount, icon: 'send-outline', color: Colors.secondary, bg: Colors.secondaryFixed },
-            { label: 'Approved', value: approvedCount, icon: 'check-circle', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-            { label: 'Rejected', value: rejectedCount, icon: 'close-circle', color: Colors.statusRed, bg: Colors.badgeRedBg },
-          ].map(({ label, value, icon, color, bg }) => (
-            <View key={label} style={styles.summaryCard}>
-              <View style={[styles.summaryIcon, { backgroundColor: bg }]}>
-                <MaterialCommunityIcons name={icon as any} size={16} color={color} />
-              </View>
-              <Text style={[styles.summaryNum, { color }]}>{value}</Text>
-              <Text style={styles.summaryLabel}>{label}</Text>
-            </View>
-          ))}
+        <View style={styles.pageTitleRow}>
+          <View>
+            <Text style={styles.title}>Leave Portal</Text>
+            <Text style={styles.subtitle}>Manage your leave requests</Text>
+          </View>
+          <TouchableOpacity onPress={() => setShowApply(true)} style={styles.applyBtn} activeOpacity={0.85}>
+            <MaterialCommunityIcons name="plus" size={16} color="#fff" />
+            <Text style={styles.applyText}>Apply Leave</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Casual Leave */}
@@ -283,21 +289,56 @@ export default function LeaveScreen() {
           onPress={() => clEligibility?.eligible !== false && setShowCLApply(true)}
           activeOpacity={clEligibility?.eligible === false ? 1 : 0.85}
         >
-          <View style={styles.clIcon}>
-            <MaterialCommunityIcons name="calendar-star" size={20} color={Colors.secondary} />
+          <View style={styles.clTopRow}>
+            <View style={styles.clIcon}>
+              <MaterialCommunityIcons name="calendar-star" size={18} color={Colors.secondary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.clTitle}>Casual Leave (CL)</Text>
+              <Text style={styles.clSub} numberOfLines={1}>
+                {clEligibility?.eligible === false
+                  ? clEligibility.reason || 'Not eligible this month'
+                  : `${clRequests?.length ?? 0} applied this month`}
+              </Text>
+            </View>
+            {clEligibility?.eligible !== false ? (
+              <View style={styles.clQuickBtn}>
+                <Text style={styles.clQuickBtnText}>Quick Apply</Text>
+              </View>
+            ) : null}
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.clTitle}>Casual Leave</Text>
-            <Text style={styles.clSub} numberOfLines={2}>
-              {clEligibility?.eligible === false
-                ? clEligibility.reason || 'Not eligible this month'
-                : `${clRequests?.length ?? 0} applied this month · Tap to apply`}
-            </Text>
-          </View>
-          {clEligibility?.eligible !== false && (
-            <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+          {clEligibility?.yearlyEntitlement != null && (
+            <>
+              <View style={styles.clBalanceRow}>
+                <Text style={[styles.clBalanceNum, TabularNums]}>
+                  {clEligibility.remainingThisYear}
+                  <Text style={styles.clBalanceTotal}> / {clEligibility.yearlyEntitlement} Days Left</Text>
+                </Text>
+              </View>
+              <View style={styles.clProgressTrack}>
+                <View style={[styles.clProgressFill, { width: `${clProgress * 100}%` }]} />
+              </View>
+            </>
           )}
         </TouchableOpacity>
+
+        {/* Summary cards */}
+        <View style={styles.summaryGrid}>
+          {[
+            { label: 'Approved', value: approvedCount, icon: 'check-circle', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
+            { label: 'Submitted', value: submittedCount, icon: 'send-outline', color: Colors.secondary, bg: Colors.secondaryFixed },
+            { label: 'Taken', value: totalTaken, icon: 'umbrella', color: Colors.primary, bg: Colors.primaryFixed },
+            { label: 'Rejected', value: rejectedCount, icon: 'close-circle', color: Colors.statusRed, bg: Colors.badgeRedBg },
+          ].map(({ label, value, icon, color, bg }) => (
+            <View key={label} style={styles.summaryCard}>
+              <View style={[styles.summaryIcon, { backgroundColor: bg }]}>
+                <MaterialCommunityIcons name={icon as any} size={16} color={color} />
+              </View>
+              <Text style={[styles.summaryNum, { color }, TabularNums]}>{value}</Text>
+              <Text style={styles.summaryLabel}>{label}</Text>
+            </View>
+          ))}
+        </View>
 
         {/* Tab switch */}
         <View style={styles.tabBar}>
@@ -373,6 +414,21 @@ export default function LeaveScreen() {
           />
         ) : (
           activeList.map((r, i) => <LeaveCard key={r.id} request={r} index={i} />)
+        )}
+
+        {nextHoliday && (
+          <TouchableOpacity style={styles.holidayCard} onPress={() => router.push('/holidays')} activeOpacity={0.85}>
+            <View style={styles.holidayIcon}>
+              <MaterialCommunityIcons name="party-popper" size={18} color="#D97706" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.holidayTitle}>Upcoming Holiday</Text>
+              <Text style={styles.holidaySub} numberOfLines={1}>
+                {nextHoliday.name} · {format(new Date(nextHoliday.date), 'd MMM yyyy')}
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+          </TouchableOpacity>
         )}
       </ScrollView>
 
@@ -543,37 +599,31 @@ export default function LeaveScreen() {
 
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 20,
-    overflow: 'hidden',
-  },
-  headerDeco: {
-    position: 'absolute', top: -20, right: -20,
-    width: 100, height: 100, borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  headerContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: { color: '#fff', fontSize: 22, fontWeight: '900' },
-  subtitle: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2 },
+
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  brandBadge: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
+  brandTextWrap: { gap: 1 },
+  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
+  brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
+  iconBtn: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+  avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+
+  pageTitleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 },
+  title: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 22 },
+  subtitle: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
   applyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.primary,
     borderRadius: BorderRadius.full,
     paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingVertical: 10,
   },
-  applyGradient: {},
-  applyText: { color: '#006496', fontWeight: '800', fontSize: 14 },
+  applyText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
 
-  content: { paddingHorizontal: 16, paddingBottom: 100, gap: 4 },
+  content: { paddingHorizontal: 16, paddingBottom: 100, gap: 4, paddingTop: 8 },
   sectionTitle: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800', marginBottom: 10, marginTop: 16 },
 
   // Summary cards
@@ -581,12 +631,14 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     paddingVertical: 16,
     marginTop: 14,
     marginBottom: 14,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 4, height: 6 }, shadowOpacity: 0.10, shadowRadius: 12 },
-      android: { elevation: 4 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   summaryCard: { flex: 1, alignItems: 'center', gap: 6 },
@@ -595,37 +647,59 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
 
   clCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
     backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 14,
     marginBottom: 14,
+    gap: 10,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.08, shadowRadius: 12 },
-      android: { elevation: 3 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
+  clTopRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   clIcon: {
     width: 38, height: 38, borderRadius: 12,
     backgroundColor: Colors.secondaryFixed,
     alignItems: 'center', justifyContent: 'center',
   },
-  clTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '800' },
+  clTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
   clSub: { color: Colors.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
+  clQuickBtn: { backgroundColor: Colors.primaryFixed, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 6 },
+  clQuickBtnText: { color: Colors.primary, fontSize: 10.5, fontWeight: '800' },
+  clBalanceRow: { flexDirection: 'row', alignItems: 'baseline' },
+  clBalanceNum: { color: Colors.primary, fontFamily: FontFamily.displayBold, fontSize: 24 },
+  clBalanceTotal: { color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 12 },
+  clProgressTrack: { height: 5, borderRadius: 3, backgroundColor: Colors.bgSurfaceLow, overflow: 'hidden' },
+  clProgressFill: { height: 5, borderRadius: 3, backgroundColor: Colors.primary },
+
+  holidayCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 12,
+    marginTop: 14,
+  },
+  holidayIcon: { width: 38, height: 38, borderRadius: BorderRadius.md, backgroundColor: '#FEF3C7', alignItems: 'center', justifyContent: 'center' },
+  holidayTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  holidaySub: { color: Colors.textMuted, fontSize: 11.5, marginTop: 2 },
 
   // Tab bar
   tabBar: {
     flexDirection: 'row',
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 4,
     gap: 4,
     marginBottom: 10,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 6 },
-      android: { elevation: 2 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   tabBtn: { flex: 1, borderRadius: BorderRadius.md, paddingVertical: 10, alignItems: 'center' },

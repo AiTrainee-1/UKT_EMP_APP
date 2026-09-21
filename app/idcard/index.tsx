@@ -10,6 +10,7 @@ import {
   Platform,
   StatusBar,
   ScrollView,
+  Share,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +29,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 // Best-effort public web origin for the QR verify link — set
 // EXPO_PUBLIC_WEB_APP_URL to the HR Portal's real public URL once known.
@@ -341,8 +343,8 @@ export default function IdCardScreen() {
         status: emp.status,
         company: settings?.company,
         template: settings?.template ?? {
-          primaryColor: '#006496',
-          secondaryColor: '#4FB8F0',
+          primaryColor: '#1E3A8A',
+          secondaryColor: '#2563EB',
           showQrOnBack: true,
         },
       }
@@ -351,7 +353,14 @@ export default function IdCardScreen() {
   const isLoading = cardLoading && empLoading;
   const isProduction = data?.employmentType === 'production';
   const qrValue = data?.code ? `${WEB_ORIGIN}/verify/${data.code}` : '';
-  const template = data?.template ?? { primaryColor: '#006496', secondaryColor: '#4FB8F0', showQrOnBack: true };
+  const template = data?.template ?? { primaryColor: '#1E3A8A', secondaryColor: '#2563EB', showQrOnBack: true };
+
+  const handleShare = () => {
+    if (!data) return;
+    Share.share({
+      message: `${data.name} · ${data.designation}\nEmployee Code: ${data.code}${qrValue ? `\nVerify: ${qrValue}` : ''}`,
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -359,13 +368,40 @@ export default function IdCardScreen() {
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={Colors.primary} />
+          <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Digital ID Card</Text>
-        <View style={{ width: 38 }} />
+        <View style={styles.brandBadge}>
+          <Text style={styles.brandBadgeText}>XT</Text>
+        </View>
+        <View>
+          <Text style={styles.brandName}>UKTEXTILES</Text>
+          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.avatarBtn}
+          onPress={() => router.push('/(tabs)/profile')}
+          activeOpacity={0.85}
+        >
+          <MaterialCommunityIcons name="account" size={18} color="#fff" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={styles.titleRow}>
+          <MaterialCommunityIcons name="card-account-details-outline" size={18} color={Colors.primary} />
+          <Text style={styles.titleText}>{isProduction ? 'Production Credential' : 'Staff Credential'}</Text>
+          <View style={{ flex: 1 }} />
+          <View style={styles.typePill}>
+            <Text style={styles.typePillText}>{isProduction ? 'Production' : 'Staff'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.flipHintPill}>
+          <MaterialCommunityIcons name="rotate-3d-variant" size={13} color={Colors.primary} />
+          <Text style={styles.flipHintPillText}>Tap card to flip view</Text>
+        </View>
+
         {isLoading || !data ? (
           <SkeletonCard lines={10} />
         ) : (
@@ -378,6 +414,13 @@ export default function IdCardScreen() {
             This is your official digital employee ID. Present it for verification when required.
           </Text>
         </View>
+
+        {!!data && (
+          <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.85}>
+            <MaterialCommunityIcons name="share-variant-outline" size={16} color="#fff" />
+            <Text style={styles.shareBtnText}>Share ID Card</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -388,29 +431,58 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 10,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingVertical: 12,
+    backgroundColor: Colors.bgCard,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: {
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: Colors.primaryFixed,
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: Colors.bgSurfaceLow,
     alignItems: 'center', justifyContent: 'center',
   },
-  headerTitle: { flex: 1, textAlign: 'center', color: Colors.textPrimary, fontSize: 16, fontWeight: '800' },
+  brandBadge: { width: 28, height: 28, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 11 },
+  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 12, letterSpacing: 0.2 },
+  brandSub: { color: Colors.textMuted, fontSize: 7.5, fontWeight: '700', letterSpacing: 0.6 },
+  avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
 
-  scroll: { padding: 16, paddingTop: 24, paddingBottom: 40, gap: 20, alignItems: 'center' },
+  scroll: { padding: 16, paddingTop: 20, paddingBottom: 40, gap: 16, alignItems: 'center' },
+
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' },
+  titleText: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+  typePill: { backgroundColor: Colors.primaryFixed, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  typePillText: { color: Colors.primary, fontSize: 10.5, fontWeight: '800' },
+
+  flipHintPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.primaryFixed,
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 14, paddingVertical: 7,
+  },
+  flipHintPillText: { color: Colors.primary, fontSize: 11.5, fontWeight: '700' },
 
   infoBox: {
     flexDirection: 'row',
     gap: 8,
     backgroundColor: Colors.bgCard,
+    borderWidth: 1, borderColor: Colors.border,
     borderRadius: BorderRadius.lg,
     padding: 12,
     alignItems: 'flex-start',
     width: '100%',
   },
   infoText: { color: Colors.textMuted, fontSize: 12, flex: 1, lineHeight: 18 },
+
+  shareBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.full,
+    paddingVertical: 13,
+    width: '100%',
+  },
+  shareBtnText: { color: '#fff', fontSize: 13.5, fontWeight: '800' },
 });
 
 const cardSt = StyleSheet.create({
@@ -419,7 +491,7 @@ const cardSt = StyleSheet.create({
     borderRadius: 18,
     overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 20 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 20 },
       android: { elevation: 10 },
     }),
   },

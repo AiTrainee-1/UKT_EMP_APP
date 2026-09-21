@@ -5,6 +5,7 @@ import { Colors } from '../constants/colors';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
+import { FontFamily } from '../constants/typography';
 import { LiveFeedItem } from '../hooks/useHomeSummary';
 
 interface Props {
@@ -88,6 +89,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
     paddingVertical: 10,
   },
   track: { flexDirection: 'row' },
@@ -104,7 +107,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   chipText: { color: Colors.textSecondary, fontSize: 12 },
-  chipName: { color: Colors.textPrimary, fontWeight: '700' },
+  chipName: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold },
   chipTime: { color: Colors.textMuted, fontWeight: '600' },
 
   emptyWrap: {

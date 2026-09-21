@@ -420,20 +420,46 @@ Purpose:  Employee's own profile, HR-record viewer, password change,
 
 UI:
   - Parallax hero card (gradient, hamburger, tappable Avatar with a
-    camera-edit badge, name, code/designation, status badge,
-    Production/Staff chip, department chip) — shrinks/fades on scroll
-  - Phone / Join Date stat cards
-  - Collapsible ProfileSections: Personal Information (open by
-    default), Family Information, Employee Information, Bank
-    Information (masked account number), Compliance Information,
-    Address Information
-  - Actions card: "Change Password" row -> BottomSheet
-  - Resignation status row — one of:
-      * 3-step progress tracker (Submitted / Dept Head / HR Final)
-        if pending or dept_approved
-      * "Resignation Rejected" + Resubmit row if rejected
-      * "Submit Resignation" row if none exists
-  - Logout row (red)
+    camera-edit badge) — shrinks on scroll
+      * Top row: Active Duty / On Leave / etc. status pill (derived
+        from emp.status via statusLabel()) + "ROLL #{employeeCode}"
+      * Name + verified-account check icon (shown when hasPassword),
+        designation • role/department subtitle, department • branch
+        row with a building icon
+      * Tag row (each shown only if the underlying value exists):
+        Staff Tier chip, "Shift {name} (start - end)" chip (from
+        useShift), "Zone {zone}" chip
+  - Digital ID Pass quick-link card: icon, title + static "NFC
+    ACTIVE" badge (cosmetic label describing the physical card's
+    chip — no NFC hardware/read capability in this app), subtitle,
+    arrow -> /idcard
+  - 3-stat row: Work Contact (phone) / Join Date / Workstation
+  - Personal Details ExpandableCard (open by default):
+      * Legal Full Name + Gender • Blood Group (2-up)
+      * Date of Birth (with computed age) + Nationality (2-up)
+      * Official Corporate Email, with a "Verified" badge when present
+      * Emergency ICE Contact, with a tap-to-call button when a phone
+        number can be parsed out of the free-text field
+  - Family & Dependents ExpandableCard: badge shows "N Members";
+    body lists each dependent (name, relation) with "Nominee" /
+    "Health" mini-badges when applicable, or an empty-state line
+  - Employment & Hierarchy ExpandableCard: badge shows "Confirmed"
+    (green) or "On Probation" (yellow) from emp.isConfirmed; body
+    shows Division (department), Shift Rules (from useShift), and
+    Supervisor (emp.reportingManager, or "Not assigned")
+  - Bank & Compliance ExpandableCard (lock icon in the header): Bank
+    Name / IFSC (2-up), masked Account Number, PF / ESI Numbers
+    (2-up), UAN Number
+  - "SECURITY & ACCOUNT" section label + actions card:
+      * "Change Portal Password" row, subtitle = time since
+        emp.passwordUpdatedAt (e.g. "Last updated 42 days ago") ->
+        opens the Change Password BottomSheet
+      * "Resignation & Exit" row, subtitle reflects live resignation
+        status -> new submission goes to /resignation/warning;
+        an in-progress/approved one shows an Alert with the detail
+        (rejected re-opens the warning screen to resubmit)
+  - Full-width "Sign Out of UKTextiles" pill button (red)
+  - Footer: "UKTextiles Enterprise Mobile Platform" + app version
   - SideDrawer
   - Change Password BottomSheet: Employee Code (read-only), New
     Password, Confirm Password
@@ -443,22 +469,34 @@ Actions:
   - Tap avatar -> pick / replace / remove a device-local profile
     photo (NOTE: this photo is never sent to the server — see
     Section 5, useLocalProfilePhoto)
-  - Expand/collapse each profile section
+  - Expand/collapse each accordion card independently
+  - Tap the Emergency Contact call button -> dials the parsed number
   - Change password
-  - Navigate to /resignation/warning (new submission or resubmit)
-  - Logout (confirm Alert)
+  - Navigate to /resignation/warning (new submission or resubmit),
+    or view an Alert with the current resignation status
+  - Sign out (confirm Alert)
   - Open drawer
 
 API calls:
-  - useEmployee(employeeId) -> GET /employees/{id}
+  - useEmployee(employeeId) -> GET /employees/{id} (now also returns
+    name, nationality, workstation, zone, staffTier, hasPassword,
+    passwordUpdatedAt, reportingManager, isConfirmed/confirmationDate)
+  - useShift(employeeId) -> GET /shift-assignments
+  - useFamily(employeeId) -> GET /my/family
   - useMyResignation(employeeId) -> GET /my/resignation
   - useLocalProfilePhoto(employeeId) — AsyncStorage only, no API call
-  - setPasswordRequest() -> POST /auth/set-password
+  - setPasswordRequest() -> POST /auth/set-password (also stamps
+    Employee.password_updated_at on the backend)
 
 Conditional content:
-  - The resignation block renders one of 3 states depending on
-    resignation.status (pending/dept_approved vs rejected vs
-    none/already-approved-elsewhere)
+  - Header tag chips (Staff Tier / Shift / Zone) each render only if
+    that field is populated for the employee
+  - Family & Dependents shows an empty-state line instead of a list
+    when the employee has no FamilyDependent rows
+  - The Employment & Hierarchy "Confirmed"/"On Probation" badge and
+    the Resignation & Exit subtitle are both derived, not raw fields
+  - NFC ACTIVE is a static label, not a live capability — there is no
+    NFC integration anywhere in this codebase
 
 
 --------------------------------------------------------------------
@@ -1141,10 +1179,6 @@ Non-"ui/" components (feature-level, cross-page):
     foreground; offers retry or "Open Settings".
     Mounted globally in the root layout (app-wide).
 
-  ProfileSection
-    Collapsible titled section of label/value rows.
-    Used by: Profile screen.
-
   Reveal
     Staggered fade+slide entrance wrapper (Moti-based), respects OS
     Reduce Motion setting.
@@ -1207,6 +1241,14 @@ UI primitives (src/components/ui/):
   EmptyState
     Centered icon + title + subtitle placeholder, with entrance animation.
     Props: icon, title, subtitle
+
+  ExpandableCard (+ DetailBox, DetailRow)
+    Generic collapsible card: icon, title/subtitle, optional right-
+    side badge or icon, chevron toggle, animated expand/collapse.
+    DetailBox is a grey rounded label/value field (used solo or
+    two-up via DetailRow) for the card's body content.
+    Used by: Profile screen (Personal Details, Family & Dependents,
+    Employment & Hierarchy, Bank & Compliance).
 
   Input
     Text input with label, left icon, password show/hide toggle,
@@ -1376,6 +1418,16 @@ useDocuments.ts
 
 useEmployee.ts
   useEmployee(employeeId)                    GET /employees/{employeeId}
+                                              (includes name, nationality,
+                                              workstation, zone, staffTier,
+                                              hasPassword, passwordUpdatedAt,
+                                              reportingManager, isConfirmed)
+  statusLabel(status)                        local formatter only, no
+                                              API call — maps Employee.status
+                                              to a friendly badge label
+
+useFamily.ts
+  useFamily(employeeId)                      GET /my/family
 
 useGeoAttendance.ts
   useGeoPunchStatus()                        GET /attendance/geo-punch/status

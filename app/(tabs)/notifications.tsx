@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import { MotiView } from 'moti';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -28,6 +28,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 function timeAgo(dateStr: string) {
   try {
@@ -93,8 +94,10 @@ export default function NotificationsScreen() {
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'unread'>('all');
 
   const unreadCount = data?.filter(n => !n.isRead).length ?? 0;
+  const visible = (data ?? []).filter((n) => filter === 'all' || !n.isRead);
 
   const handleLogout = () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
@@ -105,49 +108,74 @@ export default function NotificationsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="light-content" backgroundColor="#006496" />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
 
-      {/* Gradient header */}
-      <LinearGradient
-        colors={Colors.gradientPrimary}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerDeco} />
-        <View style={styles.headerContent}>
-          <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color="#fff" size={20} />
-          <View style={{ flex: 1, marginLeft: 12 }}>
+      <View style={styles.topBar}>
+        <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
+        <View style={styles.brandBadge}>
+          <Text style={styles.brandBadgeText}>XT</Text>
+        </View>
+        <View style={styles.brandTextWrap}>
+          <Text style={styles.brandName}>UKTEXTILES</Text>
+          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.avatarBtn}
+          onPress={() => router.push('/(tabs)/profile')}
+          activeOpacity={0.85}
+        >
+          <MaterialCommunityIcons name="account" size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.subHeader}>
+        <View style={{ flex: 1 }}>
+          <View style={styles.subHeaderTitleRow}>
             <Text style={styles.headerTitle}>Notifications</Text>
-            <Text style={styles.headerSub}>
-              {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}
-            </Text>
-          </View>
-          {unreadCount > 0 && (
-            <TouchableOpacity
-              style={styles.markAllBtn}
-              onPress={() => markAllRead.mutate()}
-              disabled={markAllRead.isPending}
-            >
-              <MaterialCommunityIcons name="check-all" size={14} color="#fff" />
-              <Text style={styles.markAllBtnText}>Mark all read</Text>
-            </TouchableOpacity>
-          )}
-          <View style={styles.bellWrap}>
-            <MaterialCommunityIcons name="bell" size={24} color="#fff" />
             {unreadCount > 0 && (
-              <View style={styles.bellBadge}>
-                <Text style={styles.bellBadgeText}>{unreadCount}</Text>
+              <View style={styles.newPill}>
+                <Text style={styles.newPillText}>{unreadCount} New</Text>
               </View>
             )}
           </View>
+          <Text style={styles.headerSub}>{unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}</Text>
         </View>
-      </LinearGradient>
+        {unreadCount > 0 && (
+          <TouchableOpacity
+            style={styles.markAllBtn}
+            onPress={() => markAllRead.mutate()}
+            disabled={markAllRead.isPending}
+            activeOpacity={0.8}
+          >
+            <MaterialCommunityIcons name="check-all" size={14} color={Colors.primary} />
+            <Text style={styles.markAllBtnText}>Read All</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <View style={styles.filterRow}>
+        {([
+          { key: 'all' as const, label: 'All', count: data?.length ?? 0 },
+          { key: 'unread' as const, label: 'Unread', count: unreadCount },
+        ]).map((f) => (
+          <TouchableOpacity
+            key={f.key}
+            style={[styles.filterChip, filter === f.key && styles.filterChipActive]}
+            onPress={() => setFilter(f.key)}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextActive]}>
+              {f.label} {f.count}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <FlatList
-        data={data ?? []}
+        data={visible}
         keyExtractor={n => String(n.id)}
-        contentContainerStyle={[styles.list, !(data?.length) && styles.listCenter]}
+        contentContainerStyle={[styles.list, !visible.length && styles.listCenter]}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
@@ -159,7 +187,7 @@ export default function NotificationsScreen() {
           ) : (
             <EmptyState
               icon="bell-sleep-outline"
-              title="No notifications"
+              title={filter === 'unread' ? 'No unread notifications' : 'No notifications'}
               subtitle="You'll see leave updates, approvals, and reminders here"
             />
           )
@@ -171,7 +199,7 @@ export default function NotificationsScreen() {
             transition={{ type: 'timing', duration: 260, delay: Math.min(index, 8) * 50 }}
           >
             <TouchableOpacity
-              style={[styles.card, item.isRead && styles.cardRead]}
+              style={[styles.card, { borderLeftColor: notifMeta(Colors, item.type).color, borderLeftWidth: 3 }, item.isRead && styles.cardRead]}
               onPress={() => { if (!item.isRead) markRead.mutate(item.id); }}
               activeOpacity={0.8}
             >
@@ -203,39 +231,35 @@ export default function NotificationsScreen() {
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
-  header: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 20,
-    overflow: 'hidden',
-  },
-  headerDeco: {
-    position: 'absolute', top: -20, right: -20,
-    width: 100, height: 100, borderRadius: 50,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-  },
-  headerContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  headerTitle: { color: '#fff', fontSize: 22, fontWeight: '900' },
-  headerSub: { color: 'rgba(255,255,255,0.8)', fontSize: 12, marginTop: 2 },
-  bellWrap: { position: 'relative' },
-  bellBadge: {
-    position: 'absolute', top: -6, right: -6,
-    backgroundColor: Colors.secondaryContainer,
-    borderRadius: 9, minWidth: 18, height: 18,
-    alignItems: 'center', justifyContent: 'center',
-    paddingHorizontal: 4,
-  },
-  bellBadgeText: { color: Colors.secondary, fontSize: 9, fontWeight: '900' },
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  brandBadge: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
+  brandTextWrap: { gap: 1 },
+  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
+  brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
+  avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+
+  subHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
+  subHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 20 },
+  headerSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
+  newPill: { backgroundColor: Colors.primary, borderRadius: BorderRadius.full, paddingHorizontal: 8, paddingVertical: 2 },
+  newPillText: { color: '#fff', fontSize: 10, fontWeight: '800' },
   markAllBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: Colors.primaryFixed,
     borderRadius: BorderRadius.full,
-    paddingHorizontal: 10, paddingVertical: 6,
-    marginRight: 10,
+    paddingHorizontal: 10, paddingVertical: 7,
   },
-  markAllBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  markAllBtnText: { color: Colors.primary, fontSize: 11, fontWeight: '700' },
 
-  list: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 32, gap: 8 },
+  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
+  filterChip: { backgroundColor: Colors.bgCard, borderWidth: 1, borderColor: Colors.border, borderRadius: BorderRadius.full, paddingHorizontal: 14, paddingVertical: 7 },
+  filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  filterChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
+  filterChipTextActive: { color: '#fff' },
+
+  list: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32, gap: 8 },
   listCenter: { flex: 1 },
 
   card: {
@@ -244,10 +268,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     gap: 12,
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 14,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.09, shadowRadius: 12 },
-      android: { elevation: 3 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   cardRead: { opacity: 0.7 },
@@ -259,7 +285,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
 
   cardBody: { flex: 1, gap: 3 },
-  cardTitle: { color: Colors.textPrimary, fontSize: 14, fontWeight: '700' },
+  cardTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
   cardTitleRead: { fontWeight: '600', color: Colors.textSecondary },
   cardMsg: { color: Colors.textSecondary, fontSize: 13, lineHeight: 18 },
   cardTime: { color: Colors.textMuted, fontSize: 11, marginTop: 2 },

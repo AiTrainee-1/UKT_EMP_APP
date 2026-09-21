@@ -7,6 +7,8 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { Badge } from './ui/Badge';
 import { SalarySlip } from '../hooks/useSalarySlips';
+import { BorderRadius } from '../constants/theme';
+import { FontFamily, TabularNums } from '../constants/typography';
 
 const MONTH_NAMES = [
   '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -30,7 +32,7 @@ export function SalarySlipCard({ slip, onPress }: Props) {
         <Text style={styles.month}>
           {MONTH_NAMES[slip.month]} {slip.year}
         </Text>
-        <Text style={styles.net}>₹{slip.netSalary.toLocaleString('en-IN')}</Text>
+        <Text style={[styles.net, TabularNums]}>₹{slip.netSalary.toLocaleString('en-IN')}</Text>
       </View>
       <View style={styles.right}>
         <Badge
@@ -51,17 +53,19 @@ export function SalarySlipCard({ slip, onPress }: Props) {
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
-    borderRadius: 16,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    elevation: 1,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
   },
   left: {
     gap: 4,
@@ -72,8 +76,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   net: {
     color: Colors.primary,
+    fontFamily: FontFamily.displayBold,
     fontSize: 22,
-    fontWeight: '800',
   },
   right: {
     alignItems: 'flex-end',

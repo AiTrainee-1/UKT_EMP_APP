@@ -142,23 +142,30 @@ export function OutpassFlipCard({
       <View style={[styles.flipBox, { height: cardHeight }]}>
         {/* ── Front: employee + trip details ── */}
         <Animated.View onLayout={onFrontLayout} style={[styles.face, { backgroundColor: tone.bg, borderColor: tone.border }, frontStyle]}>
+          <View style={styles.eyebrowRow}>
+            <Text style={[styles.eyebrowLabel, { color: tone.accent }]}>SECURITY CLEARANCE TOKEN</Text>
+            <Text style={styles.passRef}>#OUT-{request.id}</Text>
+          </View>
           <View style={styles.topRow}>
             <View style={styles.topLeft}>
-              <MaterialCommunityIcons name={statusIcon as any} size={16} color={tone.accent} />
+              <View style={[styles.statusDot, { backgroundColor: tone.accent }]} />
+              <MaterialCommunityIcons name={statusIcon as any} size={15} color={tone.accent} />
               <Text style={[styles.topLabel, { color: tone.accent }]} numberOfLines={1}>{statusLabel}</Text>
             </View>
-            <View style={styles.topRight}>
-              {request.status === 'approved' && (
-                <View style={[styles.timerPill, { backgroundColor: Colors.bgCard }]}>
-                  <MaterialCommunityIcons name="clock-outline" size={12} color={tone.accent} />
-                  <Text style={[styles.timerText, { color: tone.accent }]}>
-                    {expired || remainingMs == null ? 'Expired' : formatRemaining(remainingMs)}
-                  </Text>
-                </View>
-              )}
-              <MaterialCommunityIcons name="rotate-3d-variant" size={16} color={Colors.textMuted} style={styles.flipHint} />
-            </View>
+            <MaterialCommunityIcons name="rotate-3d-variant" size={16} color={Colors.textMuted} style={styles.flipHint} />
           </View>
+
+          {request.status === 'approved' && !expired && remainingMs != null && (
+            <View style={styles.countdownWrap}>
+              <View style={styles.countdownTopRow}>
+                <Text style={styles.countdownLabel}>Validity Window</Text>
+                <Text style={[styles.countdownValue, { color: tone.accent }]}>{formatRemaining(remainingMs)}</Text>
+              </View>
+              <View style={styles.countdownTrack}>
+                <View style={[styles.countdownFill, { backgroundColor: tone.accent, width: `${Math.max(4, Math.min(100, (remainingMs / (60 * 60 * 1000)) * 100))}%` }]} />
+              </View>
+            </View>
+          )}
 
           <View style={styles.empRow}>
             <Avatar uri={employee?.photoUrl} name={employee?.name} size={52} borderColor={tone.border} />
@@ -304,8 +311,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     justifyContent: 'space-between',
   },
   backFace: {},
+  eyebrowRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  eyebrowLabel: { fontSize: 9.5, fontWeight: '800', letterSpacing: 0.8 },
+  passRef: { color: Colors.textMuted, fontSize: 9.5, fontWeight: '700' },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   topLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
   topRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   topLabel: { fontSize: 12, fontWeight: '800' },
   timerPill: {
@@ -314,6 +325,13 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   timerText: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
   flipHint: { opacity: 0.6 },
+
+  countdownWrap: { marginTop: 12, gap: 5 },
+  countdownTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
+  countdownLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700' },
+  countdownValue: { fontSize: 14, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  countdownTrack: { height: 4, borderRadius: 2, backgroundColor: Colors.bgCard, overflow: 'hidden' },
+  countdownFill: { height: 4, borderRadius: 2 },
   empRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 },
   empName: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800' },
   empCode: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },

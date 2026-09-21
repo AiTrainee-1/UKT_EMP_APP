@@ -15,6 +15,18 @@ import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/h
 import { useNotificationObserver } from '../src/hooks/useNotifications';
 import { PermissionGate } from '../src/components/PermissionGate';
 import * as Location from 'expo-location';
+import * as SplashScreen from 'expo-splash-screen';
+import { useFonts } from 'expo-font';
+import {
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+} from '@expo-google-fonts/plus-jakarta-sans';
+import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
+
+// Headline/body fonts are used on every screen (see src/constants/typography.ts),
+// so loading is a hard gate, not a progressive enhancement — keep the splash
+// screen up until they resolve rather than flashing system-font text first.
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // registerPushToken() (src/hooks/usePushToken.ts) guards internally against
 // Expo Go, where the push-token APIs throw an unrecoverable error on SDK
@@ -76,10 +88,15 @@ function ResignationGuard() {
   useEffect(() => {
     if (data?.status === 'approved' && !handledRef.current) {
       handledRef.current = true;
+      const name = user?.name ?? '';
+      const lastWorkingDate = data?.lastWorkingDate ?? '';
       clearAuth().then(() => {
         setUser(null);
         queryClient.clear();
-        router.replace('/resignation/deactivated');
+        router.replace({
+          pathname: '/resignation/deactivated',
+          params: { name, lastWorkingDate },
+        });
       });
     }
   }, [data?.status]);
@@ -161,6 +178,12 @@ function NotificationTapHandler() {
 export default function RootLayout() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [fontsLoaded] = useFonts({
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    Inter_400Regular,
+    Inter_600SemiBold,
+  });
 
   useEffect(() => {
     checkAuth()
@@ -168,6 +191,10 @@ export default function RootLayout() {
       .catch(() => {})
       .finally(() => { setIsLoading(false); });
   }, []);
+
+  useEffect(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
+  }, [fontsLoaded]);
 
   const login = async (_id: string, _pw: string) => {};
 
@@ -178,6 +205,8 @@ export default function RootLayout() {
     queryClient.clear();
     router.replace('/(auth)/login');
   };
+
+  if (!fontsLoaded) return null;
 
   return (
     <ErrorBoundary>

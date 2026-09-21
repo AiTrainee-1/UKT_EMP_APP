@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -11,7 +11,8 @@ import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
-import { BorderRadius, Spacing, CardStyle } from '../../src/constants/theme';
+import { BorderRadius, Spacing } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 import {
   useGeoPunchStatus, useGeoPunchPrecheck, useGeoPunch, GeoPunchPrecheckResult,
 } from '../../src/hooks/useGeoAttendance';
@@ -21,10 +22,7 @@ type Step = 'permission' | 'locate' | 'review' | 'done';
 const STEPS: Step[] = ['permission', 'locate', 'review'];
 
 function StepDots({ labels, current }: { labels: string[]; current: number }) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
+  const dotStyles = useThemedStyles(makeDotStyles);
 
   return (
     <View style={dotStyles.row}>
@@ -153,8 +151,10 @@ export default function GeoPunchScreen() {
             <SkeletonCard lines={4} />
           </View>
         ) : onDutyBlocking ? (
-          <View style={[CardStyle.clay, styles.gateCard]}>
-            <MaterialCommunityIcons name="briefcase-outline" size={32} color={Colors.tertiary} style={styles.gateIcon} />
+          <View style={[styles.card, styles.gateCard]}>
+            <View style={[styles.gateIconWrap, { backgroundColor: Colors.badgeYellowBg }]}>
+              <MaterialCommunityIcons name="briefcase-outline" size={28} color={Colors.tertiary} />
+            </View>
             <Text style={styles.gateTitle}>You have an On-Duty session in progress</Text>
             <Text style={styles.gateBody}>
               {onDutySession?.status === 'active'
@@ -182,8 +182,10 @@ export default function GeoPunchScreen() {
             <StepDots labels={['Permission', 'Location', 'Review']} current={STEPS.indexOf(step === 'done' ? 'review' : step)} />
 
             {step === 'permission' && (
-              <View style={[CardStyle.clay, styles.gateCard]}>
-                <MaterialCommunityIcons name="crosshairs-gps" size={32} color={Colors.primary} style={styles.gateIcon} />
+              <View style={[styles.card, styles.gateCard]}>
+                <View style={styles.gateIconWrap}>
+                  <MaterialCommunityIcons name="crosshairs-gps" size={28} color={Colors.primary} />
+                </View>
                 <Text style={styles.gateTitle}>Allow location access</Text>
                 <Text style={styles.gateBody}>We need your current location to verify you're inside your branch's allowed radius.</Text>
                 <Button title="Allow Location Access" onPress={requestPermission} loading={busy} style={{ marginTop: Spacing.base }} />
@@ -191,8 +193,10 @@ export default function GeoPunchScreen() {
             )}
 
             {step === 'locate' && (
-              <View style={[CardStyle.clay, styles.gateCard]}>
-                <MaterialCommunityIcons name="map-marker-radius-outline" size={32} color={Colors.primary} style={styles.gateIcon} />
+              <View style={[styles.card, styles.gateCard]}>
+                <View style={styles.gateIconWrap}>
+                  <MaterialCommunityIcons name="map-marker-radius-outline" size={28} color={Colors.primary} />
+                </View>
                 <Text style={styles.gateTitle}>Capture your current location</Text>
                 <Text style={styles.gateBody}>We'll check whether you're inside the allowed company radius before you punch.</Text>
                 <Button title="Capture Location" onPress={captureLocation} loading={busy} style={{ marginTop: Spacing.base }} />
@@ -200,7 +204,7 @@ export default function GeoPunchScreen() {
             )}
 
             {step === 'review' && precheck && (
-              <View style={[CardStyle.clay, { gap: Spacing.md }]}>
+              <View style={[styles.card, { gap: Spacing.md }]}>
                 <View style={[styles.statusBanner, { backgroundColor: precheck.insideRadius ? Colors.badgeGreenBg : Colors.badgeRedBg }]}>
                   <MaterialCommunityIcons
                     name={precheck.insideRadius ? 'check-circle-outline' : 'close-circle-outline'}
@@ -239,20 +243,32 @@ export default function GeoPunchScreen() {
                   />
                 ) : (
                   <>
-                    <Text style={styles.hintText}>
-                      Move within range to punch, or submit an On-Duty request if you're working off-site.
-                    </Text>
-                    <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
-                      <Button title="Re-check" variant="outline" onPress={captureLocation} style={{ flex: 1 }} />
-                      <Button title="Go On-Duty" onPress={() => router.push('/on-duty')} style={{ flex: 1 }} />
+                    <View style={styles.policyBanner}>
+                      <MaterialCommunityIcons name="shield-alert-outline" size={16} color={Colors.tertiary} style={{ marginTop: 1 }} />
+                      <Text style={styles.policyBannerText}>
+                        Company attendance policy requires verified physical presence within the branch radius.
+                        If you're travelling for official work, switch to an On-Duty request instead.
+                      </Text>
                     </View>
+                    <Button
+                      title="Switch to On-Duty (OD) Punch"
+                      onPress={() => router.push('/on-duty')}
+                      icon={<MaterialCommunityIcons name="briefcase-outline" size={16} color="#fff" />}
+                    />
+                    <Button
+                      title="Recalibrate GPS & Try Again"
+                      variant="outline"
+                      onPress={captureLocation}
+                      loading={busy}
+                      icon={<MaterialCommunityIcons name="crosshairs-gps" size={16} color={Colors.primary} />}
+                    />
                   </>
                 )}
               </View>
             )}
 
             {step === 'done' && (
-              <View style={[CardStyle.clay, styles.doneCard]}>
+              <View style={[styles.card, styles.doneCard]}>
                 <MaterialCommunityIcons name="check-circle" size={40} color={Colors.statusGreen} />
                 <Text style={styles.doneTitle}>Punch recorded</Text>
                 <Button title="Back to Attendance" variant="outline" onPress={() => router.back()} style={{ marginTop: Spacing.base }} />
@@ -279,8 +295,20 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   content: { padding: 16, gap: 16, paddingBottom: 32 },
 
+  card: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.base,
+    ...Platform.select({
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
+    }),
+  },
+
   introText: { fontSize: 13, color: Colors.textSecondary },
-  introBold: { fontWeight: '800', color: Colors.textPrimary },
+  introBold: { fontFamily: FontFamily.bodySemibold, color: Colors.textPrimary },
 
   stepHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   changeBtn: { flexDirection: 'row', alignItems: 'center' },
@@ -288,7 +316,13 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
 
   gateCard: { alignItems: 'center' },
   gateIcon: { marginBottom: Spacing.sm },
-  gateTitle: { fontSize: 14, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center', marginBottom: 4 },
+  gateIconWrap: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: Colors.badgeBlueBg,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: Spacing.sm,
+  },
+  gateTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 14, color: Colors.textPrimary, textAlign: 'center', marginBottom: 4 },
   gateBody: { fontSize: 12.5, color: Colors.textSecondary, textAlign: 'center', lineHeight: 18 },
 
   doneCard: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
@@ -310,6 +344,14 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
 
   hintText: { fontSize: 11.5, color: Colors.textMuted, lineHeight: 16 },
 
+  policyBanner: {
+    flexDirection: 'row', gap: 8,
+    backgroundColor: Colors.badgeYellowBg,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+  },
+  policyBannerText: { flex: 1, fontSize: 11.5, color: Colors.textSecondary, lineHeight: 16 },
+
   onDutyLink: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: Colors.badgeYellowBg, borderRadius: BorderRadius.md, padding: Spacing.md,
@@ -317,7 +359,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   onDutyLinkText: { flex: 1, fontSize: 12, fontWeight: '600', color: Colors.tertiary },
 });
 
-const dotStyles = StyleSheet.create({
+const makeDotStyles = (Colors: Palette) => StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   dot: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   dotDone: { backgroundColor: Colors.statusGreen },

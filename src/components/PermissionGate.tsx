@@ -10,6 +10,7 @@ import { Colors } from '../constants/colors';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
+import { FontFamily } from '../constants/typography';
 
 const ONBOARDED_KEY = 'uktextiles.permissionsOnboarded.v1';
 
@@ -113,6 +114,10 @@ export function PermissionGate() {
   };
 
   const handleOpenSettings = () => {
+    // Linking.openSettings() only exists on iOS/Android — calling it on web
+    // throws "Linking.default.openSettings is not a function" and crashes
+    // the whole app, since there's no OS settings screen to deep-link to.
+    if (Platform.OS === 'web') return;
     Linking.openSettings();
   };
 
@@ -148,10 +153,12 @@ export function PermissionGate() {
         <TouchableOpacity style={styles.primaryBtn} onPress={handleGrant} activeOpacity={0.85} disabled={retrying}>
           <Text style={styles.primaryBtnText}>{retrying ? 'Checking…' : 'Grant Permission'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryBtn} onPress={handleOpenSettings} activeOpacity={0.7}>
-          <MaterialCommunityIcons name="cog-outline" size={15} color={Colors.primary} />
-          <Text style={styles.secondaryBtnText}>Open {Platform.OS === 'ios' ? 'Settings' : 'App Settings'}</Text>
-        </TouchableOpacity>
+        {Platform.OS !== 'web' && (
+          <TouchableOpacity style={styles.secondaryBtn} onPress={handleOpenSettings} activeOpacity={0.7}>
+            <MaterialCommunityIcons name="cog-outline" size={15} color={Colors.primary} />
+            <Text style={styles.secondaryBtnText}>Open {Platform.OS === 'ios' ? 'Settings' : 'App Settings'}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.skipBtn} onPress={() => setMissing([])} activeOpacity={0.6}>
           <Text style={styles.skipBtnText}>Continue without — some features won't work</Text>
         </TouchableOpacity>
@@ -177,7 +184,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     padding: 22,
     alignItems: 'center',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.3, shadowRadius: 24 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 15 },
       android: { elevation: 12 },
     }),
   },
@@ -186,7 +193,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 14,
   },
-  title: { color: Colors.textPrimary, fontSize: 18, fontWeight: '900', marginBottom: 6 },
+  title: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 18, marginBottom: 6 },
   body: { color: Colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 16 },
 
   permList: { width: '100%', gap: 10, marginBottom: 18 },

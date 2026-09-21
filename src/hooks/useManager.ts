@@ -60,6 +60,7 @@ export interface TeamPermissionRequest {
   date: string;
   time: string;
   reason: string;
+  durationMinutes?: 30 | 45 | 60 | 90 | null;
   status: string;
   appliedOn?: string;
   createdAt?: string;
@@ -149,9 +150,14 @@ export function usePendingRequests(enabled = true) {
     queryFn: async (): Promise<PendingRequests> => {
       const res = await api.get('/manager/pending-requests');
       const raw = res.data;
+      // Backend sends "permissionTime", never "time" — see
+      // backend/api/leave_views.py::_permission_json. Normalized here so
+      // the manager approval sheet (which reads item.time directly) isn't
+      // silently blank the same way the employee-side list once was.
+      const rawPermissions: any[] = raw.permissionRequests ?? raw.permissions ?? [];
       return {
         leaveRequests: raw.leaveRequests ?? [],
-        permissionRequests: raw.permissionRequests ?? raw.permissions ?? [],
+        permissionRequests: rawPermissions.map((p) => ({ ...p, time: p.time ?? p.permissionTime })),
         resignations: raw.resignations ?? [],
         casualLeaves: raw.casualLeaves ?? [],
         attendanceRequests: raw.attendanceRequests ?? [],

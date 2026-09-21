@@ -97,10 +97,10 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     minHeight: 200,
     ...Platform.select({
       ios: {
-        shadowColor: '#006496',
-        shadowOffset: { width: 0, height: -6 },
-        shadowOpacity: 0.14,
-        shadowRadius: 20,
+        shadowColor: '#0F172A',
+        shadowOffset: { width: 0, height: -4 },
+        shadowOpacity: 0.08,
+        shadowRadius: 15,
       },
       android: { elevation: 16 },
     }),

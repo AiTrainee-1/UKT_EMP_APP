@@ -8,6 +8,7 @@ import { Colors } from '../constants/colors';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { BorderRadius, Spacing, ClayElevation } from '../constants/theme';
+import { FontFamily } from '../constants/typography';
 import { useGeoPunchStatus, useGeoPunch } from '../hooks/useGeoAttendance';
 
 /**
@@ -234,13 +235,13 @@ export function SlideToPunch() {
     : result?.phase === 'error' ? Colors.statusRed
     : result?.phase === 'info' ? Colors.tertiary
     : mode === 'on_duty' ? Colors.tertiary
-    : Colors.primary;
+    : Colors.statusGreen;
 
   const label =
     phase === 'working' ? 'Recording your punch…'
     : result ? result.title
     : mode === 'on_duty' ? 'Slide for On-Duty punch'
-    : 'Slide to punch';
+    : `Slide to punch ${punchesToday % 2 === 1 ? 'out' : 'in'}`;
 
   const sub =
     phase === 'working' ? 'Finding your location'
@@ -276,8 +277,10 @@ export function SlideToPunch() {
         />
 
         <View style={styles.copy} pointerEvents="none">
-          <Text style={[styles.label, { color: tone }]} numberOfLines={1}>{label}</Text>
-          {!!sub && <Text style={styles.sub} numberOfLines={1}>{sub}</Text>}
+          <Text style={[styles.label, { color: Colors.textPrimary }]} numberOfLines={1}>
+            {phase === 'working' || !!result ? label : label.toUpperCase() + '  »'}
+          </Text>
+          {!!sub && phase !== 'working' && !result && <Text style={styles.sub} numberOfLines={1}>{sub}</Text>}
         </View>
 
         <Animated.View
@@ -324,15 +327,15 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   track: {
     height: THUMB + PAD * 2,
     borderRadius: (THUMB + PAD * 2) / 2,
-    backgroundColor: Colors.bgCard,
+    backgroundColor: Colors.primaryFixed,
     justifyContent: 'center',
     overflow: 'hidden',
-    ...ClayElevation.low,
+    ...ClayElevation.mid,
   },
   trail: { position: 'absolute', top: 0, bottom: 0, width: '100%', borderRadius: BorderRadius.full },
-  copy: { position: 'absolute', left: THUMB + PAD * 2 + 4, right: Spacing.base },
-  label: { fontSize: 14, fontWeight: '800' },
-  sub: { fontSize: 11.5, color: Colors.textMuted, marginTop: 1 },
+  copy: { position: 'absolute', left: THUMB + PAD * 2 + 4, right: Spacing.base, alignItems: 'center' },
+  label: { fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.5 },
+  sub: { fontSize: 11, color: Colors.textMuted, marginTop: 1 },
   thumb: {
     position: 'absolute',
     width: THUMB, height: THUMB, borderRadius: THUMB / 2,

@@ -20,6 +20,7 @@ import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
+import { FontFamily } from '../../src/constants/typography';
 
 const SURVEY_LABELS = [
   'Primary reason for leaving',
@@ -28,13 +29,12 @@ const SURVEY_LABELS = [
 ];
 
 function StepBar() {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
+  const step = useThemedStyles(makeStepStyles);
 
   return (
     <View style={step.row}>
+      <View style={step.done} />
+      <View style={step.divider} />
       <View style={step.done} />
       <View style={step.divider} />
       <View style={step.active} />
@@ -42,7 +42,7 @@ function StepBar() {
   );
 }
 
-const step = StyleSheet.create({
+const makeStepStyles = (Colors: Palette) => StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   done: { flex: 1, height: 4, borderRadius: 2, backgroundColor: Colors.primary },
   divider: { width: 8 },
@@ -112,7 +112,7 @@ export default function ResignationConfirmScreen() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle}>Review & Submit</Text>
-          <Text style={styles.headerSub}>Step 2 of 2</Text>
+          <Text style={styles.headerSub}>Step 3 of 3</Text>
         </View>
         <View style={{ width: 38 }} />
       </View>
@@ -219,7 +219,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   headerCenter: { flex: 1, alignItems: 'center' },
-  headerTitle: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800' },
+  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 16 },
   headerSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
 
   scroll: { padding: 16, paddingBottom: 40, gap: 12 },
@@ -245,11 +245,13 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xl,
+    borderWidth: 1,
+    borderColor: Colors.border,
     padding: 16,
     gap: 10,
     ...Platform.select({
-      ios: { shadowColor: '#006496', shadowOffset: { width: 3, height: 5 }, shadowOpacity: 0.09, shadowRadius: 12 },
-      android: { elevation: 3 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
     }),
   },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -271,8 +273,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     lineHeight: 21,
   },
   dateHighlight: {
+    fontFamily: FontFamily.headlineSemibold,
     fontSize: 17,
-    fontWeight: '800',
     color: Colors.primary,
   },
   qBadge: {
@@ -308,8 +310,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     paddingVertical: 15,
     marginTop: 8,
     ...Platform.select({
-      ios: { shadowColor: '#c62828', shadowOffset: { width: 4, height: 8 }, shadowOpacity: 0.28, shadowRadius: 14 },
-      android: { elevation: 8 },
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.10, shadowRadius: 10 },
+      android: { elevation: 5 },
     }),
   },
   submitBtnDisabled: { opacity: 0.6 },
