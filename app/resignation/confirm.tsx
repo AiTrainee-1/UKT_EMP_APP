@@ -16,6 +16,9 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
 
 import { useSubmitResignation } from '../../src/hooks/useResignation';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { approvalErrorMessage, pipelineSentence, workflowOff } from '../../src/lib/approval';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
@@ -64,6 +67,11 @@ export default function ResignationConfirmScreen() {
   }>();
 
   const { mutate, isPending } = useSubmitResignation();
+  // Who a resignation goes to, and whether HR has switched new ones off (Approval Workflow Control). Only a hint that may
+  // be a minute old: the server refuses a new resignation either way and its message is shown (see handleSubmit).
+  const { data: approvalSummary } = useApprovalSummary();
+  const resignationFlow = approvalSummary?.resignation;
+  const resignationOff = workflowOff(resignationFlow);
 
   const formattedDate = params.lastWorkingDate && params.lastWorkingDate !== 'undefined'
     ? format(parseISO(params.lastWorkingDate), 'd MMMM yyyy')
@@ -74,7 +82,7 @@ export default function ResignationConfirmScreen() {
   const handleSubmit = () => {
     Alert.alert(
       'Submit Resignation',
-      'This action is permanent. Once submitted, HR will review your request. Are you sure?',
+      `This action is permanent. ${pipelineSentence(resignationFlow)} Are you sure?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -91,8 +99,8 @@ export default function ResignationConfirmScreen() {
               },
               {
                 onSuccess: () => router.replace('/resignation/success'),
-                onError: () =>
-                  Alert.alert('Error', 'Failed to submit resignation. Please try again.'),
+                onError: (err) =>
+                  Alert.alert('Error', approvalErrorMessage(err, 'Failed to submit resignation. Please try again.')),
               }
             );
           },
@@ -170,15 +178,17 @@ export default function ResignationConfirmScreen() {
         <View style={styles.noticeChip}>
           <MaterialCommunityIcons name="information-outline" size={15} color={Colors.onSecondaryContainer} />
           <Text style={styles.noticeText}>
-            After submission, HR will review your request and contact you. You can track the status from your profile.
+            {pipelineSentence(resignationFlow)} You can track the status from your profile.
           </Text>
         </View>
 
+        <WorkflowOffNote workflow={resignationFlow} />
+
         {/* Actions */}
         <TouchableOpacity
-          style={[styles.submitBtn, isPending && styles.submitBtnDisabled]}
+          style={[styles.submitBtn, (isPending || resignationOff) && styles.submitBtnDisabled]}
           onPress={handleSubmit}
-          disabled={isPending}
+          disabled={isPending || resignationOff}
           activeOpacity={0.85}
         >
           {isPending ? (

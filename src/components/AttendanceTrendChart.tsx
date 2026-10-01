@@ -8,18 +8,25 @@ import type { AttendanceRecord } from '../hooks/useAttendance';
 
 const makeStatusColor = (Colors: Palette): Record<string, string> => ({
   Present: Colors.statusGreen,
-  Late: Colors.statusYellow,
-  'Half Shift': Colors.statusYellow,
+  // Same hues as the calendar cells, so a day reads the same in both.
+  'Late-In': Colors.statusYellow,
+  'Early-Out': Colors.statusLeave,
+  Permission: Colors.statusBlue,
+  'Half Day': Colors.statusOrange,
   Absent: Colors.statusRed,
   'On Leave': Colors.primary,
   Holiday: Colors.outlineVariant,
   Weekend: Colors.outlineVariant,
 });
 
+// Late-In / Early-Out / Permission days were worked in full, so their bars are
+// full height like Present's (a missing entry here used to draw a stub bar).
 const STATUS_HEIGHT_RATIO: Record<string, number> = {
   Present: 1,
-  Late: 1,
-  'Half Shift': 0.55,
+  'Late-In': 1,
+  'Early-Out': 1,
+  Permission: 1,
+  'Half Day': 0.55,
   'On Leave': 0.75,
   Absent: 0.15,
   Holiday: 0.1,

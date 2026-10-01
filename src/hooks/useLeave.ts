@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import type { ApprovalProgress } from '../lib/approval';
 
 export interface LeaveBalance {
   leaveType: string;
@@ -20,6 +21,8 @@ export interface LeaveRequest {
   appliedOn: string;
   isHalfDay?: boolean;
   halfDaySlot?: 'morning' | 'afternoon' | null;
+  /** Where the request stands in HR's approval pipeline. Absent on an older backend (`...raw` below carries it). */
+  approval?: ApprovalProgress | null;
 }
 
 export interface LeaveType {
@@ -38,12 +41,37 @@ export function useLeaveBalances(employeeId: number | null) {
   });
 }
 
+// Backend sends lowercase status ("pending"/"approved"/"rejected") -see
+// LeaveRequest.status in backend/api/models.py and leave_request_json in
+// backend/api/serializers.py. Reading it directly as this hook's own
+// capitalized LeaveRequest['status'] union silently broke the Live/
+// Confirmed tab split and the Approved/Rejected/Taken summary counts on
+// app/(tabs)/leave.tsx (status was never really "Pending", so nothing ever
+// matched) -mirrors the identical fix already applied to PermissionRequest
+// in useRequests.ts's STATUS_MAP/normalizePermission.
+const STATUS_MAP: Record<string, LeaveRequest['status']> = {
+  pending: 'Pending', approved: 'Approved', rejected: 'Rejected',
+};
+
+function normalizeLeaveRequest(raw: any): LeaveRequest {
+  return {
+    ...raw,
+    status: STATUS_MAP[raw.status] ?? raw.status,
+    // Backend's leave_request_json returns "type", never "leaveType" -read
+    // directly as LeaveRequest before this mapping existed, request.leaveType
+    // was always undefined, leaving the type label blank on every leave card
+    // and the type filter chips empty (see LeaveCard.tsx / app/(tabs)/leave.tsx).
+    leaveType: raw.leaveType ?? raw.type,
+  };
+}
+
 export function useLeaveRequests(employeeId: number | null) {
   return useQuery({
     queryKey: ['leave-requests', employeeId],
     queryFn: async () => {
       const res = await api.get('/leave-requests', { params: { employeeId } });
-      return res.data as LeaveRequest[];
+      const items: any[] = Array.isArray(res.data) ? res.data : [];
+      return items.map(normalizeLeaveRequest);
     },
     enabled: !!employeeId,
   });

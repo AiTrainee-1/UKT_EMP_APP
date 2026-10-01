@@ -16,7 +16,8 @@ future deployment.
 - [3. Building the APK](#3-building-the-apk)
 - [4. Keeping the app name consistent across deployments](#4-keeping-the-app-name-consistent-across-deployments)
 - [5. Version bumping between releases](#5-version-bumping-between-releases)
-- [6. Distributing the APK](#6-distributing-the-apk)
+- [6. Releasing an update to employees](#6-releasing-an-update-to-employees)
+- [6a. Distributing the APK by hand](#6a-distributing-the-apk-by-hand)
 - [7. Post-build checklist](#7-post-build-checklist)
 - [8. Troubleshooting](#8-troubleshooting)
 
@@ -221,34 +222,73 @@ installed app instead of becoming a stranger app on the employee's phone.
 
 ## 5. Version bumping between releases
 
-`app.json` → `expo.version` (currently `"1.0.0"`) is a human-readable
-version string shown to you, not enforced by Android for a sideloaded APK.
-Bump it before each production build so builds are distinguishable:
+The version lives in **one place**: `app.json` → `expo.version` (currently
+`"3.0.0"`). The splash screen, login page, profile and the in-app update
+check all read it from there (`src/lib/appVersion.ts`), so they can never
+disagree. Bump it before every production build:
 
 ```json
-"version": "1.1.0"
+"version": "3.1.0"
 ```
 
-There is currently no explicit `android.versionCode` in `app.json` — Expo
-auto-assigns one per build when it's omitted. If two builds are ever
-installed side-by-side for comparison, or if this app is later published
-to the Play Store (which enforces a strictly increasing `versionCode`),
-add an explicit counter:
+Also raise `android.versionCode` by one on every build (it is `3` for
+version 3.0.0). Android refuses to install an APK over an existing one unless
+its `versionCode` is higher, and `eas.json` uses `"appVersionSource": "local"`,
+so this number is whatever `app.json` says:
 
 ```json
 "android": {
   "package": "net.uktex.employee",
-  "versionCode": 2
+  "versionCode": 4
 }
 ```
 
-...and increment it by hand on every production build. Not required for
-today's "share an APK file directly" distribution model, but worth adding
-if this ever moves to the Play Store.
+The version you type into the HR portal (step 3 below) must be the same
+`expo.version` you built with, otherwise employees on the new build would be
+told to update to a version they already have.
 
 ---
 
-## 6. Distributing the APK
+## 6. Releasing an update to employees
+
+Employees are told about new builds from inside the app. There is no need to
+send the APK to everyone.
+
+1. Bump `expo.version` and `android.versionCode` in `app.json` (see §5), then
+   build: `eas build --platform android --profile production`.
+2. Upload the finished `.apk` to Google Drive (or anywhere that can serve a
+   file download) and share it as **Anyone with the link**.
+3. In the HR portal open **Mobile App Login → New Version**, enter the version
+   (e.g. `3.1.0`), paste the link, add the release information and press
+   **Publish version**. A Google Drive share link is converted to a direct
+   download automatically.
+4. Employees on an older build see **New Version Available** the next time they
+   open the app (or bring it to the front): *Download and Install* opens the
+   link, and once the file has downloaded they tap it to install.
+
+Notes:
+
+- **Required update** (default) makes the popup impossible to close until the
+  employee updates. Turn it off to let them choose "Later" (the popup returns
+  the next time the app is opened).
+- The popup appears on the login page too, so someone who cannot sign in on an
+  old build still gets it.
+- To stop offering a build, switch **Offered** off next to it (or delete it).
+  The app is then offered the next newest version, or nothing.
+- The check is Android-only (updates are APKs) and needs no login. An offline
+  phone simply does not see the popup.
+- The first time, Android may ask the employee to allow installing from the
+  browser or Files app (**Install unknown apps**).
+- A new build that adds native libraries (for example, `expo-system-ui` in
+  version 3.0.0) always needs a full EAS build; it cannot be delivered any
+  other way.
+
+---
+
+## 6a. Distributing the APK by hand
+
+Still possible (for the very first install, or for anyone who can't reach the
+update prompt):
 
 1. Download the `.apk` from the EAS build link or expo.dev.
 2. Transfer it to the employee's phone (USB cable, WhatsApp, Google Drive,
@@ -270,13 +310,16 @@ Before handing a production APK to employees, confirm:
       correct live backend (not the LAN/dev URL).
 - [ ] `app.json` → `expo.name` shows the name you actually want employees
       to see under the icon.
-- [ ] `app.json` → `expo.version` was bumped from the last release.
+- [ ] `app.json` → `expo.version` **and** `android.versionCode` were bumped from the last release.
 - [ ] `android.package` / `ios.bundleIdentifier` are unchanged from the
       previous release (unless intentionally launching this as a brand
       new, separate app).
 - [ ] Install the built APK once yourself and check: app name under the
       icon, splash screen, and that login actually reaches the live API
       (not a stale cached bundle from a previous build).
+- [ ] On a phone set to **dark mode**, open Login, Set Password and Chat and
+      type in the fields: the text must be visible and the field must stay
+      above the keyboard.
 
 ---
 

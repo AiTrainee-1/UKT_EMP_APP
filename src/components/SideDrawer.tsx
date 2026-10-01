@@ -17,6 +17,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { UKTLogo } from './UKTLogo';
+import { APP_VERSION_LABEL } from '../lib/appVersion';
 import { useEmployee } from '../hooks/useEmployee';
 import { useGeoPunchStatus } from '../hooks/useGeoAttendance';
 import { Colors } from '../constants/colors';
@@ -271,6 +272,21 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
               <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
             </TouchableOpacity>
 
+            {/* Help & Support */}
+            <TouchableOpacity
+              style={styles.navItem}
+              onPress={() => navigate('/help')}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel="Help and Support"
+            >
+              <View style={[styles.navIcon, { backgroundColor: `${Colors.primary}15` }]}>
+                <MaterialCommunityIcons name="lifebuoy" size={20} color={Colors.primary} />
+              </View>
+              <Text style={styles.navLabel}>Help & Support</Text>
+              <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.outlineVariant} />
+            </TouchableOpacity>
+
             <View style={styles.divider} />
 
             {/* Resignation */}
@@ -337,7 +353,7 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
             <MaterialCommunityIcons name="logout" size={20} color={Colors.statusRed} />
             <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
-          <Text style={styles.version}>uktextiles v2.0</Text>
+          <Text style={styles.version}>uktextiles {APP_VERSION_LABEL}</Text>
         </View>
       </Animated.View>
     </View>

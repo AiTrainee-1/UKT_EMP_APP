@@ -1,13 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Platform,
-  Linking,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
@@ -18,15 +17,21 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { MotiView } from 'moti';
 
 import { KeyboardAvoider, useKeyboardVisible } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
+import { OtpFlow } from '../../src/components/auth/OtpFlow';
+import { SupportContactCard } from '../../src/components/support/SupportContactCard';
+import { SupportInlineLink } from '../../src/components/support/SupportInlineLink';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
-import { setPasswordRequest } from '../../src/hooks/useAuth';
+import { loginOptionsRequest, otpActivateRequest, setPasswordRequest } from '../../src/hooks/useAuth';
+import { isServerProblem } from '../../src/lib/supportContact';
 
 const schema = z
   .object({
@@ -51,8 +56,6 @@ const PASSWORD_RULES = [
   { label: 'Contains at least 1 number or special symbol', test: (p: string) => /[0-9\W]/.test(p) },
 ];
 
-const EMAIL = 'uktex@uktex.net';
-
 export default function SetPasswordScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
@@ -67,6 +70,20 @@ export default function SetPasswordScreen() {
     visible: false,
   });
   const [setupError, setSetupError] = useState<{ identifier: string; message: string } | null>(null);
+  // The last attempt got no answer from the server (or a 5xx): show the software-support contact.
+  const [serverDown, setServerDown] = useState(false);
+  // Whether a WhatsApp code must confirm the employee first. null until the server answers; if it
+  // can't be reached we assume yes - the code request itself then reports the connection problem.
+  const [otpActivate, setOtpActivate] = useState<boolean | null>(null);
+  const [otpStep, setOtpStep] = useState<1 | 2>(1);
+  const [otpPassword, setOtpPassword] = useState('');
+  const [otpConfirm, setOtpConfirm] = useState('');
+
+  useEffect(() => {
+    loginOptionsRequest()
+      .then((o) => setOtpActivate(o.otpActivate))
+      .catch(() => setOtpActivate(true));
+  }, []);
 
   const {
     control,
@@ -78,6 +95,27 @@ export default function SetPasswordScreen() {
   const passwordValue = watch('password') ?? '';
   const confirmValue = watch('confirmPassword') ?? '';
   const passwordsMatch = !!confirmValue && confirmValue === passwordValue;
+  const otpMismatch = otpConfirm.length > 0 && otpPassword !== otpConfirm;
+  const otpPasswordsOk = otpPassword.length >= 8 && otpPassword === otpConfirm;
+
+  const renderRules = (value: string) => (
+    <View style={styles.rulesBox}>
+      <Text style={styles.rulesTitle}>PASSWORD SECURITY RULES</Text>
+      {PASSWORD_RULES.map((rule) => {
+        const met = rule.test(value);
+        return (
+          <View key={rule.label} style={styles.ruleRow}>
+            <MaterialCommunityIcons
+              name={met ? 'check-circle' : 'circle-outline'}
+              size={16}
+              color={met ? Colors.statusGreen : Colors.outline}
+            />
+            <Text style={[styles.ruleText, met && styles.ruleTextMet]}>{rule.label}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
@@ -86,17 +124,28 @@ export default function SetPasswordScreen() {
 
   const onSubmit = async (data: FormData) => {
     setLoading(true);
+    setServerDown(false);
     try {
       await setPasswordRequest(data.identifier, data.password);
       showToast('Password set successfully! Please login.', 'success');
       setTimeout(() => router.replace('/(auth)/login'), 1500);
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.detail || err?.response?.data?.message || 'Failed to set password. Please try again.';
+      // The server not working (unreachable, timed out, or a 5xx) is not a
+      // rejected employee code: say so and offer the software-support contact.
+      const serverProblem = isServerProblem(err);
+      const msg = serverProblem
+        ? (err?.response
+            ? 'The server is not responding properly right now. Please try again in a few minutes.'
+            : 'Could not reach the server. Check your connection and try again.')
+        : err?.response?.data?.error || err?.response?.data?.detail || err?.response?.data?.message || 'Failed to set password. Please try again.';
       // A response from the server means the employee code was genuinely
       // rejected (not found / already activated / token expired) — that
       // gets the fuller "Password Setup Failed" modal. A request that never
       // reached the server stays a lightweight toast instead.
-      if (err?.response) {
+      if (serverProblem) {
+        setServerDown(true);
+        showToast(msg, 'error');
+      } else if (err?.response) {
         setSetupError({ identifier: data.identifier, message: msg });
       } else {
         showToast(msg, 'error');
@@ -109,7 +158,7 @@ export default function SetPasswordScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoider style={{ flex: 1 }}>
-        <ScrollView
+        <FormScrollView
           contentContainerStyle={[styles.container, keyboardVisible && styles.containerKeyboard]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -128,9 +177,7 @@ export default function SetPasswordScreen() {
 
           {/* Brand */}
           <View style={styles.brandRow}>
-            <View style={styles.brandBadge}>
-              <Text style={styles.brandBadgeText}>XT</Text>
-            </View>
+            <UKTLogo size={32} />
             <View>
               <Text style={styles.brandName}>UKTEXTILES</Text>
               <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -138,114 +185,174 @@ export default function SetPasswordScreen() {
           </View>
 
           <Text style={styles.heading}>Set Password</Text>
-          <Text style={styles.sub}>First-time setup to activate your employee account.</Text>
+          <Text style={styles.sub}>
+            {otpActivate === false
+              ? 'First-time setup to activate your employee account.'
+              : 'Confirm your WhatsApp number, then choose your password.'}
+          </Text>
 
           {/* Step banner */}
           <View style={styles.stepBanner}>
             <View style={styles.stepIcon}>
               <MaterialCommunityIcons name="shield-check-outline" size={16} color="#fff" />
             </View>
-            <Text style={styles.stepTitle}>Verification & Credentials</Text>
+            <Text style={styles.stepTitle}>
+                {otpActivate === false
+                  ? 'Verification & Credentials'
+                  : otpStep === 1
+                    ? 'Verify your WhatsApp number'
+                    : 'Confirm code & set password'}
+              </Text>
             <View style={{ flex: 1 }} />
             <View style={styles.stepPill}>
-              <Text style={styles.stepPillText}>Step 1 of 1</Text>
+              <Text style={styles.stepPillText}>{otpActivate === false ? 'Step 1 of 1' : `Step ${otpStep} of 2`}</Text>
             </View>
           </View>
 
-          <View style={styles.card}>
-            <View style={styles.fieldHeaderRow}>
-              <Text style={styles.fieldLabel}>Employee Code</Text>
-              <Text style={styles.fieldHint}>On ID or offer letter</Text>
+          {otpActivate === null && (
+            <View style={[styles.card, styles.loadingCard]}>
+              <ActivityIndicator color={Colors.primary} />
             </View>
-            <Controller
-              control={control}
-              name="identifier"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <Input
-                  placeholder="e.g. UKT-10482"
-                  keyboardType="numeric"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  error={errors.identifier?.message}
-                  returnKeyType="next"
-                  leftIconName="badge-account-outline"
-                />
-              )}
-            />
-            {!errors.identifier && <Text style={styles.fieldFootnote}>Must match your HR registration record.</Text>}
+          )}
 
-            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>New Password</Text>
-            <Controller
-              control={control}
-              name="password"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <Input
-                  placeholder="Min. 8 characters"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  isPassword
-                  error={errors.password?.message}
-                  returnKeyType="next"
-                  leftIconName="lock-outline"
-                />
-              )}
-            />
-
-            <View style={styles.rulesBox}>
-              <Text style={styles.rulesTitle}>PASSWORD SECURITY RULES</Text>
-              {PASSWORD_RULES.map((rule) => {
-                const met = rule.test(passwordValue);
-                return (
-                  <View key={rule.label} style={styles.ruleRow}>
-                    <MaterialCommunityIcons
-                      name={met ? 'check-circle' : 'circle-outline'}
-                      size={16}
-                      color={met ? Colors.statusGreen : Colors.outline}
+          {otpActivate === true && (
+            <View style={styles.card}>
+              <OtpFlow
+                purpose="activate"
+                submitLabel="Set Password & Activate"
+                extraValid={otpPasswordsOk}
+                onStepChange={setOtpStep}
+                extraFields={
+                  <View>
+                    <Input
+                      label="New Password"
+                      placeholder="Min. 8 characters"
+                      value={otpPassword}
+                      onChangeText={setOtpPassword}
+                      isPassword
+                      returnKeyType="next"
+                      leftIconName="lock-outline"
+                      containerStyle={{ marginBottom: 6 }}
                     />
-                    <Text style={[styles.ruleText, met && styles.ruleTextMet]}>{rule.label}</Text>
+                    {renderRules(otpPassword)}
+                    <Input
+                      label="Confirm Password"
+                      placeholder="Re-enter new password"
+                      value={otpConfirm}
+                      onChangeText={setOtpConfirm}
+                      isPassword
+                      returnKeyType="done"
+                      error={otpMismatch ? 'Passwords do not match' : undefined}
+                      leftIconName="shield-check-outline"
+                      rightIcon={
+                        otpPasswordsOk ? (
+                          <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
+                        ) : undefined
+                      }
+                    />
                   </View>
-                );
-              })}
+                }
+                onSubmit={async (identifier, otp) => {
+                  await otpActivateRequest(identifier, otp, otpPassword);
+                  showToast('Password set successfully! Please login.', 'success');
+                  setTimeout(() => router.replace('/(auth)/login'), 1500);
+                }}
+              />
+              <Text style={styles.footnoteCentered}>
+                The code goes to the WhatsApp number HR has registered for you.
+              </Text>
             </View>
+          )}
 
-            <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Confirm Password</Text>
-            <Controller
-              control={control}
-              name="confirmPassword"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <Input
-                  placeholder="Re-enter new password"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  isPassword
-                  error={errors.confirmPassword?.message}
-                  returnKeyType="done"
-                  onSubmitEditing={handleSubmit(onSubmit)}
-                  leftIconName="shield-check-outline"
-                  rightIcon={
-                    passwordsMatch ? (
-                      <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                    ) : undefined
-                  }
+          {otpActivate === false && (
+            <View style={styles.card}>
+              <View style={styles.fieldHeaderRow}>
+                <Text style={styles.fieldLabel}>Employee Code</Text>
+                <Text style={styles.fieldHint}>On ID or offer letter</Text>
+              </View>
+              <Controller
+                control={control}
+                name="identifier"
+                render={({ field: { onChange, value, onBlur } }) => (
+                  <Input
+                    placeholder="e.g. UKT-10482"
+                    keyboardType="numeric"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    error={errors.identifier?.message}
+                    returnKeyType="next"
+                    leftIconName="badge-account-outline"
+                  />
+                )}
+              />
+              {!errors.identifier && <Text style={styles.fieldFootnote}>Must match your HR registration record.</Text>}
+
+              <Text style={[styles.fieldLabel, { marginTop: 12 }]}>New Password</Text>
+              <Controller
+                control={control}
+                name="password"
+                render={({ field: { onChange, value, onBlur } }) => (
+                  <Input
+                    placeholder="Min. 8 characters"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    isPassword
+                    error={errors.password?.message}
+                    returnKeyType="next"
+                    leftIconName="lock-outline"
+                  />
+                )}
+              />
+
+              {renderRules(passwordValue)}
+
+              <Text style={[styles.fieldLabel, { marginTop: 12 }]}>Confirm Password</Text>
+              <Controller
+                control={control}
+                name="confirmPassword"
+                render={({ field: { onChange, value, onBlur } }) => (
+                  <Input
+                    placeholder="Re-enter new password"
+                    value={value}
+                    onChangeText={onChange}
+                    onBlur={onBlur}
+                    isPassword
+                    error={errors.confirmPassword?.message}
+                    returnKeyType="done"
+                    onSubmitEditing={handleSubmit(onSubmit)}
+                    leftIconName="shield-check-outline"
+                    rightIcon={
+                      passwordsMatch ? (
+                        <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
+                      ) : undefined
+                    }
+                  />
+                )}
+              />
+              {!errors.confirmPassword && <Text style={styles.fieldFootnote}>Must match the new password above.</Text>}
+
+              <Button
+                title="Set Password & Activate"
+                onPress={handleSubmit(onSubmit)}
+                loading={loading}
+                icon={<MaterialCommunityIcons name="key-variant" size={16} color="#fff" />}
+                style={styles.btn}
+              />
+              {serverDown && (
+                <SupportContactCard
+                  situation="server"
+                  compact
+                  description="The server is not responding, so your password could not be set. If it stays like this, contact:"
+                  style={styles.serverCard}
                 />
               )}
-            />
-            {!errors.confirmPassword && <Text style={styles.fieldFootnote}>Must match the new password above.</Text>}
-
-            <Button
-              title="Set Password & Activate"
-              onPress={handleSubmit(onSubmit)}
-              loading={loading}
-              icon={<MaterialCommunityIcons name="key-variant" size={16} color="#fff" />}
-              style={styles.btn}
-            />
-            <Text style={styles.footnoteCentered}>
-              Once verified, your account will be activated and redirected to sign in.
-            </Text>
-          </View>
+              <Text style={styles.footnoteCentered}>
+                Once verified, your account will be activated and redirected to sign in.
+              </Text>
+            </View>
+          )}
 
           <TouchableOpacity onPress={() => router.push('/(auth)/login')} style={styles.link}>
             <Text style={styles.linkText}>
@@ -253,20 +360,14 @@ export default function SetPasswordScreen() {
             </Text>
           </TouchableOpacity>
 
-          <View style={styles.helpCard}>
-            <View style={styles.helpIcon}>
-              <MaterialCommunityIcons name="headset" size={18} color={Colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.helpTitle}>Employee Code not recognized?</Text>
-              <Text style={styles.helpBody}>
-                Contact HR or email{' '}
-                <Text style={styles.helpLink} onPress={() => Linking.openURL(`mailto:${EMAIL}`)}>{EMAIL}</Text>
-                {' '}with your offer letter.
-              </Text>
-            </View>
-          </View>
-        </ScrollView>
+          <SupportContactCard
+            situation="hr"
+            compact
+            title="Employee Code not recognized?"
+            description="Contact HR with your offer letter so they can check your employee code."
+            style={styles.helpCard}
+          />
+        </FormScrollView>
       </KeyboardAvoider>
 
       <Toast {...toast} />
@@ -303,15 +404,14 @@ export default function SetPasswordScreen() {
               <Text style={styles.errRetryText}>Retry Verification</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
+            <SupportInlineLink
+              situation="hr"
+              lead="Contact HR"
+              showIcon
+              iconColor={Colors.primary}
               style={styles.errHelpRow}
-              onPress={() => Linking.openURL(`mailto:${EMAIL}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`Email HR at ${EMAIL}`}
-            >
-              <MaterialCommunityIcons name="email-outline" size={15} color={Colors.primary} />
-              <Text style={styles.errHelpText}>Contact HR ({EMAIL})</Text>
-            </TouchableOpacity>
+              textStyle={styles.errHelpText}
+            />
           </MotiView>
         </View>
       </Modal>
@@ -342,12 +442,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   newAccountText: { color: Colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
 
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 14 },
-  brandBadge: {
-    width: 40, height: 40, borderRadius: BorderRadius.md,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 14 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 15, letterSpacing: 0.3 },
   brandSub: { color: Colors.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1 },
 
@@ -370,6 +464,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   stepPill: { backgroundColor: Colors.bgCard, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
   stepPillText: { color: Colors.primary, fontSize: 11, fontWeight: '800' },
 
+  loadingCard: { alignItems: 'center', justifyContent: 'center', minHeight: 120 },
   card: {
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.xxl,
@@ -407,22 +502,9 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   linkText: { color: Colors.textMuted, fontSize: 13 },
   linkAccent: { color: Colors.primary, fontFamily: FontFamily.bodySemibold },
 
-  helpCard: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    padding: 14,
-    marginBottom: 20,
-  },
-  helpIcon: {
-    width: 36, height: 36, borderRadius: 18,
-    backgroundColor: Colors.primaryFixed,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  helpTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
-  helpBody: { color: Colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 2 },
-  helpLink: { color: Colors.primary, fontFamily: FontFamily.bodySemibold },
+  // The HR contact card at the bottom of the screen, and the server one inside the form card.
+  helpCard: { marginBottom: 20 },
+  serverCard: { marginTop: 12 },
 
   errBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   errCard: {

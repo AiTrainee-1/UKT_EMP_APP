@@ -15,7 +15,25 @@ import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { usePermissions } from '../../src/hooks/useRequests';
-import { useShiftStats } from '../../src/hooks/useShiftStats';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence, workflowOff } from '../../src/lib/approval';
+import { getRequestWindow } from '../../src/lib/requestWindow';
+import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
+import {
+  useShiftStats,
+  latePoolView,
+  detectionFlags,
+  latePoolNames,
+  permissionLimitFromStats,
+  DEFAULT_FREE_ALLOWANCE,
+} from '../../src/hooks/useShiftStats';
+import {
+  capRulesKnown,
+  formatPermissionDuration,
+  permissionTypeIcon,
+  resolvePermissionLimit,
+} from '../../src/lib/permissions';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
@@ -24,8 +42,6 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
-
-const now = new Date();
 
 type ReqTab = 'live' | 'confirmed';
 
@@ -42,18 +58,60 @@ export default function RequestsScreen() {
   const { user } = useAuth();
   const [tab, setTab] = useState<ReqTab>('live');
 
+  // "Now" is read when the screen renders, never once at module load: the app process lives for days.
+  const now = new Date();
   const month = now.getMonth() + 1;
   const year = now.getFullYear();
+  // On the 1st and 2nd last month is still open for a new permission, so one filed for it is listed too (below this month's).
+  const graceOpen = getRequestWindow(now).graceOpen;
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const employeeId = user?.employeeId ?? null;
 
-  const { data, isLoading, refetch, isRefetching } = usePermissions(user?.employeeId ?? null, month, year);
+  const { data, isLoading, refetch, isRefetching } = usePermissions(employeeId, month, year);
+  // No employee id = the query stays off, so nothing is fetched for last month once its grace days are over.
+  const {
+    data: prevData,
+    isLoading: prevLoading,
+    refetch: refetchPrev,
+    isRefetching: prevRefetching,
+  } = usePermissions(graceOpen ? employeeId : null, prevMonth, prevYear);
   const { data: shiftStats } = useShiftStats(month, year);
+  // Who approves a permission, and whether HR has switched new ones off (Approval Workflow Control).
+  const { data: approvalSummary } = useApprovalSummary();
+  const permissionOff = workflowOff(approvalSummary?.permission);
 
-  const items = data?.items ?? [];
+  // Newest first, as the server sends each month: this month's, then last month's.
+  const items = [...(data?.items ?? []), ...(graceOpen ? (prevData?.items ?? []) : [])];
+  // The allowance card below is about this month only.
   const monthlyUsed = data?.monthlyUsed ?? 0;
-  const monthlyLimit = data?.monthlyLimit ?? 3;
+  // The company policy / shift-stats summary carry the cap on the new backend; the permission
+  // list only once it has a row; the old backend's is 3.
+  const monthlyLimit = resolvePermissionLimit(permissionLimitFromStats(shiftStats), data?.monthlyLimit);
   const remaining = Math.max(0, monthlyLimit - monthlyUsed);
-  const dailyLimit = data?.dailyLimit ?? 1;
-  const weeklyLimit = data?.weeklyLimit ?? 2;
+  // Late-pool preview with every new field defaulted (freeAllowance ?? 3 and so on), and only the
+  // checks HR has switched on (unknown = on).
+  const pool = shiftStats ? latePoolView(shiftStats) : null;
+  const detect = detectionFlags(shiftStats);
+  // Does the server speak the monthly-limit rules (Allowed / Overdue-Excess, the free pool)? An
+  // older backend sends no policy, cap/allowance or capStatus/statusLabel, and then the copy
+  // below states things neutrally instead of asserting rules it cannot back.
+  const capKnown = capRulesKnown({ policy: shiftStats?.policy, summary: shiftStats?.summary, items });
+  const statCells: { label: string; value: string; tone?: 'good' | 'bad' }[] = pool
+    ? [
+        ...(pool.hasBreakdown && detect.lateIn ? [{ label: 'Late-Ins', value: String(pool.lateIn) }] : []),
+        ...(pool.hasBreakdown && detect.earlyOut ? [{ label: 'Early-Outs', value: String(pool.earlyOut) }] : []),
+        ...(capKnown ? [{ label: 'Excess Permissions', value: String(pool.excess) }] : []),
+        { label: 'Free Allowance', value: `${pool.freeUsed}/${pool.freeAllowance}` },
+        { label: 'Billable', value: String(pool.billable), tone: pool.billable > 0 ? 'bad' : 'good' },
+        { label: 'Shift Deduction', value: String(pool.shiftDeductions), tone: pool.shiftDeductions > 0 ? 'bad' : 'good' },
+        { label: 'Salary Cut', value: currency(pool.salaryDeductionAmount), tone: pool.salaryDeductionAmount > 0 ? 'bad' : 'good' },
+      ]
+    : [
+        // Still loading, or the stats call failed: keep the grid's shape with dashes.
+        { label: 'Shift Deduction', value: '—' },
+        { label: 'Salary Cut', value: '—' },
+      ];
 
   const liveList = items.filter((i) => i.status === 'Pending');
   const confirmedList = items.filter((i) => i.status !== 'Pending');
@@ -67,7 +125,7 @@ export default function RequestsScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Permission Requests</Text>
-          <Text style={styles.headerSubtitle}>Late In • Early Out • Short Leave</Text>
+          <Text style={styles.headerSubtitle}>Morning Late-In • Evening Early-Out • Middle One-Hour</Text>
         </View>
       </View>
 
@@ -76,7 +134,11 @@ export default function RequestsScreen() {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={[styles.pad, !activeList.length && styles.center]}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
+          <RefreshControl
+            refreshing={isRefetching || (graceOpen && prevRefetching)}
+            onRefresh={() => { refetch(); if (graceOpen) refetchPrev(); }}
+            tintColor={Colors.primary}
+          />
         }
         ListHeaderComponent={
           <>
@@ -89,41 +151,51 @@ export default function RequestsScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.usageTitle}>Permissions this month</Text>
-                  <Text style={styles.usageSub}>Quota used {monthlyUsed} of {monthlyLimit}</Text>
+                  <Text style={styles.usageSub}>Used {monthlyUsed} of {monthlyLimit}</Text>
                   <View style={styles.policyPill}>
                     <Text style={styles.policyPillText}>Monthly Policy</Text>
                   </View>
                 </View>
               </View>
               <View style={styles.statsGrid2}>
-                <View style={styles.statCell}>
-                  <Text style={styles.statCellLabel}>Weekly Cap</Text>
-                  <Text style={styles.statCellValue}>{weeklyLimit}</Text>
-                </View>
-                <View style={styles.statCell}>
-                  <Text style={styles.statCellLabel}>Daily Cap</Text>
-                  <Text style={styles.statCellValue}>{dailyLimit}</Text>
-                </View>
-                <View style={styles.statCell}>
-                  <Text style={styles.statCellLabel}>Shift Deduction</Text>
-                  <Text style={[styles.statCellValue, { color: Colors.statusGreen }]}>{shiftStats?.summary.shiftDeductions ?? '—'}</Text>
-                </View>
-                <View style={styles.statCell}>
-                  <Text style={styles.statCellLabel}>Salary Cut</Text>
-                  <Text style={[styles.statCellValue, { color: Colors.statusGreen }]}>
-                    {shiftStats ? currency(shiftStats.summary.salaryDeductionAmount) : '—'}
-                  </Text>
-                </View>
+                {statCells.map((c) => (
+                  <View key={c.label} style={styles.statCell}>
+                    <Text style={styles.statCellLabel}>{c.label}</Text>
+                    <Text
+                      style={[
+                        styles.statCellValue,
+                        c.tone && { color: c.tone === 'bad' ? Colors.statusRed : Colors.statusGreen },
+                      ]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
+                    >
+                      {c.value}
+                    </Text>
+                  </View>
+                ))}
               </View>
             </View>
 
             {/* How this is calculated */}
             <View style={styles.calcInfoBox}>
               <MaterialCommunityIcons name="information-outline" size={16} color={Colors.primary} />
-              <Text style={styles.calcInfoText}>
-                Every employee gets 3 free lates/permissions a month (combined pool). Each additional 3 beyond that
-                costs a ¼ shift deduction from salary — the same rule and numbers HR sees on the Report Log.
-              </Text>
+              {capKnown ? (
+                <Text style={styles.calcInfoText}>
+                  Each permission is 1 hour. Your first {monthlyLimit} approved permissions in a month are Allowed and
+                  protect that day. Any approved beyond that is Overdue / Excess: it does not protect the day and
+                  counts as one occurrence toward late deductions.{'\n'}
+                  {latePoolNames(detect, pool?.isProduction)} count toward one monthly pool: the first{' '}
+                  {pool?.freeAllowance ?? DEFAULT_FREE_ALLOWANCE} are free, the rest are billed as a shift deduction
+                  from salary — the same numbers HR sees on the Report Log.
+                </Text>
+              ) : (
+                <Text style={styles.calcInfoText}>
+                  {pipelineSentence(approvalSummary?.permission)} Approved permissions and late marks count toward a
+                  monthly total; beyond the free amount they are billed as a shift deduction from salary — the same
+                  numbers HR sees on the Report Log.
+                </Text>
+              )}
             </View>
 
             {/* Tab switch */}
@@ -147,7 +219,7 @@ export default function RequestsScreen() {
           </>
         }
         ListEmptyComponent={
-          isLoading ? (
+          isLoading || (graceOpen && prevLoading) ? (
             <View>{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</View>
           ) : (
             <EmptyState
@@ -158,28 +230,36 @@ export default function RequestsScreen() {
           )
         }
         renderItem={({ item }) => {
-          const variant = item.status === 'Approved' ? 'approved' : item.status === 'Rejected' ? 'rejected' : 'pending';
+          // Outcome badge: Allowed (green) / Pending (grey) / Not Allowed (red) / Overdue-Excess (amber).
+          const duration = formatPermissionDuration(item.durationMinutes);
           return (
             <View style={styles.card}>
               <View style={styles.cardTopRow}>
                 <View style={styles.cardIconWrap}>
                   <MaterialCommunityIcons
-                    name={item.type === 'Early Out' ? 'exit-run' : item.type === 'Late In' ? 'login' : 'timer-sand'}
+                    name={permissionTypeIcon(item.typeKey) as any}
                     size={16} color={Colors.tertiary}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.type}>{item.type}</Text>
+                  <Text style={styles.type}>{item.typeLabel}</Text>
                   <Text style={styles.dateTime}>
                     {format(new Date(item.date), 'dd MMM yyyy')} · {item.time}
                   </Text>
                 </View>
-                <Badge label={item.status} variant={variant} />
+                <Badge label={item.outcomeLabel} variant={item.outcomeBadge} />
               </View>
               {item.reason && <Text style={styles.reason}><Text style={styles.reasonLabel}>Reason: </Text>{item.reason}</Text>}
+              {item.outcome === 'excess' && (
+                <Text style={styles.excessNote}>
+                  Beyond your monthly limit: this does not protect the day and counts toward late deductions.
+                </Text>
+              )}
+              <WaitingChip approval={item.approval} />
+              <ApprovalTrail approval={item.approval} />
               <View style={styles.cardFooterRow}>
                 <Text style={styles.refText}>Req ID: #PR-{item.id}</Text>
-                {!!item.durationMinutes && <Text style={styles.durationText}>{item.durationMinutes} min</Text>}
+                {!!duration && <Text style={styles.durationText}>{duration}</Text>}
               </View>
             </View>
           );
@@ -188,16 +268,22 @@ export default function RequestsScreen() {
 
       {/* Footer CTA */}
       <View style={styles.footer}>
+        <WorkflowOffNote workflow={approvalSummary?.permission} />
         <TouchableOpacity
-          style={[styles.newBtn, remaining === 0 && styles.newBtnDisabled]}
+          style={[styles.newBtn, remaining === 0 && styles.newBtnDisabled, permissionOff && styles.newBtnOff]}
           onPress={() => router.push('/requests/new' as any)}
           activeOpacity={0.85}
+          disabled={permissionOff}
         >
           <MaterialCommunityIcons name="plus-circle-outline" size={18} color="#fff" />
           <Text style={styles.newBtnText}>New Permission Request</Text>
         </TouchableOpacity>
         <Text style={styles.footerHint}>
-          {remaining} free quota remaining this calendar cycle
+          {remaining > 0
+            ? `${remaining} of ${monthlyLimit} permissions left this month`
+            : capKnown
+              ? 'Limit reached: further approved permissions are Overdue / Excess'
+              : 'Monthly limit reached'}
         </Text>
       </View>
     </SafeAreaView>
@@ -249,7 +335,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   policyPillText: { color: Colors.textSecondary, fontSize: 9.5, fontWeight: '800' },
 
   statsGrid2: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  statCell: { flexBasis: '47%', flexGrow: 1, backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.md, padding: 10, gap: 2 },
+  statCell: { flexBasis: '30%', flexGrow: 1, backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.md, padding: 10, gap: 2 },
   statCellLabel: { color: Colors.textMuted, fontSize: 10.5, fontWeight: '700' },
   statCellValue: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 16 },
 
@@ -276,6 +362,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   dateTime: { color: Colors.textMuted, fontSize: 12, marginTop: 1 },
   reason: { color: Colors.textSecondary, fontSize: 12, lineHeight: 17 },
   reasonLabel: { color: Colors.textPrimary, fontWeight: '700' },
+  excessNote: { color: Colors.badgeYellowText, fontSize: 11.5, lineHeight: 16 },
   refText: { color: Colors.outline, fontSize: 10.5, fontWeight: '700' },
 
   footer: { padding: 16, paddingTop: 10, backgroundColor: Colors.bgLight, borderTopWidth: 1, borderTopColor: Colors.border, gap: 6 },
@@ -286,6 +373,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     paddingVertical: 15,
   },
   newBtnDisabled: { opacity: 0.7 },
+  newBtnOff: { opacity: 0.5 },
   newBtnText: { color: '#fff', fontSize: 14.5, fontWeight: '800' },
   footerHint: { textAlign: 'center', color: Colors.textMuted, fontSize: 11 },
 

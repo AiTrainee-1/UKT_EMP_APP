@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { TextArea } from '../../src/components/ui/TextArea';
@@ -20,7 +22,13 @@ import {
   useOnDutySessionStatus, useSubmitOnDutySessionRequest, useCompleteOnDutySession,
   useSubmitOnDutyPunch, OnDutyPunchVerification, PunchSlot,
 } from '../../src/hooks/useGeoAttendance';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence, waitingPhrase, waitingText, workflowOff } from '../../src/lib/approval';
+import { ApprovalTrail } from '../../src/components/approval/ApprovalTrail';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 
+// What an OLDER backend's `status` says about a request that has not been decided. With `approval` the request says
+// itself who it waits for (HR's pipeline decides), and this is not used.
 const STAGE_LABEL: Record<string, string> = {
   pending_hod: 'Awaiting Department Head approval',
   pending_hr: 'Awaiting HR approval',
@@ -45,6 +53,10 @@ export default function OnDutyScreen() {
   const submitRequestMutation = useSubmitOnDutySessionRequest();
   const completeMutation = useCompleteOnDutySession();
   const submitPunchMutation = useSubmitOnDutyPunch();
+  // Who approves an On-Duty request, and whether HR has switched new ones off. Only a hint that may be a minute old: the
+  // server refuses a new request either way and its message is shown (see submitRequest).
+  const { data: approvalSummary } = useApprovalSummary();
+  const onDutyFlow = approvalSummary?.onDuty;
 
   const [destination, setDestination] = useState('');
   const [showNewRequestForm, setShowNewRequestForm] = useState(false);
@@ -192,7 +204,8 @@ export default function OnDutyScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} refreshControl={undefined}>
+      <KeyboardAvoider style={{ flex: 1 }}>
+      <FormScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
 
         {statusLoading ? (
           <View style={{ gap: Spacing.base }}>
@@ -207,8 +220,8 @@ export default function OnDutyScreen() {
             </View>
             <Text style={styles.introBody}>
               Enter where you're going. Your session starts as soon as you submit — you can begin punching right
-              away, no waiting for approval. Each punch needs a selfie and your location, and your Department Head
-              or HR confirms the whole day afterwards.
+              away, no waiting for approval. Each punch needs a selfie and your location.{' '}
+              {pipelineSentence(onDutyFlow, 'The whole day is confirmed afterwards.')}
             </Text>
             <Text style={styles.reviewLabel}>DESTINATION / PLACE</Text>
             <TextArea
@@ -218,11 +231,12 @@ export default function OnDutyScreen() {
               minLength={3}
               maxLength={300}
             />
+            <WorkflowOffNote workflow={onDutyFlow} />
             <Button
               title="Submit for Approval"
               onPress={submitRequest}
               loading={submitRequestMutation.isPending}
-              disabled={!destination.trim()}
+              disabled={!destination.trim() || workflowOff(onDutyFlow)}
               style={{ marginTop: Spacing.sm }}
             />
             {showNewRequestForm && (
@@ -234,21 +248,23 @@ export default function OnDutyScreen() {
             <View style={[styles.statusBanner, { backgroundColor: Colors.badgePendingBg }]}>
               <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.badgePendingText} />
               <Text style={[styles.statusBannerText, { color: Colors.badgePendingText }]}>
-                {STAGE_LABEL[session.status]}
+                {waitingText(session.approval) ?? STAGE_LABEL[session.status]}
               </Text>
             </View>
             <View style={styles.reviewCell}>
               <Text style={styles.reviewLabel}>Destination</Text>
               <Text style={styles.reviewValue}>{session.destination}</Text>
             </View>
-            {session.status === 'pending_hr' && session.hodReviewedBy && (
+            {session.approval ? (
+              <ApprovalTrail approval={session.approval} />
+            ) : session.status === 'pending_hr' && session.hodReviewedBy && (
               <View style={styles.reviewCell}>
                 <Text style={styles.reviewLabel}>Department Head</Text>
                 <Text style={styles.reviewValue}>Approved by {session.hodReviewedBy}</Text>
               </View>
             )}
             <Text style={styles.hintText}>
-              Your On-Duty session will start automatically the moment HR approves this request.
+              Your On-Duty session will start automatically once this request is approved.
             </Text>
             <Button title="Refresh Status" variant="outline" onPress={() => refetchStatus()} />
           </View>
@@ -261,8 +277,10 @@ export default function OnDutyScreen() {
               </View>
               {session.isProvisional && (
                 <Text style={styles.hintText}>
-                  Your request is still with your Department Head / HR. That does not hold you up — keep punching
-                  as normal; they confirm the day afterwards.
+                  {waitingPhrase(session.approval)
+                    ? `Your request is still with ${waitingPhrase(session.approval)}.`
+                    : 'Your request has not been fully approved yet.'}
+                  {' '}That does not hold you up — keep punching as normal; the day is confirmed afterwards.
                 </Text>
               )}
               <View style={styles.reviewCell}>
@@ -277,6 +295,7 @@ export default function OnDutyScreen() {
                   </Text>
                 </View>
               )}
+              <ApprovalTrail approval={session.approval} />
             </View>
 
             {punchStage === 'review' && punchPhotoUri && punchSlot ? (
@@ -394,17 +413,24 @@ export default function OnDutyScreen() {
                   : 'Ended manually.'}
               </Text>
             )}
-            {session.status === 'rejected' && session.hrReviewComment && (
-              <Text style={styles.hintText}>HR: {session.hrReviewComment}</Text>
-            )}
-            {session.status === 'rejected' && session.hodReviewComment && !session.hrReviewComment && (
-              <Text style={styles.hintText}>Department Head: {session.hodReviewComment}</Text>
+            {session.approval ? (
+              <ApprovalTrail approval={session.approval} style={styles.doneTrail} />
+            ) : (
+              <>
+                {session.status === 'rejected' && session.hrReviewComment && (
+                  <Text style={styles.hintText}>HR: {session.hrReviewComment}</Text>
+                )}
+                {session.status === 'rejected' && session.hodReviewComment && !session.hrReviewComment && (
+                  <Text style={styles.hintText}>Department Head: {session.hodReviewComment}</Text>
+                )}
+              </>
             )}
             <Button title="Submit New On-Duty Request" variant="outline" onPress={() => setShowNewRequestForm(true)} style={{ marginTop: Spacing.base }} />
             <Button title="Back to Attendance" variant="ghost" onPress={() => router.back()} />
           </View>
         ) : null}
-      </ScrollView>
+      </FormScrollView>
+      </KeyboardAvoider>
 
       <Toast message={toast.message} type={toast.type} visible={toast.visible} />
     </SafeAreaView>
@@ -438,6 +464,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
 
   doneCard: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
   doneTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 15, color: Colors.textPrimary },
+  doneTrail: { alignSelf: 'stretch', marginTop: Spacing.sm },
 
   doneBanner: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,

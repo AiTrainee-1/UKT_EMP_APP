@@ -13,6 +13,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence } from '../../src/lib/approval';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
@@ -24,6 +26,9 @@ export default function ResignationSuccessScreen() {
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+
+  // Who the resignation goes to is HR's pipeline for resignations (Approval Workflow Control).
+  const { data: approvalSummary } = useApprovalSummary();
 
   const scale = useRef(new Animated.Value(0)).current;
   const fade = useRef(new Animated.Value(0)).current;
@@ -65,13 +70,17 @@ export default function ResignationSuccessScreen() {
         <Animated.View style={[styles.textBlock, { opacity: fade }]}>
           <Text style={styles.title}>Resignation Submitted</Text>
           <Text style={styles.subtitle}>
-            Your resignation has been sent to HR for review. You'll be notified once a decision is made.
+            {[
+              'Your resignation has been submitted.',
+              pipelineSentence(approvalSummary?.resignation, ''),
+              "You'll be notified once a decision is made.",
+            ].filter(Boolean).join(' ')}
           </Text>
         </Animated.View>
 
         <Animated.View style={[styles.cardsWrap, { opacity: fade }]}>
           {[
-            { icon: 'clock-outline', text: 'HR typically responds within 2–5 business days.' },
+            { icon: 'clock-outline', text: 'A decision typically takes 2–5 business days.' },
             { icon: 'bell-ring-outline', text: 'You will receive a notification when the decision is ready.' },
             { icon: 'shield-check-outline', text: 'Your account remains active until your resignation is approved.' },
           ].map(({ icon, text }, i) => (

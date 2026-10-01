@@ -166,6 +166,8 @@ export default function ChatScreen() {
             keyExtractor={(m) => String(m.id)}
             contentContainerStyle={styles.messageList}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+            // The list gets shorter when the keyboard opens; stay on the newest message like WhatsApp does.
+            onLayout={() => listRef.current?.scrollToEnd({ animated: false })}
             ListEmptyComponent={
               <EmptyState icon="message-text-outline" title="No messages yet" subtitle="Start the conversation below" />
             }

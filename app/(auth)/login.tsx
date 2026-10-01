@@ -3,11 +3,9 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   Platform,
   TouchableOpacity,
   StatusBar,
-  Linking,
   Modal,
 } from 'react-native';
 import { router } from 'expo-router';
@@ -21,15 +19,22 @@ import { MotiView } from 'moti';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { KeyboardAvoider, useKeyboardVisible } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { Input } from '../../src/components/ui/Input';
 import { Toast } from '../../src/components/ui/Toast';
+import { OtpFlow } from '../../src/components/auth/OtpFlow';
+import { SupportContactCard } from '../../src/components/support/SupportContactCard';
+import { SupportInlineLink } from '../../src/components/support/SupportInlineLink';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
 import { useAuth } from '../../src/hooks/useAuth';
-import { loginRequest } from '../../src/hooks/useAuth';
+import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
+import { isServerProblem } from '../../src/lib/supportContact';
+import { loginRequest, loginOptionsRequest, otpLoginRequest, type LoginOptions } from '../../src/hooks/useAuth';
 
 const schema = z.object({
   identifier: z.string().min(1, 'Employee Code is required'),
@@ -39,8 +44,6 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 const REMEMBER_KEY = 'uktex.rememberedIdentifier';
-const HR_PHONE = '04214300800';
-const HR_PHONE_DISPLAY = '0421 430 0800';
 
 export default function LoginScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -58,6 +61,14 @@ export default function LoginScreen() {
     visible: false,
   });
   const [authError, setAuthError] = useState<{ identifier: string; message: string } | null>(null);
+  // The last sign-in attempt got no answer from the server (or a 5xx): show the software-support contact.
+  const [serverDown, setServerDown] = useState(false);
+  const [rememberedCode, setRememberedCode] = useState('');
+  // Which sign-in methods the server offers. Until it answers (or if it can't), password sign-in works as before.
+  const [options, setOptions] = useState<LoginOptions | null>(null);
+  const [mode, setMode] = useState<'otp' | 'password'>('password');
+  const showOtp = mode === 'otp' && options?.otpLogin === true;
+  const canSwitch = options?.otpLogin === true && options.passwordLogin;
 
   const { control, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -67,36 +78,67 @@ export default function LoginScreen() {
   // device" was checked — never the password, which is never persisted.
   useEffect(() => {
     AsyncStorage.getItem(REMEMBER_KEY).then((saved) => {
-      if (saved) setValue('identifier', saved);
+      if (saved) {
+        setValue('identifier', saved);
+        setRememberedCode(saved);
+      }
     });
   }, [setValue]);
+
+  useEffect(() => {
+    loginOptionsRequest()
+      .then((o) => {
+        setOptions(o);
+        setMode(o.otpLogin ? 'otp' : 'password');
+      })
+      .catch(() => {});
+  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'error') => {
     setToast({ message, type, visible: true });
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
   };
 
+  // Both the password and the WhatsApp-code sign-in end the same way.
+  const finishSignIn = async (
+    identifier: string,
+    result: { employeeId: number; name: string; role: string },
+  ) => {
+    await AsyncStorage.setItem(REMEMBER_KEY, remember ? identifier : '');
+    setUser({ employeeId: result.employeeId, name: result.name, role: result.role });
+    router.replace('/(tabs)/home');
+  };
+
   const onSubmit = async (data: FormData) => {
     setLoading(true);
+    setServerDown(false);
     try {
       const result = await loginRequest(data.identifier, data.password);
-      await AsyncStorage.setItem(REMEMBER_KEY, remember ? data.identifier : '');
-      setUser({ employeeId: result.employeeId, name: result.name, role: result.role });
-      router.replace('/(tabs)/home');
+      await finishSignIn(data.identifier, result);
     } catch (err: any) {
       // Backend error responses are always { error: "..." } (see views.py::_error)
       // — .detail/.message never exist, so checking only those silently
       // discarded the real reason (wrong password vs unregistered vs no
       // password set yet vs an unrelated server error) and always showed
       // this same generic fallback.
-      const msg =
-        err?.response?.data?.error || err?.response?.data?.detail || err?.response?.data?.message ||
-        (err?.message === 'Network Error' ? 'Could not reach the server. Check your connection and try again.' : 'Invalid credentials. Please try again.');
+      // The server not working (unreachable, timed out, or a 5xx) is not a
+      // rejected sign-in: say so, and offer the software-support contact
+      // right on the screen (the toast alone is gone in three seconds).
+      const serverProblem = isServerProblem(err);
+      const msg = serverProblem
+        ? (err?.response
+            ? 'The server is not responding properly right now. Please try again in a few minutes.'
+            : 'Could not reach the server. Check your connection and try again.')
+        : err?.response?.data?.error || err?.response?.data?.detail || err?.response?.data?.message ||
+          'Invalid credentials. Please try again.';
       // A response that came back from the server is a real authentication
       // rejection (wrong password, unknown code, etc.) — that gets the
       // fuller "Authentication Failed" modal. A request that never reached
       // the server (offline, timeout) stays a lightweight toast instead.
-      if (err?.response) {
+      if (serverProblem) {
+        setServerDown(true);
+        showToast(msg, 'error');
+      } else if (err?.response) {
         setAuthError({ identifier: data.identifier, message: msg });
       } else {
         showToast(msg, 'error');
@@ -116,16 +158,16 @@ export default function LoginScreen() {
       </View>
 
       <KeyboardAvoider style={{ flex: 1 }}>
-        <ScrollView
+        <FormScrollView
           contentContainerStyle={[styles.container, keyboardVisible && styles.containerKeyboard]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
           {/* Brand */}
           <View style={styles.logoSection}>
-            <LinearGradient colors={Colors.gradientPrimary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.brandBadge}>
-              <Text style={styles.brandBadgeText}>XT</Text>
-            </LinearGradient>
+            <View style={styles.brandLogo}>
+              <UKTLogo size={72} />
+            </View>
             <View style={styles.brandRow}>
               <Text style={styles.brand}>UK</Text>
               <Text style={styles.brandTail}> TEXTILES</Text>
@@ -134,7 +176,7 @@ export default function LoginScreen() {
 
             <View style={styles.versionPill}>
               <View style={styles.versionDot} />
-              <Text style={styles.versionText}>Employee Portal v2.0</Text>
+              <Text style={styles.versionText}>Employee Portal {APP_VERSION_LABEL}</Text>
             </View>
           </View>
 
@@ -146,62 +188,85 @@ export default function LoginScreen() {
 
           {/* Form card */}
           <View style={styles.card}>
-            <Controller
-              control={control}
-              name="identifier"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <Input
-                  label="Employee Code"
-                  placeholder="e.g. UKT-10482"
-                  keyboardType="numeric"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  error={errors.identifier?.message}
-                  returnKeyType="next"
-                  leftIconName="badge-account-outline"
+            {showOtp ? (
+              <OtpFlow
+                purpose="login"
+                submitLabel="Verify & Sign In"
+                initialIdentifier={rememberedCode}
+                onSubmit={async (identifier, otp) => {
+                  const result = await otpLoginRequest(identifier, otp);
+                  await finishSignIn(identifier, result);
+                }}
+              />
+            ) : (
+              <>
+                <Controller
+                  control={control}
+                  name="identifier"
+                  render={({ field: { onChange, value, onBlur } }) => (
+                    <Input
+                      label="Employee Code"
+                      placeholder="e.g. UKT-10482"
+                      keyboardType="numeric"
+                      value={value}
+                      onChangeText={onChange}
+                      onBlur={onBlur}
+                      error={errors.identifier?.message}
+                      returnKeyType="next"
+                      leftIconName="badge-account-outline"
+                    />
+                  )}
                 />
-              )}
-            />
 
-            <View style={styles.passwordLabelRow}>
-              <Text style={styles.passwordLabel}>Password</Text>
-              <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} hitSlop={8}>
-                <Text style={styles.forgotLink}>Forgot?</Text>
+                <View style={styles.passwordLabelRow}>
+                  <Text style={styles.passwordLabel}>Password</Text>
+                  <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')} hitSlop={8}>
+                    <Text style={styles.forgotLink}>Forgot?</Text>
+                  </TouchableOpacity>
+                </View>
+                <Controller
+                  control={control}
+                  name="password"
+                  render={({ field: { onChange, value, onBlur } }) => (
+                    <Input
+                      placeholder="Enter your password"
+                      value={value}
+                      onChangeText={onChange}
+                      onBlur={onBlur}
+                      isPassword
+                      error={errors.password?.message}
+                      returnKeyType="done"
+                      onSubmitEditing={handleSubmit(onSubmit)}
+                      leftIconName="lock-outline"
+                      containerStyle={{ marginBottom: 12 }}
+                    />
+                  )}
+                />
+
+                <TouchableOpacity style={styles.rememberRow} onPress={() => setRemember(v => !v)} activeOpacity={0.75}>
+                  <View style={[styles.checkbox, remember && styles.checkboxChecked]}>
+                    {remember && <MaterialCommunityIcons name="check" size={13} color="#fff" />}
+                  </View>
+                  <Text style={styles.rememberText}>Keep roll saved on device</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.signInBtn} onPress={handleSubmit(onSubmit)} disabled={loading} activeOpacity={0.85}>
+                  <LinearGradient colors={Colors.gradientPrimary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.signInGradient}>
+                    <Text style={styles.signInText}>{loading ? 'Signing In…' : 'Sign In to Dashboard'}</Text>
+                    {!loading && <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />}
+                  </LinearGradient>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {canSwitch && (
+              <TouchableOpacity onPress={() => setMode(showOtp ? 'password' : 'otp')} style={styles.switchRow} activeOpacity={0.8}>
+                <MaterialCommunityIcons name={showOtp ? 'lock-outline' : 'whatsapp'} size={16} color={Colors.primary} />
+                <Text style={styles.switchText}>
+                  {showOtp ? 'Use my password instead' : 'Sign in with a WhatsApp code'}
+                </Text>
               </TouchableOpacity>
-            </View>
-            <Controller
-              control={control}
-              name="password"
-              render={({ field: { onChange, value, onBlur } }) => (
-                <Input
-                  placeholder="Enter your password"
-                  value={value}
-                  onChangeText={onChange}
-                  onBlur={onBlur}
-                  isPassword
-                  error={errors.password?.message}
-                  returnKeyType="done"
-                  onSubmitEditing={handleSubmit(onSubmit)}
-                  leftIconName="lock-outline"
-                  containerStyle={{ marginBottom: 12 }}
-                />
-              )}
-            />
-
-            <TouchableOpacity style={styles.rememberRow} onPress={() => setRemember(v => !v)} activeOpacity={0.75}>
-              <View style={[styles.checkbox, remember && styles.checkboxChecked]}>
-                {remember && <MaterialCommunityIcons name="check" size={13} color="#fff" />}
-              </View>
-              <Text style={styles.rememberText}>Keep roll saved on device</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.signInBtn} onPress={handleSubmit(onSubmit)} disabled={loading} activeOpacity={0.85}>
-              <LinearGradient colors={Colors.gradientPrimary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.signInGradient}>
-                <Text style={styles.signInText}>{loading ? 'Signing In…' : 'Sign In to Dashboard'}</Text>
-                {!loading && <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />}
-              </LinearGradient>
-            </TouchableOpacity>
+            )}
 
             <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} style={styles.firstTimeRow} activeOpacity={0.8}>
               <View style={styles.firstTimeIcon}>
@@ -215,17 +280,23 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity
+          {serverDown && (
+            <SupportContactCard
+              situation="server"
+              compact
+              description="The server is not responding, so nobody can sign in right now. If it stays like this, contact:"
+              style={styles.serverCard}
+            />
+          )}
+
+          <SupportInlineLink
+            situation="hr"
+            prefix="Need help? "
             style={styles.helpRow}
-            onPress={() => Linking.openURL(`tel:${HR_PHONE}`)}
-            accessibilityRole="button"
-            accessibilityLabel={`Call HR at ${HR_PHONE_DISPLAY}`}
-          >
-            <Text style={styles.helpText}>
-              Need help? <Text style={styles.helpAccent}>Call HR {HR_PHONE_DISPLAY}</Text>
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
+            textStyle={styles.helpText}
+            accentStyle={styles.helpAccent}
+          />
+        </FormScrollView>
       </KeyboardAvoider>
 
       <Toast {...toast} />
@@ -267,15 +338,14 @@ export default function LoginScreen() {
               <Text style={styles.errRetryText}>Try Again</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
+            <SupportInlineLink
+              situation="hr"
+              lead="Contact HR"
+              showIcon
+              iconColor={Colors.primary}
               style={styles.errHelpRow}
-              onPress={() => Linking.openURL(`tel:${HR_PHONE}`)}
-              accessibilityRole="button"
-              accessibilityLabel={`Call HR at ${HR_PHONE_DISPLAY}`}
-            >
-              <MaterialCommunityIcons name="phone-outline" size={15} color={Colors.primary} />
-              <Text style={styles.errHelpText}>Contact HR {HR_PHONE_DISPLAY}</Text>
-            </TouchableOpacity>
+              textStyle={styles.errHelpText}
+            />
           </MotiView>
         </View>
       </Modal>
@@ -296,16 +366,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
 
   logoSection: { alignItems: 'center', gap: 8, zIndex: 1, marginBottom: 20 },
-  brandBadge: {
-    width: 72, height: 72, borderRadius: BorderRadius.xl,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 6,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 20 },
-      android: { elevation: 8 },
-    }),
-  },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 26 },
+  brandLogo: { alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
   brandRow: { flexDirection: 'row', alignItems: 'baseline' },
   brand: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 26, letterSpacing: 0.3 },
   brandTail: { color: Colors.primary, fontFamily: FontFamily.displayBold, fontSize: 26, letterSpacing: 0.3 },
@@ -354,6 +415,9 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   signInText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 15 },
 
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, marginBottom: 6 },
+  switchText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+
   firstTimeRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     backgroundColor: Colors.primaryFixed,
@@ -368,6 +432,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   firstTimeTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
   firstTimeSub: { color: Colors.textMuted, fontSize: 11, marginTop: 1 },
 
+  serverCard: { marginTop: 14 },
   helpRow: { alignItems: 'center', paddingVertical: 16 },
   helpText: { color: Colors.textMuted, fontSize: 13 },
   helpAccent: { color: Colors.primary, fontFamily: FontFamily.bodySemibold },

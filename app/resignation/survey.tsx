@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   Platform,
   TouchableOpacity,
   StatusBar,
@@ -17,6 +16,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { format, addDays } from 'date-fns';
 
 import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { Input } from '../../src/components/ui/Input';
 import { TextArea } from '../../src/components/ui/TextArea';
 import { DatePickerField } from '../../src/components/ui/DatePickerField';
@@ -113,7 +113,7 @@ export default function ResignationSurveyScreen() {
 
         <StepBar />
 
-        <ScrollView
+        <FormScrollView
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -193,7 +193,7 @@ export default function ResignationSurveyScreen() {
             <Text style={styles.nextBtnText}>Review & Confirm</Text>
             <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
           </TouchableOpacity>
-        </ScrollView>
+        </FormScrollView>
       </KeyboardAvoider>
     </SafeAreaView>
   );

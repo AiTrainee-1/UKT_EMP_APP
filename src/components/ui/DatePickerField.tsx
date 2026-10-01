@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { format } from 'date-fns';
+import { format, startOfDay, endOfDay } from 'date-fns';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Colors } from '../../constants/colors';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
@@ -15,9 +15,12 @@ interface DatePickerFieldProps {
   error?: string;
   minDate?: Date;
   maxDate?: Date;
+  /** Small helper text under the field (e.g. which dates can be requested). Shown under `error` too: a message about the
+   *  month picked should still tell the employee which days are open. */
+  hint?: string;
 }
 
-export function DatePickerField({ label, value, onChange, error, minDate, maxDate }: DatePickerFieldProps) {
+export function DatePickerField({ label, value, onChange, error, minDate, maxDate, hint }: DatePickerFieldProps) {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
@@ -26,9 +29,10 @@ export function DatePickerField({ label, value, onChange, error, minDate, maxDat
   const [show, setShow] = useState(false);
   const parsedDate = value ? new Date(value + 'T00:00:00') : new Date();
 
-  const handleChange = (_: DateTimePickerEvent, selected?: Date) => {
+  const handleChange = (event: DateTimePickerEvent, selected?: Date) => {
     if (Platform.OS !== 'ios') setShow(false);
-    if (selected) onChange(format(selected, 'yyyy-MM-dd'));
+    // Cancelling the Android dialog calls back with type 'dismissed' and the ORIGINAL date: that is not a choice.
+    if (event.type === 'set' && selected) onChange(format(selected, 'yyyy-MM-dd'));
   };
 
   return (
@@ -46,14 +50,16 @@ export function DatePickerField({ label, value, onChange, error, minDate, maxDat
         <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.outline} />
       </TouchableOpacity>
       {error && <Text style={styles.error}>{error}</Text>}
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
       {show && (
         <DateTimePicker
           value={parsedDate}
           mode="date"
           display={Platform.OS === 'ios' ? 'spinner' : 'default'}
           onChange={handleChange}
-          minimumDate={minDate}
-          maximumDate={maxDate}
+          // The limits are whole days: the first day from 00:00, the last day up to 23:59:59.999.
+          minimumDate={minDate ? startOfDay(minDate) : undefined}
+          maximumDate={maxDate ? endOfDay(maxDate) : undefined}
         />
       )}
     </View>
@@ -142,4 +148,5 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   value: { color: Colors.textPrimary, fontSize: 15, flex: 1 },
   placeholder: { color: Colors.outline },
   error: { color: Colors.error, fontSize: 12, marginTop: 4, marginLeft: 4 },
+  hint: { color: Colors.textMuted, fontSize: 11.5, marginTop: 4, marginLeft: 4 },
 });

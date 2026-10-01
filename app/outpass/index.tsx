@@ -16,6 +16,10 @@ import { format } from 'date-fns';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { useOutpassRequests, type OutpassRequestItem } from '../../src/hooks/useOutpass';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { workflowOff } from '../../src/lib/approval';
+import { WaitingChip } from '../../src/components/approval/ApprovalTrail';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { OutpassFlipCard } from '../../src/components/outpass/OutpassFlipCard';
 import { TeaBreakPanel } from '../../src/components/tea-break/TeaBreakPanel';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
@@ -46,6 +50,9 @@ export default function OutpassScreen() {
 
   const { data: employee } = useEmployee(user?.employeeId ?? null);
   const { data, isLoading, refetch, isRefetching } = useOutpassRequests(user?.employeeId ?? null);
+  // Whether HR has switched new outpass requests off (Approval Workflow Control).
+  const { data: approvalSummary } = useApprovalSummary();
+  const outpassOff = workflowOff(approvalSummary?.outpass);
 
   const items = data ?? [];
   const liveList = items.filter((i) => i.status === 'pending');
@@ -116,6 +123,8 @@ export default function OutpassScreen() {
             <>
               {activePass && <OutpassFlipCard request={activePass} employee={employee} />}
 
+              <WorkflowOffNote workflow={approvalSummary?.outpass} style={styles.offNote} />
+
               <View style={styles.tabBar}>
                 {([
                   { key: 'live' as ReqTab, label: 'Live Requests', count: liveList.length },
@@ -155,6 +164,7 @@ export default function OutpassScreen() {
                   <Badge label={item.status === 'approved' ? 'Approved' : item.status === 'rejected' ? 'Not Approved' : 'Pending'} variant={variant} />
                 </View>
                 <Text style={styles.reason}>{item.reason}</Text>
+                <WaitingChip approval={item.approval} />
                 <View style={styles.cardBottom}>
                   <Text style={styles.dateTime}>
                     {format(new Date(item.createdAt), 'dd MMM yyyy · h:mm a')}
@@ -175,7 +185,12 @@ export default function OutpassScreen() {
       {section === 'outpass' && (
         <>
           {/* FAB */}
-          <TouchableOpacity style={styles.fab} onPress={() => router.push('/outpass/request' as any)} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={[styles.fab, outpassOff && styles.fabOff]}
+            onPress={() => router.push('/outpass/request' as any)}
+            activeOpacity={0.85}
+            disabled={outpassOff}
+          >
             <MaterialCommunityIcons name="plus" size={26} color="#fff" />
           </TouchableOpacity>
 
@@ -249,4 +264,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
     elevation: 8, shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8,
   },
+  fabOff: { opacity: 0.5 },
+  offNote: { marginBottom: 12 },
 });

@@ -8,7 +8,6 @@ import {
   StatusBar,
   TouchableOpacity,
   ScrollView,
-  Linking,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,18 +15,25 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 
 import { Colors } from '../../src/constants/colors';
+import { UKTLogo } from '../../src/components/UKTLogo';
+import { SupportContactCard } from '../../src/components/support/SupportContactCard';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
-
-const HR_EMAIL = 'hr@uktex.net';
+import { useSupportContact } from '../../src/hooks/useSupportContact';
+import { contactFor } from '../../src/lib/supportContact';
 
 export default function AccountDeactivatedScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+
+  // HR's own contact details (HR portal -> Settings -> HR Contact). The employee is already signed
+  // out here; the lookup needs no sign-in, and falls back to the copy saved on the phone.
+  const { contact } = useSupportContact();
+  const hrEmail = contactFor(contact, 'hr')?.email ?? '';
 
   // Auth is already cleared by the time this screen mounts (see the
   // ResignationGuard in app/_layout.tsx), so the name and last working date
@@ -54,9 +60,7 @@ export default function AccountDeactivatedScreen() {
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
 
       <View style={styles.header}>
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>XT</Text>
-        </View>
+        <UKTLogo size={28} />
         <View>
           <Text style={styles.brandName}>UKTEXTILES</Text>
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -138,7 +142,9 @@ export default function AccountDeactivatedScreen() {
                 iconColor: Colors.categoryTracking,
                 bg: Colors.badgeBlueBg,
                 title: 'HR Support Desk',
-                text: `For queries about settlement or documents, contact HR at ${HR_EMAIL}.`,
+                text: hrEmail
+                  ? `For queries about settlement or documents, contact HR at ${hrEmail}.`
+                  : 'For queries about settlement or documents, please contact your HR department.',
                 pill: 'Support',
                 pillBg: Colors.badgeBlueBg,
                 pillColor: Colors.categoryTracking,
@@ -161,15 +167,7 @@ export default function AccountDeactivatedScreen() {
             ))}
           </View>
 
-          <TouchableOpacity
-            style={styles.emailBtn}
-            onPress={() => Linking.openURL(`mailto:${HR_EMAIL}`)}
-            activeOpacity={0.8}
-          >
-            <MaterialCommunityIcons name="email-outline" size={15} color={Colors.primary} />
-            <Text style={styles.emailBtnText}>Email HR ({HR_EMAIL})</Text>
-          </TouchableOpacity>
-
+          <SupportContactCard situation="hr" compact showNote style={styles.hrCard} />
           {/* CTA */}
           <TouchableOpacity
             style={styles.loginBtn}
@@ -199,8 +197,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: Colors.bgCard,
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
-  brandBadge: { width: 28, height: 28, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 11 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 12, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 7.5, fontWeight: '700', letterSpacing: 0.6 },
   statePill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.badgeRedBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
@@ -269,8 +265,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   infoPillText: { fontSize: 9.5, fontWeight: '800' },
   infoText: { color: Colors.textSecondary, fontSize: 12, lineHeight: 17 },
 
-  emailBtn: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 20 },
-  emailBtnText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
+  hrCard: { width: '100%', marginBottom: 20 },
 
   loginBtn: {
     flexDirection: 'row',

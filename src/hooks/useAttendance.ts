@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
+import { readDayFlags } from '../lib/attendanceFlags';
 
 export interface AttendancePunch {
   time: string;
@@ -10,16 +11,36 @@ export interface AttendancePunch {
 
 export interface AttendanceRecord {
   date: string;
-  status: 'Present' | 'Absent' | 'Late' | 'On Leave' | 'Holiday' | 'Weekend' | 'Half Shift' | 'Permission';
+  /** One word per day for the calendar cell. When several things hold, the one that costs the
+   *  employee most wins (Half Day > Late-In > Early-Out > Permission); the rest stay readable
+   *  through the flags below. */
+  status: 'Present' | 'Absent' | 'Late-In' | 'Early-Out' | 'On Leave' | 'Holiday' | 'Weekend' | 'Half Day' | 'Permission';
+  /** Morning Late-In: first punch after the (permission-adjusted) shift start + grace. */
   isLate?: boolean;
+  /** Evening Early-Out: last punch before the (permission-adjusted) shift end - grace. Only
+   *  ever set while the company has that check switched on. */
+  isEarlyOut?: boolean;
   isHalfShift?: boolean;
-  /** Auto-detected Permission zone (morning/afternoon/departure) — set purely
-   *  from punch timing by the backend, independent of a submitted request.
-   *  See `permissionWithRequest` for whether one also covers it. */
+  /** An Allowed permission moved that edge of the day (Morning Late-In: shift start 1h later,
+   *  Evening Early-Out: shift end 1h earlier). Falls back on the old permissionMorning /
+   *  permissionDeparture keys. */
+  morningPermissionApplied?: boolean;
+  eveningPermissionApplied?: boolean;
+  /** Approved, but beyond the month's limit: it did NOT protect the day and counts as one
+   *  occurrence toward late deductions. */
+  morningPermissionExcess?: boolean;
+  eveningPermissionExcess?: boolean;
+  /** A Middle One-Hour permission was approved for the day (never moves anything). */
+  middlePermissionToday?: boolean;
+  /** Why the day was flagged, in the server's words -only when the endpoint sends it. */
+  lateReason?: string;
+  /** Something protective covered the day: an applied permission, or strict mode's
+   *  auto-detected lunch-return zone. */
   isPermission?: boolean;
+  permissionAfternoon?: boolean;
   permissionWithRequest?: boolean;
   /** HR announced this day as a Compensation Day (festival/special day) —
-   *  Late/Permission penalties are exempted, but Full/Half Shift is still
+   *  Late/Permission penalties are exempted, but Full/Half Day is still
    *  judged from real punches, never auto-granted. */
   isCompensationDay?: boolean;
   firstIn?: string;
@@ -43,18 +64,19 @@ export interface AttendanceSummary {
 
 // Backend returns the canonical per-day verdict from the same engine payroll
 // and the HR portal's Attendance Search use (compute_day_record), so this
-// mobile app can never disagree with HRMS on Present / Half Shift / Late.
+// mobile app can never disagree with HRMS on Present / Half Day / Late-In.
 // Status values (lowercase from Django): "present", "half_shift", "absent", "on_leave", "holiday", "future"
-// `isLate` is a separate flag — a day can be both "half_shift" AND late at
-// once (HRMS shows these as two independent checkmarks); since this mobile
+// `isLate` / `isEarlyOut` are separate flags — a day can be both "half_shift" AND late at
+// once (HRMS shows these as independent checkmarks); since this mobile
 // calendar shows one status per day, "half_shift" wins (it's the more
-// specific outcome) and a late arrival on an otherwise-Present day is shown
-// as "Late" — `isLate` itself is still exposed on the record for callers
-// that want to show both facts (e.g. a small late-arrival indicator).
+// specific outcome) and a late arrival / early leave on an otherwise-Present
+// day is shown as "Late-In" / "Early-Out" — the flags themselves are still
+// exposed on the record for callers that want to show every fact (chips in
+// the calendar's day detail).
 // Summary is nested under `summary` key: { present, halfShift, absent, late, onLeave }
 const STATUS_MAP: Record<string, AttendanceRecord['status']> = {
   present: 'Present',
-  half_shift: 'Half Shift',
+  half_shift: 'Half Day',
   absent: 'Absent',
   on_leave: 'On Leave',
   holiday: 'Holiday',
@@ -67,16 +89,36 @@ function transformAttendance(raw: any): AttendanceSummary {
     .filter((r: any) => r.status !== 'future') // exclude future days — shown as empty cells
     .map((r: any) => {
       let status = STATUS_MAP[r.status] ?? (r.present ? 'Present' : 'Absent');
-      const isPermission = !!(r.permissionMorning || r.permissionAfternoon || r.permissionDeparture);
-      const permissionWithRequest = !!(r.permissionMorningWithRequest || r.permissionAfternoonWithRequest || r.permissionDepartureWithRequest);
-      if (status === 'Present' && isPermission) status = 'Permission';
-      else if (status === 'Present' && r.isLate) status = 'Late';
+      // New keys with the old ones as fallback: an older backend only sends
+      // permissionMorning / permissionDeparture (the new ones mirror them).
+      const f = readDayFlags(r);
+      const isPermission = f.morningPermissionApplied || f.eveningPermissionApplied || f.permissionAfternoon;
+      const permissionWithRequest = !!(
+        (r.morningPermissionApplied ?? r.permissionMorningWithRequest)
+        || (r.eveningPermissionApplied ?? r.permissionDepartureWithRequest)
+        || r.permissionAfternoonWithRequest
+      );
+      // A late / early day outranks "Permission": it is an occurrence in the monthly late pool
+      // even when a permission moved the boundary (the employee was late for the moved one).
+      if (status === 'Present') {
+        if (f.isLate) status = 'Late-In';
+        else if (f.isEarlyOut) status = 'Early-Out';
+        else if (isPermission) status = 'Permission';
+      }
       return {
         date: r.date,
         status,
-        isLate: !!r.isLate,
-        isHalfShift: !!r.isHalfShift,
+        isLate: f.isLate,
+        isEarlyOut: f.isEarlyOut,
+        isHalfShift: f.isHalfShift,
+        morningPermissionApplied: f.morningPermissionApplied,
+        eveningPermissionApplied: f.eveningPermissionApplied,
+        morningPermissionExcess: f.morningPermissionExcess,
+        eveningPermissionExcess: f.eveningPermissionExcess,
+        middlePermissionToday: f.middlePermissionToday,
+        lateReason: f.lateReason,
         isPermission,
+        permissionAfternoon: f.permissionAfternoon,
         permissionWithRequest,
         isCompensationDay: !!r.isCompensationDay,
         firstIn: r.firstPunch ?? r.firstIn ?? undefined,
@@ -99,7 +141,7 @@ function transformAttendance(raw: any): AttendanceSummary {
     late: s.late ?? raw.totalLate ?? raw.late ?? 0,
     onLeave: s.onLeave ?? s.on_leave ?? raw.totalOnLeave ?? raw.onLeave ?? 0,
     halfShift: s.halfShift ?? s.half_shift ?? raw.totalHalfShift
-      ?? records.filter((r) => r.status === 'Half Shift').length,
+      ?? records.filter((r) => r.status === 'Half Day').length,
     records,
   };
 }

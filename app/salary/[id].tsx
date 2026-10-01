@@ -125,7 +125,7 @@ export default function SalarySlipDetail() {
               { label: 'Total Days', value: slip.workingDays },
               { label: 'Present', value: slip.presentDays, color: Colors.statusGreen },
               { label: 'Absent', value: slip.absentDays, color: Colors.statusRed },
-              { label: 'Late', value: slip.lateDays, color: Colors.statusYellow },
+              { label: 'Late-In', value: slip.lateDays, color: Colors.statusYellow },
             ].map(({ label, value, color }) => (
               <View key={label} style={styles.statCell}>
                 <Text style={[styles.statNum, TabularNums, color && { color }]}>{value}</Text>

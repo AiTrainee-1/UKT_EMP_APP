@@ -14,6 +14,9 @@ import { useEmployee } from '../src/hooks/useEmployee';
 import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
 import { useNotificationObserver } from '../src/hooks/useNotifications';
 import { PermissionGate } from '../src/components/PermissionGate';
+import { UpdatePrompt } from '../src/components/UpdatePrompt';
+import { ServerStatusBanner } from '../src/components/support/ServerStatusBanner';
+import { prefetchSupportContact } from '../src/hooks/useSupportContact';
 import * as Location from 'expo-location';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
@@ -26,7 +29,13 @@ import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
 // Headline/body fonts are used on every screen (see src/constants/typography.ts),
 // so loading is a hard gate, not a progressive enhancement — keep the splash
 // screen up until they resolve rather than flashing system-font text first.
+//
+// The native launch screen is dismissed by the startup screen (app/index.tsx) once
+// it has actually been drawn, so there is no blank frame between the two. Every other
+// way of leaving it is a safety net so a launch can never get stuck on it:
+// SPLASH_SAFETY_MS below, and the error boundary.
 SplashScreen.preventAutoHideAsync().catch(() => {});
+const SPLASH_SAFETY_MS = 2500;
 
 // registerPushToken() (src/hooks/usePushToken.ts) guards internally against
 // Expo Go, where the push-token APIs throw an unrecoverable error on SDK
@@ -45,6 +54,10 @@ class ErrorBoundary extends Component<{ children: ReactNode }, EBState> {
   }
   static getDerivedStateFromError(error: Error) {
     return { hasError: true, error };
+  }
+  componentDidCatch() {
+    // A startup crash must show its message, not sit behind the launch screen.
+    SplashScreen.hideAsync().catch(() => {});
   }
   render() {
     if (this.state.hasError) {
@@ -178,7 +191,7 @@ function NotificationTapHandler() {
 export default function RootLayout() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     PlusJakartaSans_600SemiBold,
     PlusJakartaSans_700Bold,
     Inter_400Regular,
@@ -192,9 +205,24 @@ export default function RootLayout() {
       .finally(() => { setIsLoading(false); });
   }, []);
 
+  // The HR / software-support contact details (Settings -> HR Contact in the HR portal). Fetched at app
+  // start, before anyone signs in, so a launch with a working server saves them on the phone and they are
+  // still there on the login screen when the server is not. Never blocks or fails startup.
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
+    prefetchSupportContact(queryClient).catch(() => {});
+  }, []);
+
+  // If the fonts fail to load the app still starts, with system fonts, instead of staying blank.
+  const fontsReady = fontsLoaded || !!fontError;
+
+  // Normally the startup screen dismisses the launch screen as soon as it is drawn. Opening the
+  // app straight onto another screen (a tapped notification, a deep link) skips that screen, so
+  // don't leave the launch screen up for longer than this.
+  useEffect(() => {
+    if (!fontsReady) return;
+    const timer = setTimeout(() => SplashScreen.hideAsync().catch(() => {}), SPLASH_SAFETY_MS);
+    return () => clearTimeout(timer);
+  }, [fontsReady]);
 
   const login = async (_id: string, _pw: string) => {};
 
@@ -206,7 +234,7 @@ export default function RootLayout() {
     router.replace('/(auth)/login');
   };
 
-  if (!fontsLoaded) return null;
+  if (!fontsReady) return null;
 
   return (
     <ErrorBoundary>
@@ -215,10 +243,14 @@ export default function RootLayout() {
         <AuthContext.Provider value={{ user, isLoading, login, logout, setUser }}>
           <StatusBar style="light" />
           <PermissionGate />
+          <UpdatePrompt />
           <ResignationGuard />
           <PushTokenRegistrar />
           <LiveLocationTracker />
           <NotificationTapHandler />
+          {/* The server-status bar takes its own strip above the navigator, so it never covers a screen. */}
+          <View style={{ flex: 1 }}>
+          <ServerStatusBanner />
           <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
@@ -238,7 +270,9 @@ export default function RootLayout() {
             <Stack.Screen name="geo-tracking" />
             <Stack.Screen name="on-duty" />
             <Stack.Screen name="outpass" />
+            <Stack.Screen name="help" />
           </Stack>
+          </View>
           </AuthContext.Provider>
         </QueryClientProvider>
       </ThemeProvider>

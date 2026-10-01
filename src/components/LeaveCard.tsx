@@ -8,6 +8,7 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 import { Badge } from './ui/Badge';
+import { ApprovalTrail, WaitingChip } from './approval/ApprovalTrail';
 import { LeaveRequest } from '../hooks/useLeave';
 
 interface Props {
@@ -70,6 +71,8 @@ export function LeaveCard({ request, index = 0 }: Props) {
       {request.reason && (
         <Text style={styles.reason} numberOfLines={2}>"{request.reason}"</Text>
       )}
+      <WaitingChip approval={request.approval} />
+      <ApprovalTrail approval={request.approval} />
     </MotiView>
   );
 }

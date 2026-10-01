@@ -9,7 +9,7 @@ import { format, startOfWeek, addDays, isSameDay, isToday, isBefore } from 'date
 import { useAuth } from '../../src/hooks/useAuth';
 import { useShift } from '../../src/hooks/useShift';
 import { useEmployee } from '../../src/hooks/useEmployee';
-import { useShiftStats } from '../../src/hooks/useShiftStats';
+import { useShiftStats, latePoolView, detectionFlags, latePoolNames, halfDayRule } from '../../src/hooks/useShiftStats';
 import { useCasualLeaves } from '../../src/hooks/useCasualLeave';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
@@ -49,6 +49,14 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
 
   const isProduction = employee?.employmentType === 'production';
   const presentDays = stats?.dailyLogs.filter((d) => !!d.firstPunch).length ?? 0;
+  // Deduction preview with the new API fields defaulted (older backends omit them); the company
+  // `policy`, when present, wins over the summary's copies and says which checks are switched on.
+  // Production staff get no split and the flat free allowance (see latePoolView).
+  const pool = stats ? latePoolView(stats) : null;
+  const detect = detectionFlags(stats);
+  // The real half-day rule (company-wide times) -null on an older backend, and then nothing is
+  // shown: the shift template's own "first half end" is no longer the rule.
+  const halfRule = halfDayRule(stats?.policy);
 
   const workingDays = useMemo(() => {
     if (!shift) return [];
@@ -159,8 +167,12 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                   ...(shift.lunchDurationMinutes
                     ? [{ icon: 'food-outline', label: 'Lunch Duration', value: `${shift.lunchDurationMinutes} min` }]
                     : []),
-                  ...(shift.firstHalfEnd
-                    ? [{ icon: 'clock-time-four-outline', label: 'First Half Ends', value: shift.firstHalfEnd }]
+                  // Half-Day Detection: company-wide times from the API, not the shift template.
+                  ...(halfRule
+                    ? [
+                        { icon: 'weather-sunset-up', label: 'Morning half', value: halfRule.morning },
+                        { icon: 'weather-sunset-down', label: 'Evening half', value: halfRule.evening },
+                      ]
                     : []),
                 ]
               : [{ icon: 'calendar-check-outline', label: 'Sunday', value: 'Working Day' }]),
@@ -175,6 +187,11 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
               <Text style={styles.detailValue}>{value}</Text>
             </View>
           ))}
+          {!isProduction && halfRule && (
+            <Text style={[styles.deductionNote, { marginTop: 8, marginBottom: 0 }]}>
+              Punches in both halves = Full Day, in one half = Half Day.
+            </Text>
+          )}
         </View>
 
         {/* Monthly Summary */}
@@ -185,11 +202,17 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
               {[
                 { label: 'Present', value: presentDays, icon: 'check-circle-outline', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
                 { label: 'Absent', value: stats.absentDays, icon: 'close-circle-outline', color: Colors.statusRed, bg: Colors.badgeRedBg },
-                { label: 'Late Count', value: stats.totalLateCount, icon: 'clock-alert-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
-                { label: 'Half Shifts', value: stats.halfShiftDays, icon: 'clock-time-four-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
+                // Every day flagged late this month. Deliberately not called "Late-Ins": the
+                // deduction card's Late-Ins is the pool's occurrence count, which can differ
+                // (a day carrying an Excess permission is counted there as that permission).
+                // Dropped when HR has switched Morning Late-In detection off.
+                ...(detect.lateIn
+                  ? [{ label: 'Days flagged late', value: stats.totalLateCount, icon: 'clock-alert-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg }]
+                  : []),
+                { label: 'Half Days', value: stats.halfShiftDays, icon: 'clock-time-four-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
                 { label: 'CL Approved', value: approvedCL?.length ?? 0, icon: 'calendar-check-outline', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-              ].map(({ label, value, icon, color, bg }) => (
-                <View key={label} style={[styles.statBox, { width: '20%' }]}>
+              ].map(({ label, value, icon, color, bg }, _i, boxes) => (
+                <View key={label} style={[styles.statBox, { width: `${100 / boxes.length}%` }]}>
                   <View style={[styles.statIconWrap, { backgroundColor: bg }]}>
                     <MaterialCommunityIcons name={icon as any} size={16} color={color} />
                   </View>
@@ -205,33 +228,55 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
           </View>
         )}
 
-        {/* Permission usage & deduction impact — every employee gets 3 free
-            lates/permissions a month (combined pool); each additional 3
-            beyond that costs a ¼ shift. Same numbers HR sees on Report Log. */}
-        {stats && (
+        {/* Late & permission deduction preview — Late-Ins, Early-Outs and Excess
+            permissions share one monthly pool; the first `freeAllowance` are
+            free, the rest are billed as a shift deduction. Same numbers HR
+            sees on Report Log. The per-kind split only exists on the rewritten
+            backend, so it is shown only when the API sent it. */}
+        {stats && pool && (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Permission Usage & Deductions</Text>
+            <Text style={styles.cardTitle}>Late & Permission Deductions</Text>
             <Text style={styles.deductionNote}>
-              3 free lates/permissions per month (combined). Every 3 beyond that costs a ¼ shift
-              deduction from salary.
+              {latePoolNames(detect, pool.isProduction)} count toward one monthly pool. The first {pool.freeAllowance} are
+              free; every one beyond that is billed as a shift deduction from salary.
             </Text>
             <View style={styles.statsGrid}>
               {[
+                ...(pool.hasBreakdown
+                  ? [
+                      ...(detect.lateIn
+                        ? [{
+                            label: 'Late-Ins', value: pool.lateIn,
+                            icon: 'clock-alert-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg,
+                          }]
+                        : []),
+                      ...(detect.earlyOut
+                        ? [{
+                            label: 'Early-Outs', value: pool.earlyOut,
+                            icon: 'logout', color: Colors.statusLeave, bg: Colors.badgeLeaveBg,
+                          }]
+                        : []),
+                      {
+                        label: 'Excess Permissions', value: pool.excess,
+                        icon: 'alert-circle-outline', color: Colors.statusYellow, bg: Colors.badgeYellowBg,
+                      },
+                    ]
+                  : []),
                 {
-                  label: 'Permissions Used', value: `${stats.summary.permissionsUsed}/3`,
+                  label: 'Free Allowance', value: `${pool.freeUsed}/${pool.freeAllowance}`,
                   icon: 'hand-back-left-outline', color: Colors.primary, bg: Colors.primaryFixed,
                 },
                 {
-                  label: 'Billable', value: stats.summary.billableLateCount,
+                  label: 'Billable', value: pool.billable,
                   icon: 'alert-circle-outline',
-                  color: stats.summary.billableLateCount > 0 ? Colors.statusRed : Colors.statusGreen,
-                  bg: stats.summary.billableLateCount > 0 ? Colors.badgeRedBg : Colors.badgeGreenBg,
+                  color: pool.billable > 0 ? Colors.statusRed : Colors.statusGreen,
+                  bg: pool.billable > 0 ? Colors.badgeRedBg : Colors.badgeGreenBg,
                 },
                 {
-                  label: 'Shift Deductions', value: stats.summary.shiftDeductions,
+                  label: 'Shift Deductions', value: pool.shiftDeductions,
                   icon: 'minus-circle-outline',
-                  color: stats.summary.shiftDeductions > 0 ? Colors.statusRed : Colors.statusGreen,
-                  bg: stats.summary.shiftDeductions > 0 ? Colors.badgeRedBg : Colors.badgeGreenBg,
+                  color: pool.shiftDeductions > 0 ? Colors.statusRed : Colors.statusGreen,
+                  bg: pool.shiftDeductions > 0 ? Colors.badgeRedBg : Colors.badgeGreenBg,
                 },
               ].map(({ label, value, icon, color, bg }) => (
                 <View key={label} style={styles.statBox}>
@@ -245,8 +290,8 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
             </View>
             <View style={styles.totalShiftsRow}>
               <Text style={styles.totalShiftsLabel}>Salary Impact</Text>
-              <Text style={[styles.totalShiftsValue, stats.summary.salaryDeductionAmount > 0 && { color: Colors.statusRed }]}>
-                ₹{stats.summary.salaryDeductionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <Text style={[styles.totalShiftsValue, pool.salaryDeductionAmount > 0 && { color: Colors.statusRed }]}>
+                ₹{pool.salaryDeductionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </Text>
             </View>
           </View>
@@ -268,6 +313,22 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
               const today = isToday(date);
               const past = isBefore(date, now) && !today;
 
+              // What was off about the day (Late-In / Early-Out / Half Day), and what
+              // permission did about it. New keys with the old ones as fallback
+              // (see readDayFlags): an older backend only knows isLate.
+              const flagLabels: string[] = [];
+              if (log?.isLate && detect.lateIn) flagLabels.push('Late-In');
+              if (log?.isEarlyOut && detect.earlyOut) flagLabels.push('Early-Out');
+              if (log?.isHalfShift) flagLabels.push('Half Day');
+              const permNotes: string[] = [];
+              if (log?.morningPermissionApplied) permNotes.push('Morning permission applied');
+              if (log?.eveningPermissionApplied) permNotes.push('Evening permission applied');
+              if (log?.morningPermissionExcess) permNotes.push('Morning permission Excess');
+              if (log?.eveningPermissionExcess) permNotes.push('Evening permission Excess');
+              if (log?.middlePermissionToday) permNotes.push('Middle One-Hour');
+              // The pill carries the first flag; the sub-line spells out the rest.
+              const extraNotes = [...(flagLabels.length > 1 ? flagLabels : []), ...permNotes];
+
               let statusLabel = 'Upcoming';
               let statusTone: 'green' | 'blue' | 'muted' | 'amber' = 'muted';
               if (!isWorking) {
@@ -277,8 +338,10 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                 statusLabel = 'Today';
                 statusTone = 'blue';
               } else if (log?.firstPunch) {
-                statusLabel = log.isLate ? 'Late In' : 'Completed';
-                statusTone = log.isLate ? 'amber' : 'green';
+                statusLabel = flagLabels.length
+                  ? `${flagLabels[0]}${flagLabels.length > 1 ? ` +${flagLabels.length - 1}` : ''}`
+                  : 'Completed';
+                statusTone = flagLabels.length ? 'amber' : 'green';
               } else if (past) {
                 statusLabel = 'Absent';
                 statusTone = 'amber';
@@ -299,6 +362,11 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                         In {log.firstPunch}{log.lastPunch ? ` · Out ${log.lastPunch}` : ''}
                       </Text>
                     )}
+                    {extraNotes.length > 0 && (
+                      <Text style={styles.weekRowSub}>{extraNotes.join(' · ')}</Text>
+                    )}
+                    {/* Plain-language explanation of the day's boundary/flag, whenever the server sent one. */}
+                    {!!log?.lateReason && <Text style={styles.weekRowSub}>{log.lateReason}</Text>}
                   </View>
                   <View style={[styles.weekStatusPill, weekStatusStyles[statusTone].pill]}>
                     <Text style={[styles.weekStatusText, weekStatusStyles[statusTone].text]}>{statusLabel}</Text>

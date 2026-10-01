@@ -16,9 +16,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useAttendance } from '../../src/hooks/useAttendance';
+import { useLatePolicy } from '../../src/hooks/useShiftStats';
 import { useShift } from '../../src/hooks/useShift';
 import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
 import { useCLEligibility } from '../../src/hooks/useCasualLeave';
+import { casualLeaveAvailable } from '../../src/lib/requestWindowForm';
 import { useGeoPunchStatus } from '../../src/hooks/useGeoAttendance';
 import { AttendanceCalendar } from '../../src/components/AttendanceCalendar';
 import { AttendanceTrendChart } from '../../src/components/AttendanceTrendChart';
@@ -26,6 +28,7 @@ import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
@@ -39,7 +42,7 @@ const MONTHS = [
 // Working Days leads because it's the denominator the other five are read
 // against. Each entry drives its own standalone stat card (3×2 grid), so the
 // `badge` text/tone is the card's headline detail, not a caption.
-const SUMMARY = (Colors: Palette, data: any) => {
+const SUMMARY = (Colors: Palette, data: any, lateInEnabled: boolean) => {
   const present = data?.present ?? 0;
   const workingDays = data?.workingDays ?? 0;
   const presentPct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
@@ -47,10 +50,11 @@ const SUMMARY = (Colors: Palette, data: any) => {
     { label: 'Working', value: workingDays, unit: 'days', dot: Colors.textMuted, badge: null, badgeBg: null, badgeText: null },
     { label: 'Present', value: present, unit: null, dot: Colors.statusGreen, badge: `${presentPct}%`, badgeBg: Colors.badgeGreenBg, badgeText: Colors.statusGreen },
     { label: 'Absent', value: data?.absent ?? 0, unit: null, dot: Colors.statusRed, badge: (data?.absent ?? 0) > 0 ? `${data?.absent} day${data?.absent === 1 ? '' : 's'}` : null, badgeBg: Colors.badgeRedBg, badgeText: Colors.statusRed },
-    { label: 'Late', value: data?.late ?? 0, unit: null, dot: Colors.statusYellow, badge: (data?.late ?? 0) > 0 ? 'Alert' : null, badgeBg: Colors.badgeYellowBg, badgeText: Colors.statusYellow },
-    { label: 'Half Shift', value: data?.halfShift ?? 0, unit: null, dot: Colors.textMuted, badge: null, badgeBg: null, badgeText: null },
+    { label: 'Late-In', value: data?.late ?? 0, unit: null, dot: Colors.statusYellow, badge: (data?.late ?? 0) > 0 ? 'Alert' : null, badgeBg: Colors.badgeYellowBg, badgeText: Colors.statusYellow },
+    { label: 'Half Day', value: data?.halfShift ?? 0, unit: null, dot: Colors.statusOrange, badge: null, badgeBg: null, badgeText: null },
     { label: 'Leave', value: data?.onLeave ?? 0, unit: null, dot: Colors.categoryTracking, badge: (data?.onLeave ?? 0) > 0 ? 'Approved' : null, badgeBg: Colors.badgeBlueBg, badgeText: Colors.categoryTracking },
-  ];
+  // The Late-In card goes when HR has switched Morning Late-In detection off.
+  ].filter((c) => lateInEnabled || c.label !== 'Late-In');
 };
 
 export default function AttendanceScreen() {
@@ -80,7 +84,12 @@ export default function AttendanceScreen() {
   const { data: shift } = useShift(user?.employeeId ?? null);
   const { data: syncStatus } = useAttendanceSyncStatus();
   const { data: clEligibility } = useCLEligibility(user?.employeeId ?? null);
+  // On the grace days (1st / 2nd) the top-level `eligible` is about the new month only while last month may still be open:
+  // eligible when any month the server lists is (the same test as the Leave tab's card; `eligible` alone without a list).
+  const clEligible = casualLeaveAvailable(clEligibility?.eligible, clEligibility?.months);
   const { data: geoStatus } = useGeoPunchStatus();
+  // Which Late Detection checks are on (company policy; unknown = both on).
+  const detect = useLatePolicy();
 
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear((y) => y - 1); }
@@ -114,9 +123,7 @@ export default function AttendanceScreen() {
         {/* ─── Top bar: hamburger · brand mark + wordmark · bell · avatar ─── */}
         <View style={styles.topBar}>
           <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
-          <View style={styles.brandBadge}>
-            <Text style={styles.brandBadgeText}>XT</Text>
-          </View>
+          <UKTLogo size={28} />
           <View style={styles.brandTextWrap}>
             <Text style={styles.brandName}>UKTEXTILES</Text>
             <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -213,7 +220,7 @@ export default function AttendanceScreen() {
           <SkeletonCard lines={2} />
         ) : (
           <View style={styles.statsGrid}>
-            {SUMMARY(Colors, data).map(({ label, value, unit, dot, badge, badgeBg, badgeText }) => (
+            {SUMMARY(Colors, data, detect.lateIn).map(({ label, value, unit, dot, badge, badgeBg, badgeText }) => (
               <View key={label} style={styles.statCard}>
                 <View style={styles.statTopRow}>
                   <View style={[styles.statDot, { backgroundColor: dot }]} />
@@ -243,14 +250,14 @@ export default function AttendanceScreen() {
             <View style={{ flex: 1 }}>
               <View style={styles.clTitleRow}>
                 <Text style={styles.clTitle}>Casual Leave Status</Text>
-                <View style={[styles.clBadge, clEligibility.eligible ? styles.clBadgeOk : styles.clBadgeNo]}>
-                  <Text style={[styles.clBadgeText, { color: clEligibility.eligible ? Colors.statusGreen : Colors.statusRed }]}>
-                    {clEligibility.eligible ? 'Eligible' : 'Not Eligible'}
+                <View style={[styles.clBadge, clEligible ? styles.clBadgeOk : styles.clBadgeNo]}>
+                  <Text style={[styles.clBadgeText, { color: clEligible ? Colors.statusGreen : Colors.statusRed }]}>
+                    {clEligible ? 'Eligible' : 'Not Eligible'}
                   </Text>
                 </View>
               </View>
               <Text style={styles.clSubtitle} numberOfLines={1}>
-                {clEligibility.eligible && clEligibility.yearlyEntitlement != null
+                {clEligible && clEligibility.yearlyEntitlement != null
                   ? `${clEligibility.remainingThisYear} Remaining of ${clEligibility.yearlyEntitlement} yearly entitlement`
                   : clEligibility.reason ?? 'Not eligible this period'}
               </Text>
@@ -279,15 +286,21 @@ export default function AttendanceScreen() {
           {isLoading ? (
             <SkeletonCard lines={5} />
           ) : (
-            <AttendanceCalendar records={data?.records ?? []} month={month} year={year} />
+            <AttendanceCalendar records={data?.records ?? []} month={month} year={year} detect={detect} />
           )}
         </View>
 
-        {/* ─── Legend ─── */}
+        {/* ─── Legend ─── same hues as the calendar cells above. The small
+            dot is the corner mark on a day that is also Late-In, Early-Out or
+            carries an Excess permission (all three count toward late deductions). */}
         <View style={styles.legend}>
           {[
             { label: 'Present', color: Colors.statusGreen },
-            { label: 'Late', color: Colors.statusYellow },
+            // Late-In / Early-Out entries only while HR has that check switched on.
+            ...(detect.lateIn ? [{ label: 'Late-In', color: Colors.statusYellow }] : []),
+            ...(detect.earlyOut ? [{ label: 'Early-Out', color: Colors.statusLeave }] : []),
+            { label: 'Half Day', color: Colors.statusOrange },
+            { label: 'Permission', color: Colors.statusBlue },
             { label: 'Absent', color: Colors.statusRed },
             { label: 'On Leave', color: Colors.categoryTracking },
           ].map(({ label, color }) => (
@@ -296,6 +309,12 @@ export default function AttendanceScreen() {
               <Text style={styles.legendText}>{label}</Text>
             </View>
           ))}
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, styles.legendMark, { backgroundColor: Colors.statusYellow }]} />
+            <Text style={styles.legendText}>
+              {[detect.lateIn && 'Late', detect.earlyOut && 'Early', 'Excess'].filter(Boolean).join(' / ')} mark
+            </Text>
+          </View>
         </View>
       </ScrollView>
 
@@ -320,12 +339,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
 
   // Top bar (matches Home)
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
-  brandBadge: {
-    width: 30, height: 30, borderRadius: 8,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
   brandTextWrap: { gap: 1 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
@@ -462,5 +475,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 10, height: 10, borderRadius: 5 },
+  // Matches the corner dot on a calendar cell: a small mark, not a status swatch.
+  legendMark: { width: 6, height: 6, borderRadius: 3, borderWidth: 1, borderColor: '#fff' },
   legendText: { color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
 });

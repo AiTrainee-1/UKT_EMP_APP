@@ -36,14 +36,34 @@ import {
   TeamOutpassRequest,
 } from '../../src/hooks/useManager';
 import { PUNCH_SLOT_LABEL } from '../../src/hooks/useRequests';
+import {
+  DEFAULT_PERMISSION_MONTHLY_LIMIT,
+  formatPermissionDuration,
+  permissionOutcome,
+  permissionTypeLabel,
+  type PermissionBadgeVariant,
+} from '../../src/lib/permissions';
 import { useManagerProfile } from '../../src/hooks/useManager';
 import { useAuth } from '../../src/hooks/useAuth';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import {
+  approvalErrorMessage,
+  decisionMessage,
+  hodCanAct,
+  hodCanReject,
+  hodTakesPart,
+  waitingTarget,
+  type ApprovalProgress,
+  type WorkflowKey,
+} from '../../src/lib/approval';
+import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { Colors } from '../../src/constants/colors';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
@@ -69,8 +89,23 @@ function empCode(item: GenericItem): string {
 function leaveType(item: TeamLeaveRequest): string {
   return item.leaveType || item.leaveTypeName || '—';
 }
+// Morning Late-In / Evening Early-Out / Middle One-Hour Permission. The raw `type` is the legacy
+// wire spelling ("Late In", ...) and is never shown.
 function permType(item: TeamPermissionRequest): string {
-  return item.type || item.permissionType || '—';
+  return permissionTypeLabel({
+    type: item.type ?? item.permissionType,
+    typeKey: item.typeKey,
+    typeLabel: item.typeLabel,
+  });
+}
+// The badge on a card: for a permission it is the outcome (Pending here, since this list only
+// carries requests awaiting a decision); everything else is simply Pending.
+function itemBadge(tab: Tab, item: GenericItem): { label: string; variant: PermissionBadgeVariant } {
+  if (tab === 'permission') {
+    const o = permissionOutcome(item as TeamPermissionRequest);
+    return { label: o.label, variant: o.badge };
+  }
+  return { label: 'Pending', variant: 'pending' };
 }
 function totalDays(item: TeamLeaveRequest): string | null {
   const d = item.totalDays ?? item.days;
@@ -95,6 +130,25 @@ const makeTabMeta = (Colors: Palette): Record<Tab, { label: string; icon: string
   missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: Colors.categoryPunch, bg: Colors.badgeLeaveBg },
   outpass: { label: 'Outpass', icon: 'exit-run', iconOutline: 'exit-run', color: Colors.primary, bg: Colors.primaryFixed },
 });
+
+// Which of HR's approval pipelines (Approval Workflow Control) each tab's requests follow.
+const TAB_WORKFLOW: Record<Tab, WorkflowKey> = {
+  leave: 'leave',
+  permission: 'permission',
+  resignation: 'resignation',
+  casualLeave: 'casualLeave',
+  attendance: 'attendanceCorrection',
+  missingPunch: 'missingPunch',
+  outpass: 'outpass',
+};
+
+// The lists hold only what this Department Head can decide, so this is only seen when a row went stale.
+function cannotDecideNote(approval: ApprovalProgress | null | undefined): string {
+  const target = waitingTarget(approval);
+  return target
+    ? `This request is waiting for ${target}, so you can't decide it right now.`
+    : 'This request has already been decided.';
+}
 
 function itemTypeLabel(tab: Tab, item: GenericItem): string {
   if (tab === 'leave') return leaveType(item as TeamLeaveRequest);
@@ -147,6 +201,7 @@ export default function ApprovalsScreen() {
 
   const { user } = useAuth();
   const { data: manager } = useManagerProfile(!!user);
+  const { data: approvalSummary } = useApprovalSummary();
 
   const [tab, setTab] = useState<Tab>('leave');
   const [selected, setSelected] = useState<SelectedRequest | null>(null);
@@ -180,49 +235,68 @@ export default function ApprovalsScreen() {
 
   const closeSheet = () => { setSelected(null); setComment(''); };
 
+  // The server's own text says why a decision was refused (not this Department Head's turn any more, HR changed the
+  // pipeline, already decided ...). A refusal means what is on screen is out of date: refresh it and drop the sheet.
+  // A network or server failure (no answer, 5xx) says nothing about the request, so the sheet stays for another try.
+  const failDecision = (err: any) => {
+    showToast(approvalErrorMessage(err, 'Action failed. Please try again.'), 'error');
+    if ([400, 403, 404, 409].includes(err?.response?.status)) {
+      refetch();
+      closeSheet();
+    }
+  };
+
   const handleGenericAction = async (status: 'approved' | 'rejected') => {
     if (!selected || selected.kind === 'resignation') return;
     try {
+      let result: any;
       if (selected.kind === 'leave') {
-        await approveLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+        result = await approveLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'permission') {
-        await approvePermission.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+        result = await approvePermission.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'casualLeave') {
-        await approveCasualLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+        result = await approveCasualLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'missingPunch') {
-        await approveMissingPunch.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+        result = await approveMissingPunch.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'outpass') {
-        await approveOutpass.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+        result = await approveOutpass.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else {
-        await approveAttendance.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+        result = await approveAttendance.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       }
       showToast(
         status === 'approved'
-          ? (selected.kind === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.')
+          // Worded from the request the server sent back. Without its `approval` (an older backend, whose pipeline is
+          // fixed) it is the old two-stage wording.
+          ? (decisionMessage('approved', result?.approval)
+              ?? (selected.kind === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.'))
           : 'Request rejected.',
         status === 'approved' ? 'success' : 'error',
       );
       closeSheet();
-    } catch {
-      showToast('Action failed. Please try again.', 'error');
+    } catch (err) {
+      failDecision(err);
     }
   };
 
   const handleResignationAction = async (action: 'approve' | 'reject') => {
     if (!selected || selected.kind !== 'resignation') return;
     try {
-      await resignationAction.mutateAsync({ id: selected.item.id, action, comment: comment || undefined });
+      const result = await resignationAction.mutateAsync({ id: selected.item.id, action, comment: comment || undefined });
       showToast(
         action === 'approve'
-          ? 'Resignation forwarded to HR.'
+          ? (decisionMessage('approved', result?.approval, 'Resignation') ?? 'Resignation forwarded to HR.')
           : 'Resignation rejected.',
         action === 'approve' ? 'success' : 'error',
       );
       closeSheet();
-    } catch {
-      showToast('Action failed. Please try again.', 'error');
+    } catch (err) {
+      failDecision(err);
     }
   };
+
+  // What the open sheet may offer: the pipeline's answer, or (older backend) everything, as the lists are pre-filtered.
+  const sheetCanApprove = hodCanAct(selected?.item.approval);
+  const sheetCanReject = hodCanReject(selected?.item.approval);
 
   const selectFor = (t: Tab, item: any): SelectedRequest => ({ kind: t, item } as SelectedRequest);
 
@@ -273,9 +347,7 @@ export default function ApprovalsScreen() {
 
       {/* Top bar */}
       <View style={styles.topBar}>
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>XT</Text>
-        </View>
+        <UKTLogo size={28} />
         <View style={styles.brandTextWrap}>
           <Text style={styles.brandName}>UKTEXTILES</Text>
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -332,13 +404,19 @@ export default function ApprovalsScreen() {
             <EmptyState
               icon="check-circle-outline"
               title="All caught up!"
-              subtitle={`No pending ${TAB_META[tab].label.toLowerCase()} requests`}
+              subtitle={
+                hodTakesPart(approvalSummary?.[TAB_WORKFLOW[tab]])
+                  ? `No pending ${TAB_META[tab].label.toLowerCase()} requests`
+                  : 'These requests go to HR only, so none come to you.'
+              }
             />
           )
         }
         renderItem={({ item, index }) => {
           if (tab === 'resignation') {
             const r = item as TeamResignationRequest;
+            const canApprove = hodCanAct(r.approval);
+            const canReject = hodCanReject(r.approval);
             return (
               <MotiView
                 from={{ opacity: 0, translateY: 10 }}
@@ -373,26 +451,34 @@ export default function ApprovalsScreen() {
                   </Text>
                 </View>
 
+                <WaitingChip approval={r.approval} />
+
                 {r.reason && (
                   <Text style={styles.reason} numberOfLines={2}>"{r.reason}"</Text>
                 )}
 
-                <View style={styles.quickActions}>
-                  <TouchableOpacity
-                    style={styles.approveBtn}
-                    onPress={() => { setSelected({ kind: 'resignation', item: r }); }}
-                  >
-                    <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
-                    <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.rejectBtn}
-                    onPress={() => { setSelected({ kind: 'resignation', item: r }); }}
-                  >
-                    <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
-                    <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
-                  </TouchableOpacity>
-                </View>
+                {(canApprove || canReject) && (
+                  <View style={styles.quickActions}>
+                    {canApprove && (
+                      <TouchableOpacity
+                        style={styles.approveBtn}
+                        onPress={() => { setSelected({ kind: 'resignation', item: r }); }}
+                      >
+                        <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
+                        <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
+                      </TouchableOpacity>
+                    )}
+                    {canReject && (
+                      <TouchableOpacity
+                        style={styles.rejectBtn}
+                        onPress={() => { setSelected({ kind: 'resignation', item: r }); }}
+                      >
+                        <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
+                        <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
               </TouchableOpacity>
               </MotiView>
             );
@@ -402,6 +488,9 @@ export default function ApprovalsScreen() {
           const name = empName(genericItem);
           const initial = name[0]?.toUpperCase() ?? '?';
           const meta = TAB_META[tab];
+          const badge = itemBadge(tab, genericItem);
+          const canApprove = hodCanAct(genericItem.approval);
+          const canReject = hodCanReject(genericItem.approval);
           return (
             <MotiView
               from={{ opacity: 0, translateY: 10 }}
@@ -423,7 +512,7 @@ export default function ApprovalsScreen() {
                     <Text style={styles.empCode}>{empCode(genericItem)}</Text>
                   </View>
                 </View>
-                <Badge label="Pending" variant="pending" />
+                <Badge label={badge.label} variant={badge.variant} />
               </View>
 
               <View style={styles.requestInfo}>
@@ -435,26 +524,34 @@ export default function ApprovalsScreen() {
                 <Text style={styles.requestDate}>{itemDateLabel(tab, genericItem)}</Text>
               </View>
 
+              <WaitingChip approval={genericItem.approval} />
+
               {genericItem.reason && (
                 <Text style={styles.reason} numberOfLines={2}>"{genericItem.reason}"</Text>
               )}
 
-              <View style={styles.quickActions}>
-                <TouchableOpacity
-                  style={styles.approveBtn}
-                  onPress={() => setSelected(selectFor(tab, genericItem))}
-                >
-                  <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
-                  <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.rejectBtn}
-                  onPress={() => setSelected(selectFor(tab, genericItem))}
-                >
-                  <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
-                  <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
-                </TouchableOpacity>
-              </View>
+              {(canApprove || canReject) && (
+                <View style={styles.quickActions}>
+                  {canApprove && (
+                    <TouchableOpacity
+                      style={styles.approveBtn}
+                      onPress={() => setSelected(selectFor(tab, genericItem))}
+                    >
+                      <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
+                      <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
+                    </TouchableOpacity>
+                  )}
+                  {canReject && (
+                    <TouchableOpacity
+                      style={styles.rejectBtn}
+                      onPress={() => setSelected(selectFor(tab, genericItem))}
+                    >
+                      <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
+                      <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
             </TouchableOpacity>
             </MotiView>
           );
@@ -491,6 +588,12 @@ export default function ApprovalsScreen() {
                 : selected.kind === 'permission'
                 ? ['Time', (selected.item as TeamPermissionRequest).time]
                 : null,
+              selected.kind === 'permission' && formatPermissionDuration((selected.item as TeamPermissionRequest).durationMinutes)
+                ? ['Duration', formatPermissionDuration((selected.item as TeamPermissionRequest).durationMinutes)!]
+                : null,
+              selected.kind === 'permission' && (selected.item as TeamPermissionRequest).statusLabel
+                ? ['Status', (selected.item as TeamPermissionRequest).statusLabel!]
+                : null,
               selected.kind === 'leave' && totalDays(selected.item as TeamLeaveRequest)
                 ? ['Days', totalDays(selected.item as TeamLeaveRequest)!]
                 : null,
@@ -503,37 +606,61 @@ export default function ApprovalsScreen() {
               </View>
             ))}
 
-            <Text style={styles.commentLabel}>Comment (optional)</Text>
-            <TextInput
-              style={styles.commentInput}
-              placeholder="Add a comment…"
-              placeholderTextColor={Colors.outline}
-              selectionColor={Colors.primary}
-              cursorColor={Colors.primary}
-              value={comment}
-              onChangeText={setComment}
-              multiline
-              numberOfLines={2}
-            />
+            {/* Only when the server speaks the monthly-limit rules (capStatus/statusLabel are new). */}
+            {selected.kind === 'permission'
+              && ((selected.item as TeamPermissionRequest).capStatus != null || (selected.item as TeamPermissionRequest).statusLabel != null)
+              && (
+              <Text style={styles.sheetHint}>
+                Only the first {(selected.item as TeamPermissionRequest).monthlyLimit ?? DEFAULT_PERMISSION_MONTHLY_LIMIT}{' '}
+                approved permissions an employee has in a month are Allowed. Approving one beyond that makes it
+                Overdue / Excess: it will not protect the day and counts toward late deductions.
+              </Text>
+            )}
 
-            <View style={styles.sheetActions}>
-              <TouchableOpacity
-                style={styles.sheetApproveBtn}
-                onPress={() => handleGenericAction('approved')}
-                disabled={isPending}
-              >
-                <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.sheetRejectBtn}
-                onPress={() => handleGenericAction('rejected')}
-                disabled={isPending}
-              >
-                <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
-                <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
-              </TouchableOpacity>
-            </View>
+            <WaitingChip approval={selected.item.approval} style={styles.sheetTrail} />
+            <ApprovalTrail approval={selected.item.approval} style={styles.sheetTrail} />
+
+            {sheetCanApprove || sheetCanReject ? (
+              <>
+                <Text style={styles.commentLabel}>Comment (optional)</Text>
+                <TextInput
+                  style={styles.commentInput}
+                  placeholder="Add a comment…"
+                  placeholderTextColor={Colors.outline}
+                  selectionColor={Colors.primary}
+                  cursorColor={Colors.primary}
+                  value={comment}
+                  onChangeText={setComment}
+                  multiline
+                  numberOfLines={2}
+                />
+
+                <View style={styles.sheetActions}>
+                  {sheetCanApprove && (
+                    <TouchableOpacity
+                      style={styles.sheetApproveBtn}
+                      onPress={() => handleGenericAction('approved')}
+                      disabled={isPending}
+                    >
+                      <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
+                      <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
+                    </TouchableOpacity>
+                  )}
+                  {sheetCanReject && (
+                    <TouchableOpacity
+                      style={styles.sheetRejectBtn}
+                      onPress={() => handleGenericAction('rejected')}
+                      disabled={isPending}
+                    >
+                      <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
+                      <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </>
+            ) : (
+              <Text style={styles.sheetHint}>{cannotDecideNote(selected.item.approval)}</Text>
+            )}
           </View>
         )}
       </BottomSheet>
@@ -584,37 +711,50 @@ export default function ApprovalsScreen() {
                 </View>
               ))}
 
-              <Text style={styles.commentLabel}>Comment (optional)</Text>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Add a comment…"
-                placeholderTextColor={Colors.outline}
-              selectionColor={Colors.primary}
-              cursorColor={Colors.primary}
-                value={comment}
-                onChangeText={setComment}
-                multiline
-                numberOfLines={2}
-              />
+              <WaitingChip approval={r.approval} style={styles.sheetTrail} />
+              <ApprovalTrail approval={r.approval} style={styles.sheetTrail} />
 
-              <View style={styles.sheetActions}>
-                <TouchableOpacity
-                  style={styles.sheetApproveBtn}
-                  onPress={() => handleResignationAction('approve')}
-                  disabled={isPending}
-                >
-                  <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                  <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.sheetRejectBtn}
-                  onPress={() => handleResignationAction('reject')}
-                  disabled={isPending}
-                >
-                  <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
-                  <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
-                </TouchableOpacity>
-              </View>
+              {sheetCanApprove || sheetCanReject ? (
+                <>
+                  <Text style={styles.commentLabel}>Comment (optional)</Text>
+                  <TextInput
+                    style={styles.commentInput}
+                    placeholder="Add a comment…"
+                    placeholderTextColor={Colors.outline}
+                    selectionColor={Colors.primary}
+                    cursorColor={Colors.primary}
+                    value={comment}
+                    onChangeText={setComment}
+                    multiline
+                    numberOfLines={2}
+                  />
+
+                  <View style={styles.sheetActions}>
+                    {sheetCanApprove && (
+                      <TouchableOpacity
+                        style={styles.sheetApproveBtn}
+                        onPress={() => handleResignationAction('approve')}
+                        disabled={isPending}
+                      >
+                        <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
+                        <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
+                      </TouchableOpacity>
+                    )}
+                    {sheetCanReject && (
+                      <TouchableOpacity
+                        style={styles.sheetRejectBtn}
+                        onPress={() => handleResignationAction('reject')}
+                        disabled={isPending}
+                      >
+                        <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
+                        <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.sheetHint}>{cannotDecideNote(r.approval)}</Text>
+              )}
             </View>
           );
         })()}
@@ -628,8 +768,6 @@ export default function ApprovalsScreen() {
 const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  brandBadge: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
   brandTextWrap: { gap: 1 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
@@ -757,6 +895,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   sheetLabel: { color: Colors.textMuted, fontSize: 13, flex: 1 },
   sheetValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '600', flex: 2, textAlign: 'right' },
+  sheetHint: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, marginTop: 12 },
+  sheetTrail: { marginTop: 12 },
   commentLabel: {
     color: Colors.textSecondary,
     fontSize: 13,

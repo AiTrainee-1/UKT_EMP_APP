@@ -370,9 +370,7 @@ export default function IdCardScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>XT</Text>
-        </View>
+        <UKTLogo size={28} />
         <View>
           <Text style={styles.brandName}>UKTEXTILES</Text>
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -442,8 +440,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: Colors.bgSurfaceLow,
     alignItems: 'center', justifyContent: 'center',
   },
-  brandBadge: { width: 28, height: 28, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 11 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 12, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 7.5, fontWeight: '700', letterSpacing: 0.6 },
   avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },

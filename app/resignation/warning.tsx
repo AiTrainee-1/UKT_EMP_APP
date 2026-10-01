@@ -14,20 +14,20 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
 import { Button } from '../../src/components/ui/Button';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence, workflowOff } from '../../src/lib/approval';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
 
+// The line about who the resignation goes to is not here: it comes from HR's pipeline for resignations (see below).
 const WARNINGS = [
   {
-    icon: 'account-supervisor-outline',
-    text: 'Your resignation will first go to your Department Head for review, then to HR for final approval.',
-  },
-  {
     icon: 'check-decagram-outline',
-    text: 'Your account will be deactivated upon final HR approval.',
+    text: 'Your account will be deactivated once your resignation receives its final approval.',
   },
   {
     icon: 'clock-remove-outline',
@@ -67,6 +67,11 @@ export default function ResignationWarningScreen() {
 
   const shake = useRef(new Animated.Value(0)).current;
   const fadeIn = useRef(new Animated.Value(0)).current;
+
+  // Who a resignation goes to, and whether HR has switched new ones off (Approval Workflow Control). Only a hint that may
+  // be a minute old: the server refuses a new resignation either way and its message is shown (see confirm.tsx).
+  const { data: approvalSummary } = useApprovalSummary();
+  const resignationFlow = approvalSummary?.resignation;
 
   useEffect(() => {
     Animated.timing(fadeIn, {
@@ -112,7 +117,7 @@ export default function ResignationWarningScreen() {
 
         {/* Warning cards */}
         <Animated.View style={[styles.body, { opacity: fadeIn }]}>
-          {WARNINGS.map(({ icon, text }, i) => (
+          {[{ icon: 'account-supervisor-outline', text: pipelineSentence(resignationFlow) }, ...WARNINGS].map(({ icon, text }, i) => (
             <View key={i} style={styles.warnCard}>
               <View style={styles.warnIcon}>
                 <MaterialCommunityIcons name={icon as any} size={22} color={Colors.statusRed} />
@@ -129,10 +134,13 @@ export default function ResignationWarningScreen() {
             </Text>
           </View>
 
+          <WorkflowOffNote workflow={resignationFlow} />
+
           {/* Actions */}
           <Button
             title="I Understand, Continue"
             onPress={() => router.push('/resignation/survey')}
+            disabled={workflowOff(resignationFlow)}
             style={styles.continueBtn}
           />
           <Button

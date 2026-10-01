@@ -6,10 +6,11 @@ import {
   Modal,
   Pressable,
   Dimensions,
-  ScrollView,
   Platform,
 } from 'react-native';
-import { KeyboardAvoider } from '../KeyboardAvoider';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAvoider, useKeyboardTop } from '../KeyboardAvoider';
+import { FormScrollView } from '../FormScrollView';
 import { Colors } from '../../constants/colors';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
@@ -41,6 +42,12 @@ export function BottomSheet({
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
+  // With the keyboard up, the sheet may only be as tall as the space above it, or its
+  // top (and title) would be pushed off the screen.
+  const keyboardTop = useKeyboardTop();
+  const insets = useSafeAreaInsets();
+  const sheetMaxHeight = keyboardTop == null ? maxHeight : Math.min(maxHeight, keyboardTop - insets.top - 12);
+
   return (
     <Modal
       transparent
@@ -56,20 +63,20 @@ export function BottomSheet({
         {/* Sheets host forms across the app, so the composer/inputs inside
             need to clear the keyboard on Android too -see KeyboardAvoider. */}
         <KeyboardAvoider style={{ flex: 0 }} pointerEvents="box-none">
-          <View style={[styles.sheet, { maxHeight }]}>
+          <View style={[styles.sheet, { maxHeight: sheetMaxHeight }]}>
             <View style={styles.handle} />
             {title && (
               <View style={styles.header}>
                 <Text style={styles.title}>{title}</Text>
               </View>
             )}
-            <ScrollView
+            <FormScrollView
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.content}
               keyboardShouldPersistTaps="handled"
             >
               {children}
-            </ScrollView>
+            </FormScrollView>
           </View>
         </KeyboardAvoider>
       </View>

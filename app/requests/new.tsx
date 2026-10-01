@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Platform,
-  KeyboardAvoidingView,
 } from 'react-native';
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -17,7 +17,20 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
-import { usePermissions, useSubmitPermission, type PermissionDurationMinutes } from '../../src/hooks/useRequests';
+import { usePermissions, useSubmitPermission } from '../../src/hooks/useRequests';
+import { useShiftStats, permissionLimitFromStats } from '../../src/hooks/useShiftStats';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence, workflowOff } from '../../src/lib/approval';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
+import { checkRequestDate } from '../../src/lib/requestWindow';
+import { monthOfDate, requestPickerLimits } from '../../src/lib/requestWindowForm';
+import {
+  PERMISSION_DURATION_LABEL,
+  PERMISSION_TYPE_OPTIONS,
+  capRulesKnown,
+  permissionSubmitError,
+  resolvePermissionLimit,
+} from '../../src/lib/permissions';
 import { TextArea } from '../../src/components/ui/TextArea';
 import { Button } from '../../src/components/ui/Button';
 import { DatePickerField, TimePickerField } from '../../src/components/ui/DatePickerField';
@@ -29,22 +42,13 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
 
-const now = new Date();
-const todayStr = format(now, 'yyyy-MM-dd');
-
-const PERMISSION_TYPES: { key: 'Late Check-In' | 'Early Check-Out' | 'Mid-Shift Short Leave'; value: 'Late In' | 'Early Out' | 'Short Leave'; icon: string; hint: string }[] = [
-  { key: 'Late Check-In', value: 'Late In', icon: 'login', hint: 'Arriving after shift start' },
-  { key: 'Early Check-Out', value: 'Early Out', icon: 'logout', hint: 'Leaving before shift close' },
-  { key: 'Mid-Shift Short Leave', value: 'Short Leave', icon: 'swap-horizontal', hint: 'Out & back within shift' },
-];
-
-const DURATIONS: PermissionDurationMinutes[] = [30, 45, 60, 90];
-
+// `type` holds the WIRE value of PERMISSION_TYPE_OPTIONS: the LEGACY spelling ("Late In" /
+// "Early Out" / "Short Leave"), which the old backend requires and the new one accepts -only the
+// on-screen labels changed. Every permission is a fixed hour, so there is no duration field.
 const schema = z.object({
   type: z.string().min(1, 'Select a permission type'),
   date: z.string().min(1, 'Date is required'),
   time: z.string().min(1, 'Time is required'),
-  durationMinutes: z.union([z.literal(30), z.literal(45), z.literal(60), z.literal(90)]),
   reason: z.string().min(5, 'Provide a reason (min 5 characters)').max(200, 'Reason is too long (max 200 characters)'),
 });
 type FormData = z.infer<typeof schema>;
@@ -55,24 +59,50 @@ export default function NewPermissionRequestScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
+  // "Now" is read when the screen renders (and again at submit), never once at module load: the app process lives for
+  // days, and the request window moves on the 1st-3rd of a month.
+  const now = new Date();
+  const limits = requestPickerLimits(now);
+
   const { user } = useAuth();
-  const month = now.getMonth() + 1;
-  const year = now.getFullYear();
-  const { data } = usePermissions(user?.employeeId ?? null, month, year);
+  const { data: shiftStats } = useShiftStats(now.getMonth() + 1, now.getFullYear());
   const submit = useSubmitPermission(user?.employeeId ?? null);
+  // Who approves a permission, and whether HR has switched new ones off. Only a hint that may be a minute old: the
+  // server refuses a new request either way and its message is shown (see onSubmit).
+  const { data: approvalSummary } = useApprovalSummary();
+  const permissionFlow = approvalSummary?.permission;
 
   const [showSuccess, setShowSuccess] = React.useState(false);
   const [toast, setToast] = React.useState({ message: '', type: 'error' as 'success' | 'error', visible: false });
 
-  const { control, handleSubmit, watch, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, watch, setValue, setError, clearErrors, formState: { errors, dirtyFields } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { type: 'Late In', date: todayStr, time: '09:30', durationMinutes: 30, reason: '' },
+    defaultValues: {
+      type: PERMISSION_TYPE_OPTIONS[0].wire,
+      date: limits.defaultDate,
+      time: PERMISSION_TYPE_OPTIONS[0].defaultTime,
+      reason: '',
+    },
   });
 
+  const selectedType = PERMISSION_TYPE_OPTIONS.find((t) => t.wire === watch('type')) ?? PERMISSION_TYPE_OPTIONS[0];
+
+  // The server counts a permission in ITS OWN month, and on the 1st / 2nd the picked day can be in last month: so the
+  // allowance card follows the picked day (this month while the date is empty) and says which month it is about.
+  const picked = monthOfDate(watch('date'), now);
+  const pickedMonthLabel = format(new Date(picked.year, picked.month - 1, 1), 'MMMM yyyy');
+  const { data } = usePermissions(user?.employeeId ?? null, picked.month, picked.year);
+
   const monthlyUsed = data?.monthlyUsed ?? 0;
-  const monthlyLimit = data?.monthlyLimit ?? 3;
+  // The company policy / shift-stats summary carry HR's limit on the new backend; the permission
+  // list only once it has a row; the old backend's is 3.
+  const monthlyLimit = resolvePermissionLimit(permissionLimitFromStats(shiftStats), data?.monthlyLimit);
   const remaining = Math.max(0, monthlyLimit - monthlyUsed);
   const progress = monthlyLimit > 0 ? Math.min(1, monthlyUsed / monthlyLimit) : 0;
+  // Does the server speak the monthly-limit rules (Allowed / Overdue-Excess)? An older backend
+  // sends no policy, cap or capStatus/statusLabel, and then the copy stays neutral rather than
+  // asserting rules it cannot back.
+  const capKnown = capRulesKnown({ policy: shiftStats?.policy, summary: shiftStats?.summary, items: data?.items });
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
@@ -80,12 +110,22 @@ export default function NewPermissionRequestScreen() {
   };
 
   const onSubmit = async (form: FormData) => {
+    // The server is the authority (India time); this check, with "now" read at submit, only guides the employee.
+    const dateMessage = checkRequestDate(form.date, new Date());
+    if (dateMessage) {
+      setError('date', { message: dateMessage });
+      showToast(dateMessage, 'error');
+      return;
+    }
     try {
       await submit.mutateAsync(form);
       setShowSuccess(true);
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.message || 'Failed to submit. Please try again.';
-      showToast(msg, 'error');
+      // Server text wins (a 409 is a duplicate request for that day/type and carries its own message).
+      const message = permissionSubmitError(err);
+      // A refused date (code request_window_closed) is also marked under the date field.
+      if (err?.response?.data?.code === 'request_window_closed') setError('date', { message });
+      showToast(message, 'error');
     }
   };
 
@@ -101,23 +141,37 @@ export default function NewPermissionRequestScreen() {
         </View>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoider style={{ flex: 1 }}>
+        <FormScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {/* Monthly Allowance */}
           <View style={styles.allowanceCard}>
             <View style={styles.allowanceTopRow}>
-              <View>
-                <Text style={styles.allowanceTitle}>Monthly Allowance</Text>
-                <Text style={styles.allowanceSub}>{monthlyLimit} Permissions this cycle</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.allowanceTitle}>Monthly Allowance · {pickedMonthLabel}</Text>
+                <Text style={styles.allowanceSub}>
+                  {capKnown
+                    ? `The first ${monthlyLimit} approved permissions each month are Allowed`
+                    : `${monthlyLimit} permissions a month`}
+                </Text>
               </View>
-              <View style={styles.usedPill}>
-                <Text style={styles.usedPillText}>Used: {monthlyUsed} of {monthlyLimit}</Text>
+              <View style={[styles.usedPill, monthlyUsed >= monthlyLimit && styles.usedPillFull]}>
+                <Text style={[styles.usedPillText, monthlyUsed >= monthlyLimit && styles.usedPillTextFull]}>
+                  Used {monthlyUsed} of {monthlyLimit}
+                </Text>
               </View>
             </View>
             <View style={styles.progressTrack}>
               <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
             </View>
-            <Text style={styles.remainingText}>{remaining} Remaining</Text>
+            <Text style={styles.remainingText}>
+              {remaining > 0 ? `${remaining} Remaining` : 'Limit reached'}
+            </Text>
+            {capKnown && (
+              <Text style={styles.allowanceExplain}>
+                Permissions beyond the limit are Overdue / Excess: they do not protect the day and count toward late
+                deductions.
+              </Text>
+            )}
           </View>
 
           {/* Permission type */}
@@ -127,20 +181,25 @@ export default function NewPermissionRequestScreen() {
             name="type"
             render={({ field: { onChange, value } }) => (
               <View style={{ gap: 8, marginBottom: 18 }}>
-                {PERMISSION_TYPES.map((t) => {
-                  const active = value === t.value;
+                {PERMISSION_TYPE_OPTIONS.map((t) => {
+                  const active = value === t.wire;
                   return (
                     <TouchableOpacity
-                      key={t.value}
+                      key={t.key}
                       style={[styles.typeCard, active && styles.typeCardActive]}
-                      onPress={() => onChange(t.value)}
+                      onPress={() => {
+                        onChange(t.wire);
+                        // Start the time picker somewhere that makes sense for this type, unless
+                        // the employee has already chosen a time themselves.
+                        if (!dirtyFields.time) setValue('time', t.defaultTime);
+                      }}
                       activeOpacity={0.85}
                     >
                       <View style={[styles.typeIconWrap, active && styles.typeIconWrapActive]}>
                         <MaterialCommunityIcons name={t.icon as any} size={17} color={active ? '#fff' : Colors.textMuted} />
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={[styles.typeLabel, active && styles.typeLabelActive]}>{t.key}</Text>
+                        <Text style={[styles.typeLabel, active && styles.typeLabelActive]}>{t.label}</Text>
                         <Text style={[styles.typeHint, active && styles.typeHintActive]}>{t.hint}</Text>
                       </View>
                       <View style={[styles.radio, active && styles.radioActive]}>
@@ -163,38 +222,32 @@ export default function NewPermissionRequestScreen() {
             control={control}
             name="date"
             render={({ field: { onChange, value } }) => (
-              <DatePickerField label="Date of Permission" value={value} onChange={onChange} error={errors.date?.message} />
+              <DatePickerField
+                label="Date of Permission"
+                value={value}
+                onChange={(v) => { onChange(v); clearErrors('date'); }}
+                error={errors.date?.message}
+                minDate={limits.minDate}
+                maxDate={limits.maxDate}
+                hint={limits.hint}
+              />
             )}
           />
           <Controller
             control={control}
             name="time"
             render={({ field: { onChange, value } }) => (
-              <TimePickerField label="Expected Time" value={value} onChange={onChange} error={errors.time?.message} />
+              <TimePickerField label={selectedType.timeLabel} value={value} onChange={onChange} error={errors.time?.message} />
             )}
           />
 
-          <Text style={styles.fieldLabel}>Duration Requested</Text>
-          <Controller
-            control={control}
-            name="durationMinutes"
-            render={({ field: { onChange, value } }) => (
-              <View style={styles.durationRow}>
-                {DURATIONS.map((d) => (
-                  <TouchableOpacity
-                    key={d}
-                    style={[styles.durationChip, value === d && styles.durationChipActive]}
-                    onPress={() => onChange(d)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={[styles.durationChipText, value === d && styles.durationChipTextActive]}>
-                      {d} m{d === 90 ? ' (Max)' : ''}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-          />
+          {/* Every permission is a fixed hour now -nothing to choose. */}
+          <Text style={styles.fieldLabel}>Duration</Text>
+          <View style={styles.durationFixed}>
+            <MaterialCommunityIcons name="timer-outline" size={18} color={Colors.primary} />
+            <Text style={styles.durationFixedText}>{PERMISSION_DURATION_LABEL}</Text>
+            <Text style={styles.durationFixedTag}>Fixed</Text>
+          </View>
 
           {/* Reason */}
           <Controller
@@ -217,17 +270,28 @@ export default function NewPermissionRequestScreen() {
           <View style={styles.noteCard}>
             <MaterialCommunityIcons name="information-outline" size={16} color={Colors.primary} />
             <Text style={styles.noteText}>
-              Every employee gets {monthlyLimit} free permissions a month. Additional requests beyond that may incur a
-              proportional shift deduction — HR reviews and approves each request.
+              {pipelineSentence(permissionFlow)}
+              {capKnown
+                ? ' An Allowed Morning Late-In moves that day\'s shift start 1 hour later; an '
+                  + 'Allowed Evening Early-Out moves the shift end 1 hour earlier; a Middle One-Hour Permission never '
+                  + 'moves either.'
+                : ''}
             </Text>
           </View>
 
-          <Button title="Submit Permission Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} style={{ marginTop: 4 }} />
+          <WorkflowOffNote workflow={permissionFlow} style={styles.offNote} />
+          <Button
+            title="Submit Permission Request"
+            onPress={handleSubmit(onSubmit)}
+            loading={submit.isPending}
+            disabled={workflowOff(permissionFlow)}
+            style={{ marginTop: 4 }}
+          />
           <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} activeOpacity={0.7}>
             <Text style={styles.cancelBtnText}>Cancel Request</Text>
           </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </FormScrollView>
+      </KeyboardAvoider>
 
       <Toast {...toast} />
       <SuccessOverlay
@@ -271,11 +335,15 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   allowanceTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   allowanceTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
   allowanceSub: { color: Colors.textMuted, fontSize: 11.5, marginTop: 2 },
-  usedPill: { backgroundColor: Colors.badgeRedBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
-  usedPillText: { color: Colors.statusRed, fontSize: 10.5, fontWeight: '800' },
+  usedPill: { backgroundColor: Colors.badgeBlueBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
+  usedPillText: { color: Colors.badgeBlueText, fontSize: 10.5, fontWeight: '800' },
+  // At or over the limit: from here on an approved permission is Overdue / Excess.
+  usedPillFull: { backgroundColor: Colors.badgeRedBg },
+  usedPillTextFull: { color: Colors.statusRed },
   progressTrack: { height: 6, borderRadius: 3, backgroundColor: Colors.bgSurfaceLow, overflow: 'hidden' },
   progressFill: { height: 6, borderRadius: 3, backgroundColor: Colors.primary },
   remainingText: { color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
+  allowanceExplain: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
 
   sectionLabel: { color: Colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginBottom: 8 },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4, marginBottom: 12 },
@@ -300,11 +368,16 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#fff' },
 
   fieldLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700', marginBottom: 8, marginTop: 2 },
-  durationRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
-  durationChip: { backgroundColor: Colors.bgCard, borderWidth: 1.5, borderColor: Colors.border, borderRadius: BorderRadius.full, paddingHorizontal: 14, paddingVertical: 9 },
-  durationChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  durationChipText: { color: Colors.textSecondary, fontSize: 12.5, fontWeight: '700' },
-  durationChipTextActive: { color: '#fff' },
+  durationFixed: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.bgCard,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1.5, borderColor: Colors.border,
+    paddingHorizontal: 14, paddingVertical: 12,
+    marginBottom: 18,
+  },
+  durationFixedText: { flex: 1, color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  durationFixedTag: { color: Colors.textMuted, fontSize: 10.5, fontWeight: '800' },
 
   noteCard: {
     flexDirection: 'row', gap: 8,
@@ -315,6 +388,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     marginBottom: 18,
   },
   noteText: { flex: 1, color: Colors.textSecondary, fontSize: 11.5, lineHeight: 16 },
+  offNote: { marginBottom: 14 },
 
   errorText: { color: Colors.error, fontSize: 12, marginBottom: 8, marginTop: -4 },
   cancelBtn: { alignItems: 'center', paddingVertical: 14 },

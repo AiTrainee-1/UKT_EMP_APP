@@ -25,6 +25,7 @@ import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Colors } from '../../src/constants/colors';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
@@ -112,9 +113,7 @@ export default function NotificationsScreen() {
 
       <View style={styles.topBar}>
         <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>XT</Text>
-        </View>
+        <UKTLogo size={28} />
         <View style={styles.brandTextWrap}>
           <Text style={styles.brandName}>UKTEXTILES</Text>
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -232,8 +231,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  brandBadge: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
   brandTextWrap: { gap: 1 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },

@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import type { ApprovalProgress } from '../lib/approval';
 
-// See backend/api/outpass_request_views.py::_outpass_request_json. Approving
-// (from either HOD or HR) sets approvedAt/expiresAt -expiresAt is always
-// exactly approvedAt + 60 minutes, computed server-side.
+// See backend/api/outpass_request_views.py::_outpass_request_json. The final
+// approval sets approvedAt/expiresAt -expiresAt is always exactly
+// approvedAt + 60 minutes, computed server-side.
 export type OutpassPassType = 'official' | 'personal' | 'early_dismissal';
 
 export const OUTPASS_PASS_TYPE_LABEL: Record<OutpassPassType, string> = {
@@ -44,6 +45,10 @@ export interface OutpassRequestItem {
   scanStatus?:
     | 'not_applicable' | 'pending_exit' | 'exited' | 'expired_unscanned'
     | 'pending_return' | 'return_expired' | 'completed';
+  // Who a pending request waits for and how far it has got in HR's approval
+  // pipeline. Null for a pass an On-Duty approval raised (no pipeline of its
+  // own), absent on an older backend.
+  approval?: ApprovalProgress | null;
 }
 
 // GET/POST both self-scope to the logged-in employee token server-side —

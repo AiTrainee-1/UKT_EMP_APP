@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useManagerProfile } from '../../src/hooks/useManager';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { DockTabIcon } from '../../src/components/DockTabIcon';
 
@@ -42,6 +43,9 @@ export default function TabsLayout() {
   const bottomInset = Math.max(insets.bottom, 10) + (hardwareNavButtons ? 12 : 6);
   const { user } = useAuth();
   const { data: manager } = useManagerProfile(!!user);
+  // Fetched as soon as the tabs open, so the request screens (who approves, "switched off by HR") already have their
+  // wording on their first frame instead of after a round trip. Nothing here reads it.
+  useApprovalSummary();
 
   const isManager = manager?.isManager ?? false;
   const summedCount =

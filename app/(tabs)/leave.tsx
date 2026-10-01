@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,19 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useLeaveRequests, useLeaveTypes, useApplyLeave, LeaveRequest } from '../../src/hooks/useLeave';
 import { useCasualLeaves, useCLEligibility, useApplyCasualLeave } from '../../src/hooks/useCasualLeave';
 import { useHolidays } from '../../src/hooks/useHolidays';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { approvalErrorMessage, workflowOff } from '../../src/lib/approval';
+import { checkRequestDate } from '../../src/lib/requestWindow';
+import {
+  casualLeaveAvailable,
+  casualLeaveClosedReason,
+  casualLeaveDefaultDate,
+  casualLeaveMonthBlock,
+  isoToLocalDate,
+  rangeFieldErrors,
+  requestPickerLimits,
+} from '../../src/lib/requestWindowForm';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { LeaveCard } from '../../src/components/LeaveCard';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
@@ -36,12 +49,11 @@ import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { DatePickerField } from '../../src/components/ui/DatePickerField';
 import { Colors } from '../../src/constants/colors';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
-
-const todayStr = format(new Date(), 'yyyy-MM-dd');
 
 const schema = z.object({
   // Not required at the schema level -a Half Day request skips the leave-type
@@ -55,13 +67,14 @@ const schema = z.object({
 });
 type FormData = z.infer<typeof schema>;
 
-const defaultValues: FormData = {
+// The sheet's starting values. `today` is read each time the sheet opens (see openApply), never once at module load.
+const makeDefaults = (today: string): FormData => ({
   leaveTypeId: '',
-  date: todayStr,
-  startDate: todayStr,
-  endDate: todayStr,
+  date: today,
+  startDate: today,
+  endDate: today,
   reason: '',
-};
+});
 
 type ReqTab = 'live' | 'confirmed';
 
@@ -70,6 +83,11 @@ export default function LeaveScreen() {
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+
+  // "Now" is read at render (and again at submit): this tab stays mounted for days, so a value captured at module load
+  // would go stale, and be wrong exactly around the 1st-3rd when the request window moves.
+  const limits = requestPickerLimits(new Date());
+  const todayStr = limits.window.today;
 
   const { user, logout } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -81,8 +99,11 @@ export default function LeaveScreen() {
   };
   const [showApply, setShowApply] = useState(false);
   const [showCLApply, setShowCLApply] = useState(false);
-  const [clDate, setClDate] = useState(todayStr);
+  const [clDate, setClDate] = useState(limits.defaultDate);
   const [clReason, setClReason] = useState('');
+  // Errors are shown inside the sheets: the Toast is drawn behind their Modal. `server` is the server's own sentence.
+  const [clErrors, setClErrors] = useState<{ date?: string; reason?: string; server?: string }>({});
+  const [formError, setFormError] = useState('');
   const [multiDay, setMultiDay] = useState(false);
   const [halfDay, setHalfDay] = useState(false);
   const [halfDaySlot, setHalfDaySlot] = useState<'morning' | 'afternoon' | ''>('');
@@ -101,12 +122,17 @@ export default function LeaveScreen() {
   const { data: leaveTypes, isLoading: typesLoading } = useLeaveTypes();
   const applyLeave = useApplyLeave(user?.employeeId ?? null);
 
-  const { data: clEligibility } = useCLEligibility(user?.employeeId ?? null);
+  const { data: clEligibility, refetch: refetchClEligibility } = useCLEligibility(user?.employeeId ?? null);
   const { data: clRequests } = useCasualLeaves(user?.employeeId ?? null, {
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
   });
   const applyCL = useApplyCasualLeave(user?.employeeId ?? null);
+  // HR can switch a kind of request off (Approval Workflow Control). Only a hint that may be a minute old: the server
+  // refuses a new request either way and its message is shown (see onSubmit / onSubmitCL).
+  const { data: approvalSummary } = useApprovalSummary();
+  const leaveOff = workflowOff(approvalSummary?.leave);
+  const casualLeaveOff = workflowOff(approvalSummary?.casualLeave);
   const { data: holidays } = useHolidays(new Date().getFullYear());
   const nextHoliday = (holidays ?? [])
     .filter((h) => new Date(h.date) >= new Date(todayStr))
@@ -139,17 +165,34 @@ export default function LeaveScreen() {
   const hasActiveFilters = !!typeFilter || !!dateFrom || !!dateTo;
   const clearFilters = () => { setTypeFilter(null); setDateFrom(undefined); setDateTo(undefined); };
 
-  const { control, handleSubmit, reset, watch, setError, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, reset, watch, setError, clearErrors, setValue, getValues, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues,
+    defaultValues: makeDefaults(limits.defaultDate),
   });
 
   const watchStart = watch('startDate');
   const watchEnd = watch('endDate');
+  // The End Date picker starts at the chosen Start Date, but never before the request window opens.
+  const endMinDate = watchStart && watchStart > limits.window.min && watchStart <= limits.window.max
+    ? isoToLocalDate(watchStart)
+    : limits.minDate;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
+  };
+
+  // The Toast is drawn behind the sheet's Modal, so a refusal is also shown inside the sheet, above Submit.
+  const failInSheet = (message: string) => {
+    setFormError(message);
+    showToast(message, 'error');
+  };
+
+  // Every time the sheet opens it starts from today as of now (this tab stays mounted for days), held inside the window.
+  const openApply = () => {
+    reset(makeDefaults(requestPickerLimits(new Date()).defaultDate));
+    setFormError('');
+    setShowApply(true);
   };
 
   const closeSheet = () => {
@@ -157,13 +200,43 @@ export default function LeaveScreen() {
     setMultiDay(false);
     setHalfDay(false);
     setHalfDaySlot('');
-    reset(defaultValues);
+    setFormError('');
+    reset(makeDefaults(requestPickerLimits(new Date()).defaultDate));
+  };
+
+  // Changing any leave date clears every date message, not just the touched field's: the messages were about the dates as they
+  // were (fixing the Start Date can settle an End Date error), and the live "end before start" line shows only without one.
+  const pickLeaveDate = (next: string, onChange: (v: string) => void) => {
+    onChange(next);
+    clearErrors(['date', 'startDate', 'endDate']);
+    setFormError('');
+  };
+
+  // Only the date fields shown for the current mode matter, but the hidden ones still go through the schema. Copy the visible
+  // ones into them first, so an error on a field the employee cannot see can never block Submit without a word.
+  const submitLeave = () => {
+    setFormError('');
+    if (multiDay) {
+      setValue('date', getValues('startDate'));
+    } else {
+      setValue('startDate', getValues('date'));
+      setValue('endDate', getValues('date'));
+    }
+    return handleSubmit(onSubmit)();
   };
 
   const onSubmit = async (data: FormData) => {
+    // The server is the authority (India time); this device-clock check, read now, only saves the employee a round trip.
+    const now = new Date();
     if (halfDay) {
       if (!halfDaySlot) {
-        showToast('Please select Morning or Afternoon.', 'error');
+        failInSheet('Please select Morning or Afternoon.');
+        return;
+      }
+      const dateMessage = checkRequestDate(data.date, now);
+      if (dateMessage) {
+        setError('date', { message: dateMessage });
+        setFormError(dateMessage);
         return;
       }
       try {
@@ -177,8 +250,8 @@ export default function LeaveScreen() {
         closeSheet();
         setSuccessMsg('Your half-day leave request has been sent for approval.');
         setShowSuccess(true);
-      } catch {
-        showToast('Failed to submit. Please try again.', 'error');
+      } catch (err) {
+        failInSheet(approvalErrorMessage(err, 'Failed to submit. Please try again.'));
       }
       return;
     }
@@ -189,9 +262,22 @@ export default function LeaveScreen() {
     }
     const startDate = multiDay ? data.startDate : data.date;
     const endDate = multiDay ? data.endDate : data.date;
-    if (multiDay && endDate < startDate) {
-      setError('endDate', { message: 'End date must be on or after start date' });
-      return;
+    if (multiDay) {
+      // Both ends must be inside the window, and the end not before the start; each message goes under the picker it is about.
+      const range = rangeFieldErrors(startDate, endDate, now);
+      if (range.start) setError('startDate', { message: range.start });
+      if (range.end) setError('endDate', { message: range.end });
+      if (range.start || range.end) {
+        setFormError((range.start ?? range.end) as string);
+        return;
+      }
+    } else {
+      const dateMessage = checkRequestDate(startDate, now);
+      if (dateMessage) {
+        setError('date', { message: dateMessage });
+        setFormError(dateMessage);
+        return;
+      }
     }
     try {
       await applyLeave.mutateAsync({
@@ -203,29 +289,83 @@ export default function LeaveScreen() {
       closeSheet();
       setSuccessMsg('Your leave request has been sent for approval.');
       setShowSuccess(true);
-    } catch {
-      showToast('Failed to submit. Please try again.', 'error');
+    } catch (err) {
+      failInSheet(approvalErrorMessage(err, 'Failed to submit. Please try again.'));
+    }
+  };
+
+  // Casual Leave: which months the server says can be applied for (previous month only while the grace is open, then the
+  // current month). Absent on an older server, then the single `eligible` flag decides as before.
+  const clMonths = clEligibility?.months;
+  const clOpen = casualLeaveAvailable(clEligibility?.eligible, clMonths);
+  // Set when the month of the picked date is listed and not eligible: shown under the date, and Submit is blocked.
+  const clMonthBlock = casualLeaveMonthBlock(clDate, clMonths);
+  const clFormError = clErrors.server ?? clErrors.date ?? clErrors.reason;
+
+  // `refresh` false: the answer was just fetched (onCLCardPress), `months` is that fresh list.
+  const openCL = (refresh = true, months = clMonths) => {
+    // The list may be hours old (this tab stays mounted): ask again, so the months match the day it is opened.
+    if (refresh) refetchClEligibility({ cancelRefetch: false });
+    // On a grace day with only last month left open it starts on last month, not on a red message about the new month.
+    setClDate(casualLeaveDefaultDate(new Date(), months));
+    setClReason('');
+    setClErrors({});
+    setShowCLApply(true);
+  };
+
+  // The card is dead while the cached answer says closed, and that answer can be old (the month moved on, or last month's grace
+  // days opened it again; nothing else would refresh it). So a tap on a closed card asks the server first, then decides.
+  const clTapBusy = useRef(false);
+  const onCLCardPress = async () => {
+    if (casualLeaveOff) return;
+    if (clOpen) {
+      openCL();
+      return;
+    }
+    if (clTapBusy.current) return;
+    clTapBusy.current = true;
+    try {
+      const res = await refetchClEligibility({ cancelRefetch: false });
+      // A failed refresh keeps the old answer, so only a good one may open the sheet.
+      if (res.isSuccess && res.data && casualLeaveAvailable(res.data.eligible, res.data.months)) openCL(false, res.data.months);
+    } finally {
+      clTapBusy.current = false;
     }
   };
 
   const closeCLSheet = () => {
     setShowCLApply(false);
-    setClDate(todayStr);
+    setClDate(casualLeaveDefaultDate(new Date(), clMonths));
     setClReason('');
+    setClErrors({});
+  };
+
+  // Pull-to-refresh renews the whole screen, the Casual Leave card included.
+  const onRefresh = () => {
+    refetchReq();
+    refetchClEligibility();
   };
 
   const onSubmitCL = async () => {
-    if (clReason.trim().length < 5) {
-      showToast('Please provide a reason (min 5 characters).', 'error');
+    // The server is the authority (India time); this check, with "now" read at submit, only guides the employee.
+    const dateMessage = checkRequestDate(clDate, new Date());
+    const reasonMessage = clReason.trim().length < 5 ? 'Please provide a reason (min 5 characters).' : undefined;
+    if (dateMessage || reasonMessage || clMonthBlock) {
+      setClErrors({ date: dateMessage ?? undefined, reason: reasonMessage });
+      if (reasonMessage) showToast(reasonMessage, 'error');
       return;
     }
+    setClErrors({});
     try {
       await applyCL.mutateAsync({ date: clDate, reason: clReason.trim() });
       closeCLSheet();
       setSuccessMsg('Your casual leave request has been submitted.');
       setShowSuccess(true);
     } catch (err: any) {
-      const msg = err?.response?.data?.error || err?.response?.data?.message || 'Failed to submit. Please try again.';
+      const data = err?.response?.data;
+      const msg = data?.error || data?.message || 'Failed to submit. Please try again.';
+      // A refused date (code request_window_closed) is also marked under the date, where the employee will look for it.
+      setClErrors({ date: data?.code === 'request_window_closed' ? msg : undefined, server: msg });
       showToast(msg, 'error');
     }
   };
@@ -236,9 +376,7 @@ export default function LeaveScreen() {
 
       <View style={styles.topBar}>
         <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>XT</Text>
-        </View>
+        <UKTLogo size={28} />
         <View style={styles.brandTextWrap}>
           <Text style={styles.brandName}>UKTEXTILES</Text>
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -265,7 +403,7 @@ export default function LeaveScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
-            onRefresh={refetchReq}
+            onRefresh={onRefresh}
             tintColor={Colors.primary}
             colors={[Colors.primary]}
           />
@@ -277,17 +415,23 @@ export default function LeaveScreen() {
             <Text style={styles.title}>Leave Portal</Text>
             <Text style={styles.subtitle}>Manage your leave requests</Text>
           </View>
-          <TouchableOpacity onPress={() => setShowApply(true)} style={styles.applyBtn} activeOpacity={0.85}>
+          <TouchableOpacity
+            onPress={openApply}
+            style={[styles.applyBtn, leaveOff && styles.applyBtnOff]}
+            activeOpacity={0.85}
+            disabled={leaveOff}
+          >
             <MaterialCommunityIcons name="plus" size={16} color="#fff" />
             <Text style={styles.applyText}>Apply Leave</Text>
           </TouchableOpacity>
         </View>
+        <WorkflowOffNote workflow={approvalSummary?.leave} style={styles.offNote} />
 
         {/* Casual Leave */}
         <TouchableOpacity
           style={styles.clCard}
-          onPress={() => clEligibility?.eligible !== false && setShowCLApply(true)}
-          activeOpacity={clEligibility?.eligible === false ? 1 : 0.85}
+          onPress={onCLCardPress}
+          activeOpacity={!clOpen || casualLeaveOff ? 1 : 0.85}
         >
           <View style={styles.clTopRow}>
             <View style={styles.clIcon}>
@@ -296,17 +440,18 @@ export default function LeaveScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.clTitle}>Casual Leave (CL)</Text>
               <Text style={styles.clSub} numberOfLines={1}>
-                {clEligibility?.eligible === false
-                  ? clEligibility.reason || 'Not eligible this month'
+                {!clOpen
+                  ? casualLeaveClosedReason(clMonths, clEligibility?.reason || 'Not eligible this month')
                   : `${clRequests?.length ?? 0} applied this month`}
               </Text>
             </View>
-            {clEligibility?.eligible !== false ? (
+            {clOpen && !casualLeaveOff ? (
               <View style={styles.clQuickBtn}>
                 <Text style={styles.clQuickBtnText}>Quick Apply</Text>
               </View>
             ) : null}
           </View>
+          <WorkflowOffNote workflow={approvalSummary?.casualLeave} />
           {clEligibility?.yearlyEntitlement != null && (
             <>
               <View style={styles.clBalanceRow}>
@@ -453,7 +598,7 @@ export default function LeaveScreen() {
                       <TouchableOpacity
                         key={t.id}
                         style={[styles.chip, value === String(t.id) && styles.chipActive]}
-                        onPress={() => onChange(String(t.id))}
+                        onPress={() => { onChange(String(t.id)); setFormError(''); }}
                       >
                         <Text style={[styles.chipText, value === String(t.id) && styles.chipTextActive]}>
                           {t.name}
@@ -475,7 +620,7 @@ export default function LeaveScreen() {
           </View>
           <Switch
             value={multiDay}
-            onValueChange={(v) => { setMultiDay(v); if (v) setHalfDay(false); }}
+            onValueChange={(v) => { setMultiDay(v); if (v) setHalfDay(false); setFormError(''); }}
             trackColor={{ false: Colors.outlineVariant, true: Colors.primaryLight }}
             thumbColor={multiDay ? Colors.primary : Colors.bgSurfaceHighest}
           />
@@ -488,7 +633,7 @@ export default function LeaveScreen() {
           </View>
           <Switch
             value={halfDay}
-            onValueChange={(v) => { setHalfDay(v); if (v) setMultiDay(false); else setHalfDaySlot(''); }}
+            onValueChange={(v) => { setHalfDay(v); if (v) setMultiDay(false); else setHalfDaySlot(''); setFormError(''); }}
             trackColor={{ false: Colors.outlineVariant, true: Colors.primaryLight }}
             thumbColor={halfDay ? Colors.primary : Colors.bgSurfaceHighest}
           />
@@ -505,7 +650,7 @@ export default function LeaveScreen() {
                 <TouchableOpacity
                   key={opt.key}
                   style={[styles.chip, halfDaySlot === opt.key && styles.chipActive]}
-                  onPress={() => setHalfDaySlot(opt.key)}
+                  onPress={() => { setHalfDaySlot(opt.key); setFormError(''); }}
                 >
                   <Text style={[styles.chipText, halfDaySlot === opt.key && styles.chipTextActive]}>
                     {opt.label}
@@ -521,7 +666,15 @@ export default function LeaveScreen() {
             control={control}
             name="date"
             render={({ field: { onChange, value } }) => (
-              <DatePickerField label="Date" value={value} onChange={onChange} error={errors.date?.message} />
+              <DatePickerField
+                label="Date"
+                value={value}
+                onChange={(v) => pickLeaveDate(v, onChange)}
+                error={errors.date?.message}
+                minDate={limits.minDate}
+                maxDate={limits.maxDate}
+                hint={limits.hint}
+              />
             )}
           />
         ) : (
@@ -530,7 +683,15 @@ export default function LeaveScreen() {
               control={control}
               name="startDate"
               render={({ field: { onChange, value } }) => (
-                <DatePickerField label="Start Date" value={value} onChange={onChange} error={errors.startDate?.message} />
+                <DatePickerField
+                  label="Start Date"
+                  value={value}
+                  onChange={(v) => pickLeaveDate(v, onChange)}
+                  error={errors.startDate?.message}
+                  minDate={limits.minDate}
+                  maxDate={limits.maxDate}
+                  hint={limits.hint}
+                />
               )}
             />
             <Controller
@@ -540,14 +701,16 @@ export default function LeaveScreen() {
                 <DatePickerField
                   label="End Date"
                   value={value}
-                  onChange={onChange}
+                  onChange={(v) => pickLeaveDate(v, onChange)}
                   error={errors.endDate?.message}
-                  minDate={watchStart ? new Date(watchStart + 'T00:00:00') : undefined}
+                  minDate={endMinDate}
+                  maxDate={limits.maxDate}
+                  hint={limits.hint}
                 />
               )}
             />
-            {watchStart && watchEnd && watchEnd < watchStart && (
-              <Text style={styles.errorText}>End date must be on or after start date</Text>
+            {watchStart && watchEnd && watchEnd < watchStart && !errors.endDate && (
+              <Text style={styles.errorText}>End date must be on or after start date.</Text>
             )}
           </>
         )}
@@ -560,7 +723,7 @@ export default function LeaveScreen() {
               label="Reason"
               placeholder="Describe your reason for leave…"
               value={value}
-              onChangeText={onChange}
+              onChangeText={(t) => { onChange(t); setFormError(''); }}
               onBlur={onBlur}
               minLength={5}
               maxLength={300}
@@ -569,21 +732,35 @@ export default function LeaveScreen() {
           )}
         />
 
-        <Button title="Submit Leave Request" onPress={handleSubmit(onSubmit)} loading={applyLeave.isPending} />
+        {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+        <WorkflowOffNote workflow={approvalSummary?.leave} style={styles.offNote} />
+        <Button title="Submit Leave Request" onPress={submitLeave} loading={applyLeave.isPending} disabled={leaveOff} />
       </BottomSheet>
 
       {/* Apply Casual Leave Sheet */}
       <BottomSheet visible={showCLApply} onClose={closeCLSheet} title="Apply for Casual Leave">
-        <DatePickerField label="Date" value={clDate} onChange={setClDate} minDate={new Date()} />
+        <DatePickerField
+          label="Date"
+          value={clDate}
+          onChange={(v) => { setClDate(v); setClErrors((e) => ({ ...e, date: undefined, server: undefined })); }}
+          error={clErrors.date ?? clMonthBlock ?? undefined}
+          minDate={limits.minDate}
+          maxDate={limits.maxDate}
+          hint={limits.hint}
+        />
         <TextArea
           label="Reason"
           placeholder="Describe your reason for casual leave…"
           value={clReason}
-          onChangeText={setClReason}
+          onChangeText={(t) => { setClReason(t); setClErrors((e) => ({ ...e, reason: undefined, server: undefined })); }}
           minLength={5}
           maxLength={200}
+          error={clErrors.reason}
         />
-        <Button title="Submit Request" onPress={onSubmitCL} loading={applyCL.isPending} />
+        {/* The same sentence again next to Submit: the field it belongs to may be scrolled out of sight. */}
+        {clFormError ? <Text style={styles.errorText}>{clFormError}</Text> : null}
+        <WorkflowOffNote workflow={approvalSummary?.casualLeave} style={styles.offNote} />
+        <Button title="Submit Request" onPress={onSubmitCL} loading={applyCL.isPending} disabled={casualLeaveOff || !!clMonthBlock} />
       </BottomSheet>
 
       <Toast {...toast} />
@@ -601,8 +778,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bgLight },
 
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  brandBadge: { width: 30, height: 30, borderRadius: 8, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
   brandTextWrap: { gap: 1 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
@@ -622,6 +797,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     paddingVertical: 10,
   },
   applyText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
+  applyBtnOff: { opacity: 0.5 },
+  offNote: { marginBottom: 14 },
 
   content: { paddingHorizontal: 16, paddingBottom: 100, gap: 4, paddingTop: 8 },
   sectionTitle: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800', marginBottom: 10, marginTop: 16 },

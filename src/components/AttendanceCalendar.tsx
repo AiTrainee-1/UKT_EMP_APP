@@ -7,6 +7,9 @@ import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 import { AttendanceRecord } from '../hooks/useAttendance';
+import type { DetectionFlags } from '../hooks/useShiftStats';
+import { getRequestWindow } from '../lib/requestWindow';
+import type { RequestWindow } from '../lib/requestWindow';
 import { BottomSheet } from './ui/BottomSheet';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -18,9 +21,12 @@ const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const makeStatusBg = (Colors: Palette): Record<string, string> => ({
   Present: Colors.clayGreen,
-  'Half Shift': Colors.clayOrange,
+  'Half Day': Colors.clayOrange,
   Absent: Colors.clayRed,
-  Late: Colors.clayYellow,
+  'Late-In': Colors.clayYellow,
+  // Early-Out has no soft tint of its own; the Leave-purple badge tint keeps it
+  // apart from Late-In's yellow and Half Day's orange.
+  'Early-Out': Colors.badgeLeaveBg,
   Permission: Colors.clayBlue,
   'On Leave': Colors.clayBlue,
   Holiday: Colors.bgSurfaceMid,
@@ -29,16 +35,17 @@ const makeStatusBg = (Colors: Palette): Record<string, string> => ({
 
 const makeStatusText = (Colors: Palette): Record<string, string> => ({
   Present: Colors.statusGreen,
-  'Half Shift': Colors.statusOrange,
+  'Half Day': Colors.statusOrange,
   Absent: Colors.statusRed,
-  Late: Colors.statusYellow,
+  'Late-In': Colors.statusYellow,
+  'Early-Out': Colors.statusLeave,
   Permission: Colors.statusBlue,
   'On Leave': Colors.primary,
   Holiday: Colors.textMuted,
   Weekend: Colors.textMuted,
 });
 
-// A cell's fill alone isn't always enough (Half Shift's orange and Late's
+// A cell's fill alone isn't always enough (Half Day's orange and Late-In's
 // yellow sit close on the wheel) — every status also gets a vivid-toned
 // border ring, so the cell reads as a distinct outlined shape and not just a
 // flat wash of colour. Holiday/Weekend deliberately have no ring: they are
@@ -46,28 +53,83 @@ const makeStatusText = (Colors: Palette): Record<string, string> => ({
 // erase the contrast a ring is meant to add.
 const makeStatusBorder = (Colors: Palette): Record<string, string> => ({
   Present: Colors.statusGreen,
-  'Half Shift': Colors.statusOrange,
+  'Half Day': Colors.statusOrange,
   Absent: Colors.statusRed,
-  Late: Colors.statusYellow,
+  'Late-In': Colors.statusYellow,
+  'Early-Out': Colors.statusLeave,
   Permission: Colors.statusBlue,
   'On Leave': Colors.statusBlue,
 });
 
 const STATUS_ICON: Record<string, string> = {
   Present: 'check',
-  'Half Shift': 'clock-time-four-outline',
+  'Half Day': 'clock-time-four-outline',
   Absent: 'close',
-  Late: 'alert',
+  'Late-In': 'alert',
+  'Early-Out': 'logout',
   Permission: 'hand-back-right-outline',
   'On Leave': 'umbrella',
   Holiday: 'flag',
   Weekend: 'minus',
 };
 
+// The day's facts beyond its one-word status, as small chips in the detail
+// sheet. Late-In / Early-Out / excess permissions are the three kinds of
+// occurrence that share the monthly late pool, so they share the yellow (and
+// Early-Out its own purple); an applied permission is the blue "Permission".
+type ChipTone = 'late' | 'early' | 'permission' | 'excess';
+
+interface DayChip {
+  key: string;
+  label: string;
+  icon: string;
+  tone: ChipTone;
+}
+
+function chipsFor(rec: AttendanceRecord, detect: DetectionFlags): DayChip[] {
+  const chips: DayChip[] = [];
+  // The status badge already says it when it IS the status; chip it otherwise (e.g. on a Half Day).
+  // Late-In / Early-Out wording is dropped when HR has switched that check off.
+  if (detect.lateIn && rec.isLate && rec.status !== 'Late-In') {
+    chips.push({ key: 'late', label: 'Late-In', icon: 'clock-alert-outline', tone: 'late' });
+  }
+  if (detect.earlyOut && rec.isEarlyOut && rec.status !== 'Early-Out') {
+    chips.push({ key: 'early', label: 'Early-Out', icon: 'logout', tone: 'early' });
+  }
+  if (rec.morningPermissionApplied) {
+    chips.push({ key: 'am-applied', label: 'Morning permission applied', icon: 'hand-back-right-outline', tone: 'permission' });
+  }
+  if (rec.eveningPermissionApplied) {
+    chips.push({ key: 'pm-applied', label: 'Evening permission applied', icon: 'hand-back-right-outline', tone: 'permission' });
+  }
+  if (rec.morningPermissionExcess) {
+    chips.push({ key: 'am-excess', label: 'Morning permission: Excess', icon: 'alert-circle-outline', tone: 'excess' });
+  }
+  if (rec.eveningPermissionExcess) {
+    chips.push({ key: 'pm-excess', label: 'Evening permission: Excess', icon: 'alert-circle-outline', tone: 'excess' });
+  }
+  if (rec.middlePermissionToday) {
+    chips.push({ key: 'middle', label: 'Middle One-Hour', icon: 'timer-sand', tone: 'permission' });
+  }
+  if (rec.permissionAfternoon) {
+    chips.push({ key: 'lunch', label: 'Lunch-return permission', icon: 'hand-back-right-outline', tone: 'permission' });
+  }
+  return chips;
+}
+
+const makeChipColors = (Colors: Palette): Record<ChipTone, { bg: string; fg: string }> => ({
+  late: { bg: Colors.clayYellow, fg: Colors.statusYellow },
+  early: { bg: Colors.badgeLeaveBg, fg: Colors.statusLeave },
+  permission: { bg: Colors.clayBlue, fg: Colors.statusBlue },
+  excess: { bg: Colors.clayYellow, fg: Colors.statusYellow },
+});
+
 interface Props {
   records: AttendanceRecord[];
   month: number;
   year: number;
+  /** Which Late Detection checks the company has switched on; unknown (omitted) = both on. */
+  detect?: DetectionFlags;
 }
 
 interface DayAction {
@@ -85,10 +147,15 @@ interface DayAction {
  * find the right screen themselves -so a wrong day mostly went unfixed.
  *
  * Returns a list, not one action, because a day can be two things at once:
- * a Half Shift the employee also arrived late for needs both the missing
+ * a Half Day the employee also arrived late for needs both the missing
  * punch and the permission route offered.
+ *
+ * Only for a day the request forms can still take: they accept dates inside
+ * the request window (this month, plus last month on its 1st and 2nd) and
+ * the chips carry no date, so on a day outside it no chip is offered and
+ * `closed` says so (the sheet then tells the employee to ask HR).
  */
-function actionsFor(rec: AttendanceRecord): DayAction[] {
+function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWindow): { actions: DayAction[]; closed: boolean } {
   const actions: DayAction[] = [];
 
   if (rec.status === 'Absent') {
@@ -100,9 +167,9 @@ function actionsFor(rec: AttendanceRecord): DayAction[] {
     });
   }
 
-  // Half Shift almost always means a punch never reached the system -the
+  // Half Day almost always means a punch never reached the system -the
   // employee worked the day but only half of it can be proven.
-  if (rec.status === 'Half Shift') {
+  if (rec.status === 'Half Day') {
     actions.push({
       label: 'Missing Punch',
       icon: 'fingerprint',
@@ -111,9 +178,9 @@ function actionsFor(rec: AttendanceRecord): DayAction[] {
     });
   }
 
-  // Independent of status: a day can be Present-but-late, or Half Shift AND
-  // late, and each wants a permission request of its own.
-  if (rec.isLate) {
+  // Independent of status: a day can be Present-but-late, Early-Out, or Half
+  // Day AND late, and each wants a permission request of its own.
+  if ((detect.lateIn && rec.isLate) || (detect.earlyOut && rec.isEarlyOut)) {
     actions.push({
       label: 'Permission',
       icon: 'hand-pointing-right',
@@ -122,10 +189,13 @@ function actionsFor(rec: AttendanceRecord): DayAction[] {
     });
   }
 
-  return actions;
+  if (actions.length > 0 && (rec.date < w.min || rec.date > w.max)) return { actions: [], closed: true };
+  return { actions, closed: false };
 }
 
-export function AttendanceCalendar({ records, month, year }: Props) {
+const ALL_CHECKS_ON: DetectionFlags = { lateIn: true, earlyOut: true };
+
+export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_ON }: Props) {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
@@ -133,6 +203,7 @@ export function AttendanceCalendar({ records, month, year }: Props) {
   const STATUS_BG = makeStatusBg(Colors);
   const STATUS_TEXT = makeStatusText(Colors);
   const STATUS_BORDER = makeStatusBorder(Colors);
+  const CHIP_COLORS = makeChipColors(Colors);
 
   const [selected, setSelected] = useState<AttendanceRecord | null>(null);
 
@@ -141,6 +212,9 @@ export function AttendanceCalendar({ records, month, year }: Props) {
   const startPad = getDay(monthStart);
 
   const recordMap = new Map(records.map((r) => [r.date, r]));
+
+  // "Now" is read at render: the screen stays mounted for days and the request window moves on the 1st-3rd of a month.
+  const dayActions = selected ? actionsFor(selected, detect, getRequestWindow(new Date())) : null;
 
   return (
     <View>
@@ -165,10 +239,15 @@ export function AttendanceCalendar({ records, month, year }: Props) {
           const iconName = rec ? (STATUS_ICON[rec.status] ?? 'help') : undefined;
           const borderColor = rec ? STATUS_BORDER[rec.status] : undefined;
 
-          // A day can be Half Shift/Present AND late at once (HRMS tracks
-          // these as two independent flags) — the small corner dot surfaces
-          // the late arrival without needing a second status color.
-          const showLateDot = !!rec?.isLate && (rec?.status === 'Present' || rec?.status === 'Half Shift');
+          // A day can be Half Day/Permission AND late, early-out or carry an
+          // Excess permission at once (HRMS tracks these as independent flags,
+          // and all three are occurrences in the monthly late pool) — the small
+          // corner dot surfaces that without needing a second status color. A
+          // Late-In / Early-Out cell already says so itself.
+          const showLateDot = !!rec
+            && ((detect.lateIn && rec.isLate) || (detect.earlyOut && rec.isEarlyOut)
+              || rec.morningPermissionExcess || rec.eveningPermissionExcess)
+            && (rec.status === 'Present' || rec.status === 'Half Day' || rec.status === 'Permission');
 
           return (
             <TouchableOpacity
@@ -213,12 +292,6 @@ export function AttendanceCalendar({ records, month, year }: Props) {
                 <Text style={[styles.statusText, { color: STATUS_TEXT[selected.status] ?? Colors.textMuted }]}>
                   {selected.status}
                 </Text>
-                {selected.isLate && (selected.status === 'Present' || selected.status === 'Half Shift') && (
-                  <View style={styles.lateBadge}>
-                    <MaterialCommunityIcons name="clock-alert-outline" size={11} color={Colors.statusYellow} />
-                    <Text style={styles.lateBadgeText}>Late</Text>
-                  </View>
-                )}
                 {selected.isCompensationDay && (
                   <View style={[styles.lateBadge, { backgroundColor: Colors.clayBlue }]}>
                     <MaterialCommunityIcons name="calendar-star" size={11} color={Colors.statusBlue} />
@@ -228,7 +301,7 @@ export function AttendanceCalendar({ records, month, year }: Props) {
               </View>
 
               <View style={styles.chipRow}>
-                {actionsFor(selected).map((a) => (
+                {(dayActions?.actions ?? []).map((a) => (
                   <TouchableOpacity
                     key={a.label}
                     style={[styles.chip, { borderColor: a.color + '55', backgroundColor: a.color + '12' }]}
@@ -248,6 +321,41 @@ export function AttendanceCalendar({ records, month, year }: Props) {
                 ))}
               </View>
             </View>
+
+            {/* A problem day the request forms can no longer take: no chips above, only where to go instead. */}
+            {dayActions?.closed && (
+              <Text style={styles.flagNote}>This day is closed for requests. Ask HR to correct it.</Text>
+            )}
+
+            {/* Everything that happened beyond the one-word status: late / early /
+                permission applied / excess. Compact chips, then the server's
+                own reason text when it sent one. */}
+            {(() => {
+              const chips = chipsFor(selected, detect);
+              const excess = selected.morningPermissionExcess || selected.eveningPermissionExcess;
+              return (
+                <>
+                  {chips.length > 0 && (
+                    <View style={styles.flagRow}>
+                      {chips.map((c) => (
+                        <View key={c.key} style={[styles.flagChip, { backgroundColor: CHIP_COLORS[c.tone].bg }]}>
+                          <MaterialCommunityIcons name={c.icon as any} size={12} color={CHIP_COLORS[c.tone].fg} />
+                          <Text style={[styles.flagChipText, { color: CHIP_COLORS[c.tone].fg }]}>{c.label}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  {/* Shown whenever the server sent one (plain-language deadline explanation). */}
+                  {!!selected.lateReason && <Text style={styles.flagNote}>{selected.lateReason}</Text>}
+                  {excess && (
+                    <Text style={styles.flagNote}>
+                      An Excess permission is one approved beyond your monthly limit: it does not protect the day and
+                      counts toward late deductions.
+                    </Text>
+                  )}
+                </>
+              );
+            })()}
 
             {([
               ['Date', format(new Date(selected.date + 'T00:00:00'), 'EEEE, d MMMM yyyy')],
@@ -321,6 +429,16 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: '#fff',
   },
   lateBadgeText: { fontSize: 10, fontWeight: '800', color: Colors.statusYellow },
+
+  // Day-detail flag chips (late / early / permission / excess) + their notes
+  flagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  flagChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: BorderRadius.full,
+  },
+  flagChipText: { fontSize: 11, fontWeight: '800' },
+  flagNote: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, marginBottom: 8 },
 
   detailRow: {
     flexDirection: 'row',

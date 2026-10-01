@@ -310,7 +310,7 @@ EXPO_PUBLIC_APP_NAME=UKTextiles
 
 ### Prerequisites
 
-- Node.js 18 or later
+- Node.js 18 or later (`npm test` runs the shared request-window vectors on the `.ts` files directly, so it needs Node 22.18+ or 24)
 - [Expo Go](https://expo.dev/go) app installed on your phone (SDK 54)
 - Django server running at `http://192.168.0.56:8000`
 

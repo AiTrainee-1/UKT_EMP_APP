@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import api from '../lib/api';
+import type { ApprovalProgress } from '../lib/approval';
 
 export interface GeoPunchPrecheckResult {
   insideRadius: boolean;
@@ -27,12 +28,13 @@ export interface GeoPunchResult {
 /** The destination-request gate — no photos/GPS at this stage, that
  * verification happens per-punch (see OnDutyPunchVerification below).
  *
- * The employee does NOT wait for the HOD->HR chain. The backend reports
- * `status: "active"` to this app the moment the request is submitted, so
- * the session is punchable straight away; `approvalStatus` carries the real
- * HRMS state for display only. Nothing captured counts as attendance until
- * HR approves the request, at which point every punch under it is accepted
- * together — and if HR rejects it, they are all voided.
+ * The employee does NOT wait for the approval pipeline HR configured
+ * (`approval`). The backend reports `status: "active"` to this app the
+ * moment the request is submitted, so the session is punchable straight
+ * away; `approvalStatus` carries the real HRMS state for display only.
+ * Nothing captured counts as attendance until the request's final approval,
+ * at which point every punch under it is accepted together — and if it is
+ * rejected, they are all voided.
  *
  * The session ends the same day, one of three ways: the employee taps Done,
  * all 4 punches are in (closed at capture, not at approval), or the
@@ -61,6 +63,9 @@ export interface OnDutySession {
   completedBy: string | null;
   completionReason: 'manual' | 'auto_4th_punch' | 'auto_day_end' | null;
   createdAt: string | null;
+  /** Who the request waits for and how far it has got in HR's approval pipeline - unlike `status`, which the app
+   *  presents as "active". Absent on an older backend. */
+  approval?: ApprovalProgress | null;
 }
 
 /** One of the day's (up to 4) attendance punches, captured with a selfie +
@@ -170,8 +175,10 @@ export function useOnDutySessionStatus() {
 }
 
 /** Step 1 of the On-Duty flow: just a destination, no photos. Starts the
- * Department Head -> HR approval chain AND opens the session immediately —
- * the employee can punch straight away rather than waiting on approval. */
+ * approval pipeline HR configured AND opens the session immediately —
+ * the employee can punch straight away rather than waiting on approval.
+ * Answers 403 `workflow_disabled` (with a user-ready `error`) while HR has
+ * switched On-Duty requests off. */
 export function useSubmitOnDutySessionRequest() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -8,6 +8,8 @@ import { format } from 'date-fns';
 import QRCode from 'react-native-qrcode-svg';
 
 import { Avatar } from '../ui/Avatar';
+import { ApprovalTrail } from '../approval/ApprovalTrail';
+import { trailWorthShowing, waitingText } from '../../lib/approval';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
@@ -94,6 +96,7 @@ export function OutpassFlipCard({
   const showReturnQr = !!request.returnQrToken;
   const showGenerateReturnQr = !showReturnQr && !!request.canGenerateReturnQr;
   const isReturned = !!request.enteredAt;
+  const showTrail = trailWorthShowing(request.approval);
 
   const generateReturnQr = useGenerateReturnOutpassQr(employee?.id ?? null);
   const handleGenerateReturnQr = async () => {
@@ -249,7 +252,8 @@ export function OutpassFlipCard({
             </View>
 
             <View style={styles.backDetails}>
-              {request.approvedBy && (
+              {/* Who decided it, when, and their comment: the step trail below says it once the server sends one. */}
+              {request.approvedBy && !showTrail && (
                 <View style={styles.backRow}>
                   <Text style={styles.backLabel}>{request.status === 'rejected' ? 'Rejected by' : 'Approved by'}</Text>
                   <Text style={styles.backValue}>
@@ -257,7 +261,7 @@ export function OutpassFlipCard({
                   </Text>
                 </View>
               )}
-              {request.reviewComment && (
+              {request.reviewComment && !showTrail && (
                 <View style={styles.backRow}>
                   <Text style={styles.backLabel}>Comment</Text>
                   <Text style={styles.backValue}>{request.reviewComment}</Text>
@@ -286,8 +290,9 @@ export function OutpassFlipCard({
                 </View>
               )}
               {request.status === 'pending' && (
-                <Text style={styles.backPendingNote}>Waiting for HOD or HR to review this request.</Text>
+                <Text style={styles.backPendingNote}>{waitingText(request.approval) ?? 'Waiting for approval.'}</Text>
               )}
+              <ApprovalTrail approval={request.approval} />
             </View>
           </View>
 

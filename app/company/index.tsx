@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { BorderRadius, Spacing } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
 import type { Palette } from '../../src/theme/palettes';
@@ -113,7 +114,7 @@ export default function CompanyScreen() {
           />
           <View style={styles.heroTopRow}>
             <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>XT</Text>
+              <UKTLogo size={18} />
               <Text style={styles.heroBadgeSub}>UKTEXTILES</Text>
             </View>
             <View style={styles.heroStatusPill}>
@@ -290,7 +291,6 @@ const makeStyles = (C: Palette) =>
       flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     },
     heroBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: BorderRadius.md, paddingHorizontal: 10, paddingVertical: 6 },
-    heroBadgeText: { color: C.primary, fontFamily: FontFamily.displayBold, fontSize: 11 },
     heroBadgeSub: { color: C.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 10 },
     heroStatusPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 5 },
     heroStatusDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#4ADE80' },

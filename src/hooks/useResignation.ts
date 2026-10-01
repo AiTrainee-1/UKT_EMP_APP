@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import type { ApprovalProgress } from '../lib/approval';
 
 export interface ResignationStatus {
   id: number;
@@ -14,6 +15,9 @@ export interface ResignationStatus {
   surveyQ3Answer: string | null;
   approvedAt: string | null;
   createdAt: string;
+  /** Who the resignation waits for and how far it has got in HR's approval pipeline. Absent on an older backend,
+   *  where `status` alone says which of the two fixed stages it is at. */
+  approval?: ApprovalProgress | null;
 }
 
 export interface SubmitResignationPayload {

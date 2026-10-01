@@ -1,35 +1,71 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Dimensions,
   Keyboard,
   Platform,
   StyleProp,
+  View,
   ViewStyle,
   type KeyboardEvent,
   type ViewProps,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { coveredBy, keyboardTop, type KeyboardMetrics } from '../lib/keyboardGeometry';
 
 /**
  * Keeps focused inputs above the on-screen keyboard.
  *
- * Platform split, and the reason for it:
+ * **Android does not always resize the window for the keyboard.** Expo Go and older builds do
+ * (`adjustResize`), so a screen simply gets shorter and everything just works. But an app that
+ * targets Android 15+, which is what an exported APK is, is drawn edge to edge, and then the
+ * system leaves the window alone: the keyboard slides over the bottom of the screen and covers
+ * whatever is there. That is why chat, login and every form worked in Expo Go and not in the APK.
  *
- *  - **Android does nothing here.** The activity already resizes itself when
- *    the keyboard opens (`adjustResize`), so the layout shrinks to the space
- *    above the keyboard on its own — you can see the tab bar come to rest
- *    directly on top of the keyboard. Adding padding on top of that
- *    subtracts the keyboard height a second time, which is what previously
- *    shoved the chat composer to the top of the screen with a large dead gap
- *    beneath it. The correct amount of work to do on Android is none.
+ * So this component does not assume either behaviour. When the keyboard opens it measures where
+ * this view actually is and how much of it the keyboard covers, and pads by exactly that:
+ *  - window resized by the system: the view is already above the keyboard, nothing is covered, pad 0;
+ *  - window not resized: the covered part is the keyboard's height, pad by it.
+ * Because it is measured rather than assumed it can never double-count, and it can be nested
+ * or combined with the system's own resizing safely. The measurement is repeated once shortly
+ * after, in case the system's resize lands after the keyboard event.
  *
- *  - **iOS does need padding.** UIKit does not resize the app window for the
- *    keyboard, so without this the keyboard genuinely covers the input.
- *
- * If a future Android target ever stops resizing (e.g. a switch to
- * `adjustPan`, or an OS change), the fix belongs in the native/app.json
- * windowSoftInputMode config rather than by re-adding padding here — that
- * keeps a single source of truth for how much the layout moves.
+ * iOS never resizes the window, so there the padding follows the keyboard's animation directly.
  */
+
+function readMetrics(): KeyboardMetrics | null {
+  const m = Keyboard.metrics?.();
+  return m && m.height > 0 ? { height: m.height, screenY: m.screenY } : null;
+}
+
+/** The keyboard's size and position while it is showing, otherwise null. */
+export function useKeyboardMetrics(): KeyboardMetrics | null {
+  const [metrics, setMetrics] = useState<KeyboardMetrics | null>(() => (Keyboard.isVisible() ? readMetrics() : null));
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, (e: KeyboardEvent) => {
+      const { height, screenY } = e.endCoordinates;
+      setMetrics(height > 0 ? { height, screenY } : null);
+    });
+    const hide = Keyboard.addListener(hideEvent, () => setMetrics(null));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
+  return metrics;
+}
+
+/** Y (from the top of the window) of the keyboard's top edge while it is showing, otherwise null. */
+export function useKeyboardTop(): number | null {
+  const metrics = useKeyboardMetrics();
+  const navBarInset = useSafeAreaInsets().bottom;
+  return metrics ? keyboardTop(metrics, navBarInset, Dimensions.get('screen').height) : null;
+}
+
 /**
  * True while the on-screen keyboard is visible.
  *
@@ -40,29 +76,10 @@ import {
  * every field scrollable.
  */
 export function useKeyboardVisible(): boolean {
-  const [visible, setVisible] = React.useState(false);
-
-  React.useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, () => setVisible(true));
-    const hide = Keyboard.addListener(hideEvent, () => setVisible(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-
-  return visible;
+  return useKeyboardMetrics() !== null;
 }
 
-export function KeyboardAvoider({
-  children,
-  style,
-  extraOffset = 0,
-  enabled = true,
-  pointerEvents,
-}: {
+interface AvoiderProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
   /** iOS only: extra breathing room between the input and the keyboard. */
@@ -70,12 +87,49 @@ export function KeyboardAvoider({
   enabled?: boolean;
   /** Forwarded so overlay hosts (e.g. BottomSheet) can stay click-through. */
   pointerEvents?: ViewProps['pointerEvents'];
-}) {
-  const pad = useRef(new Animated.Value(0)).current;
-  const active = enabled && Platform.OS === 'ios';
+}
+
+function AndroidAvoider({ children, style, enabled = true, pointerEvents }: AvoiderProps) {
+  const ref = useRef<View>(null);
+  const metrics = useKeyboardMetrics();
+  const navBarInset = useSafeAreaInsets().bottom;
+  const [pad, setPad] = useState(0);
+
+  const measure = useCallback(() => {
+    const view = ref.current;
+    if (!view || !enabled || !metrics) {
+      setPad(0);
+      return;
+    }
+    const top = keyboardTop(metrics, navBarInset, Dimensions.get('screen').height);
+    // The view's own outer edge, which the padding below does not move, so measuring again is stable.
+    view.measureInWindow((_x, y, _width, height) => setPad(coveredBy(y + height, top)));
+  }, [enabled, metrics, navBarInset]);
 
   useEffect(() => {
-    if (!active) return;
+    measure();
+    const again = setTimeout(measure, 160);
+    return () => clearTimeout(again);
+  }, [measure]);
+
+  return (
+    <View
+      ref={ref}
+      collapsable={false}
+      onLayout={measure}
+      pointerEvents={pointerEvents}
+      style={[{ flex: 1 }, style, pad > 0 ? { paddingBottom: pad } : null]}
+    >
+      {children}
+    </View>
+  );
+}
+
+function IosAvoider({ children, style, extraOffset = 0, enabled = true, pointerEvents }: AvoiderProps) {
+  const pad = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!enabled) return;
 
     // The "Will" pair fires with a duration we can match, so the padding
     // animates in lockstep with the keyboard rather than trailing it.
@@ -101,14 +155,15 @@ export function KeyboardAvoider({
       showSub.remove();
       hideSub.remove();
     };
-  }, [active, extraOffset, pad]);
+  }, [enabled, extraOffset, pad]);
 
   return (
-    <Animated.View
-      pointerEvents={pointerEvents}
-      style={[{ flex: 1 }, style, active ? { paddingBottom: pad } : null]}
-    >
+    <Animated.View pointerEvents={pointerEvents} style={[{ flex: 1 }, style, enabled ? { paddingBottom: pad } : null]}>
       {children}
     </Animated.View>
   );
+}
+
+export function KeyboardAvoider(props: AvoiderProps) {
+  return Platform.OS === 'ios' ? <IosAvoider {...props} /> : <AndroidAvoider {...props} />;
 }

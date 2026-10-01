@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Platform,
-  KeyboardAvoidingView,
 } from 'react-native';
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -19,6 +19,9 @@ import { format } from 'date-fns';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { useOutpassRequests, useSubmitOutpassRequest, OUTPASS_PASS_TYPE_LABEL, type OutpassPassType } from '../../src/hooks/useOutpass';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence, workflowOff } from '../../src/lib/approval';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { Avatar } from '../../src/components/ui/Avatar';
 import { Input } from '../../src/components/ui/Input';
 import { TextArea } from '../../src/components/ui/TextArea';
@@ -59,6 +62,10 @@ export default function RequestGateOutpassScreen() {
   const { data: employee } = useEmployee(user?.employeeId ?? null);
   const { data: requests } = useOutpassRequests(user?.employeeId ?? null);
   const submit = useSubmitOutpassRequest(user?.employeeId ?? null);
+  // Who approves an outpass, and whether HR has switched new ones off. Only a hint that may be a minute old: the server
+  // refuses a new request either way and its message is shown (see onSubmit).
+  const { data: approvalSummary } = useApprovalSummary();
+  const outpassFlow = approvalSummary?.outpass;
 
   const [showSuccess, setShowSuccess] = React.useState(false);
   const [toast, setToast] = React.useState({ message: '', type: 'error' as 'success' | 'error', visible: false });
@@ -108,8 +115,8 @@ export default function RequestGateOutpassScreen() {
         </View>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoider style={{ flex: 1 }}>
+        <FormScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {/* Employee card */}
           <View style={styles.empCard}>
             <Avatar uri={employee?.photoUrl} name={employee?.name ?? user?.name} size={40} borderColor={Colors.border} />
@@ -210,17 +217,24 @@ export default function RequestGateOutpassScreen() {
           <View style={styles.noteCard}>
             <MaterialCommunityIcons name="information-outline" size={16} color={Colors.primary} />
             <Text style={styles.noteText}>
-              Your Department Head or HR reviews this request — once approved, a scannable QR pass is generated and
-              valid for 60 minutes from approval.
+              {pipelineSentence(outpassFlow)} Once approved, a scannable QR pass is generated and valid for 60 minutes
+              from approval.
             </Text>
           </View>
 
-          <Button title="Submit Outpass Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} style={{ marginTop: 4 }} />
+          <WorkflowOffNote workflow={outpassFlow} style={styles.offNote} />
+          <Button
+            title="Submit Outpass Request"
+            onPress={handleSubmit(onSubmit)}
+            loading={submit.isPending}
+            disabled={workflowOff(outpassFlow)}
+            style={{ marginTop: 4 }}
+          />
           <TouchableOpacity style={styles.cancelBtn} onPress={() => router.back()} activeOpacity={0.7}>
             <Text style={styles.cancelBtnText}>Cancel</Text>
           </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </FormScrollView>
+      </KeyboardAvoider>
 
       <Toast {...toast} />
       <SuccessOverlay
@@ -297,6 +311,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     marginBottom: 18,
   },
   noteText: { flex: 1, color: Colors.textSecondary, fontSize: 11.5, lineHeight: 16 },
+  offNote: { marginBottom: 14 },
 
   errorText: { color: Colors.error, fontSize: 12, marginBottom: 8, marginTop: -4 },
   cancelBtn: { alignItems: 'center', paddingVertical: 14 },

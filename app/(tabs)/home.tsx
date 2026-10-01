@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format, getDaysInMonth } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -178,9 +179,7 @@ export default function HomeScreen() {
         {/* ─── Top bar: hamburger · brand mark + wordmark · bell · avatar ─── */}
         <View style={styles.topBar}>
           <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
-          <View style={styles.brandBadge}>
-            <Text style={styles.brandBadgeText}>XT</Text>
-          </View>
+          <UKTLogo size={28} />
           <View style={styles.brandTextWrap}>
             <Text style={styles.brandName}>UKTEXTILES</Text>
             <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
@@ -433,12 +432,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
 
   // Top bar
   topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
-  brandBadge: {
-    width: 30, height: 30, borderRadius: 8,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 12 },
   brandTextWrap: { gap: 1 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },

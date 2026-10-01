@@ -1,6 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import type { MissingPunchSlot } from './useRequests';
+import type { ApprovalProgress } from '../lib/approval';
+
+// Every request the Department Head sees carries `approval` (absent on an older backend): where it is in HR's approval
+// pipeline, who it waits for, and whether the Department Head may approve (canAct.hod) or reject (canReject.hod) it now.
+// The pending lists already hold only what this Department Head can decide, so it is a check, not a filter.
 
 export interface ManagerProfile {
   isManager: boolean;
@@ -29,6 +34,7 @@ export interface TeamOutpassRequest {
   reason: string;
   status: string;
   createdAt?: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface TeamLeaveRequest {
@@ -48,6 +54,7 @@ export interface TeamLeaveRequest {
   status: string;
   appliedOn?: string;
   createdAt?: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface TeamPermissionRequest {
@@ -55,15 +62,26 @@ export interface TeamPermissionRequest {
   employeeName?: string;
   employeeCode?: string;
   employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
-  type?: string;
+  /** Legacy wire spelling ("Late In" | "Early Out" | "Short Leave"). Never render it: use
+   *  permissionTypeLabel() from src/lib/permissions. */
+  type?: string | null;
   permissionType?: string;
+  // Additive fields of the rewritten backend (all absent on an older one): the type in the
+  // policy's words, and how the request stands against the month's limit.
+  typeKey?: string | null;
+  typeLabel?: string | null;
+  capStatus?: 'within_cap' | 'excess' | 'not_applicable' | null;
+  statusLabel?: string | null;
+  monthlyLimit?: number | null;
   date: string;
   time: string;
   reason: string;
-  durationMinutes?: 30 | 45 | 60 | 90 | null;
+  /** Always 60 on the new backend; older requests may carry 30/45/90 (or null). */
+  durationMinutes?: number | null;
   status: string;
   appliedOn?: string;
   createdAt?: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface TeamResignationRequest {
@@ -78,6 +96,7 @@ export interface TeamResignationRequest {
   surveyQ3Answer: string | null;
   status: 'pending' | 'dept_approved' | 'approved' | 'rejected';
   createdAt: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface TeamCasualLeaveRequest {
@@ -89,6 +108,7 @@ export interface TeamCasualLeaveRequest {
   reason: string;
   status: string;
   createdAt?: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface TeamAttendanceRequest {
@@ -101,6 +121,7 @@ export interface TeamAttendanceRequest {
   reason: string;
   status: string;
   createdAt?: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface TeamMissingPunchRequest {
@@ -115,6 +136,7 @@ export interface TeamMissingPunchRequest {
   reason: string;
   status: string;
   createdAt?: string;
+  approval?: ApprovalProgress | null;
 }
 
 export interface PendingRequests {

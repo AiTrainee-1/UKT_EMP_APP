@@ -1,31 +1,49 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-
-export type PermissionDurationMinutes = 30 | 45 | 60 | 90;
+import {
+  hasCapInfo,
+  permissionOutcome,
+  permissionTypeLabel,
+  resolvePermissionTypeKey,
+  type PermissionBadgeVariant,
+  type PermissionOutcomeKey,
+  type PermissionTypeKey,
+} from '../lib/permissions';
+import type { ApprovalProgress } from '../lib/approval';
 
 export interface PermissionRequest {
   id: number;
-  type: 'Early Out' | 'Late In' | 'Short Leave';
+  /** Legacy wire spelling ("Late In" | "Early Out" | "Short Leave"), or null when the request
+   *  is untyped. Never render this: use `typeLabel`. */
+  type: string | null;
+  typeKey: PermissionTypeKey | null;
+  /** "Morning Late-In" | "Evening Early-Out" | "Middle One-Hour Permission" (or "Permission"). */
+  typeLabel: string;
   date: string;
   time: string;
   reason: string;
-  durationMinutes?: PermissionDurationMinutes | null;
+  /** Always 60 on the new backend; older requests may carry 30/45/90 (or null). */
+  durationMinutes: number | null;
   status: 'Pending' | 'Approved' | 'Rejected';
+  /** Pending / Allowed / Not Allowed / Overdue-Excess -derived from status + capStatus. On an
+   *  older backend (no capStatus/statusLabel) an approved one is a plain, neutral "Approved". */
+  outcome: PermissionOutcomeKey;
+  outcomeLabel: string;
+  outcomeBadge: PermissionBadgeVariant;
+  /** The server sent capStatus/statusLabel, i.e. it speaks the monthly-limit rules. */
+  hasCapInfo: boolean;
   appliedOn: string;
+  /** Where the request stands in HR's approval pipeline. Absent on an older backend. */
+  approval?: ApprovalProgress | null;
 }
 
 export interface PermissionsResult {
   items: PermissionRequest[];
+  /** Requests this month that are still alive (pending + approved). */
   monthlyUsed: number;
-  monthlyLimit: number;
-  // Daily/weekly caps on the backend's auto-detected Permission zone (see
-  // PayrollSettings.max_permissions_per_day/_per_week) -not enforced on
-  // this submission form itself, but shown alongside the monthly figure so
-  // the employee understands the full picture. Read off any item since the
-  // value is the same company-wide setting on every row; undefined when the
-  // list is empty (falls back below).
-  dailyLimit: number;
-  weeklyLimit: number;
+  /** HR's monthly limit, as far as the list itself knows it: only present once the list has a
+   *  row (the old backend: always 3). Undefined when unknown -resolve with resolvePermissionLimit. */
+  monthlyLimit?: number;
 }
 
 // Backend sends lowercase status ("pending"/"approved"/"rejected") and
@@ -39,15 +57,23 @@ const STATUS_MAP: Record<string, PermissionRequest['status']> = {
 };
 
 function normalizePermission(raw: any): PermissionRequest {
+  const outcome = permissionOutcome(raw);
   return {
     id: raw.id,
-    type: raw.type,
+    type: raw.type ?? null,
+    typeKey: resolvePermissionTypeKey(raw),
+    typeLabel: permissionTypeLabel(raw),
     date: raw.date,
     time: raw.time ?? raw.permissionTime,
     reason: raw.reason,
-    durationMinutes: raw.durationMinutes ?? null,
-    status: STATUS_MAP[raw.status] ?? raw.status,
+    durationMinutes: typeof raw.durationMinutes === 'number' ? raw.durationMinutes : null,
+    status: STATUS_MAP[String(raw.status).toLowerCase()] ?? raw.status,
+    outcome: outcome.key,
+    outcomeLabel: outcome.label,
+    outcomeBadge: outcome.badge,
+    hasCapInfo: hasCapInfo(raw),
     appliedOn: raw.appliedOn ?? raw.createdAt,
+    approval: raw.approval ?? null,
   };
 }
 
@@ -60,12 +86,11 @@ export function usePermissions(employeeId: number | null, month?: number, year?:
       const rawItems: any[] = Array.isArray(raw) ? raw : (raw?.items ?? raw?.results ?? []);
       const items = rawItems.map(normalizePermission);
       const first: any = rawItems[0] ?? {};
+      const limit = raw?.monthlyLimit ?? first.monthlyLimit;
       return {
         items,
         monthlyUsed: raw?.monthlyUsed ?? items.filter((r) => r.status !== 'Rejected').length,
-        monthlyLimit: raw?.monthlyLimit ?? (first.monthlyLimit ?? 3),
-        dailyLimit: first.dailyLimit ?? 1,
-        weeklyLimit: first.weeklyLimit ?? 2,
+        monthlyLimit: typeof limit === 'number' && limit >= 0 ? limit : undefined,
       };
     },
     enabled: !!employeeId,
@@ -75,12 +100,14 @@ export function usePermissions(employeeId: number | null, month?: number, year?:
 export function useSubmitPermission(employeeId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
+    // `type` is the LEGACY spelling ("Late In" | "Early Out" | "Short Leave") on purpose -the old
+    // backend rejects anything else and the new one accepts both. No durationMinutes: every
+    // permission is a fixed hour and the new backend ignores it.
     mutationFn: async (data: {
       type: string;
       date: string;
       time: string;
       reason: string;
-      durationMinutes?: PermissionDurationMinutes;
     }) => {
       const { time, ...rest } = data;
       const res = await api.post('/permissions', { employeeId, ...rest, permissionTime: time });
@@ -92,7 +119,7 @@ export function useSubmitPermission(employeeId: number | null) {
   });
 }
 
-// ── Missing Punch (two-stage: Department Head, then HR) ─────────────────────
+// ── Missing Punch (staged approval: who decides, and in what order, is HR's pipeline - see `approval`) ──
 
 // Which of the day's (up to) 4 punches this request represents — purely
 // descriptive, lets the employee say exactly which punch they missed instead
@@ -122,6 +149,9 @@ export interface MissingPunchItem {
   hrReviewedBy: string | null;
   hrReviewComment: string | null;
   createdAt: string | null;
+  /** Where the request stands in HR's approval pipeline. Absent on an older backend, where `status` alone says
+   *  which of the two fixed stages it is at. */
+  approval?: ApprovalProgress | null;
 }
 
 export function useMissingPunch(employeeId: number | null, month?: number, year?: number) {

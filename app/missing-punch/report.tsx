@@ -3,11 +3,11 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
   Platform,
-  KeyboardAvoidingView,
 } from 'react-native';
+import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
+import { FormScrollView } from '../../src/components/FormScrollView';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -20,6 +20,11 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { useShift } from '../../src/hooks/useShift';
 import { useSubmitMissingPunch, PUNCH_SLOT_LABEL, type MissingPunchSlot } from '../../src/hooks/useRequests';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { pipelineSentence, waitingPhrase, workflowOff } from '../../src/lib/approval';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
+import { checkRequestDate } from '../../src/lib/requestWindow';
+import { requestPickerLimits } from '../../src/lib/requestWindowForm';
 import { Avatar } from '../../src/components/ui/Avatar';
 import { Button } from '../../src/components/ui/Button';
 import { TextArea } from '../../src/components/ui/TextArea';
@@ -27,13 +32,11 @@ import { DatePickerField } from '../../src/components/ui/DatePickerField';
 import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { Colors } from '../../src/constants/colors';
+import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
-
-const now = new Date();
-const todayStr = format(now, 'yyyy-MM-dd');
 
 const SLOTS: MissingPunchSlot[] = ['morning_in', 'lunch_out', 'lunch_in', 'evening_out'];
 const SLOT_ICON: Record<MissingPunchSlot, string> = {
@@ -63,17 +66,26 @@ export default function ReportMissingPunchScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
+  // "Now" is read when the screen renders (and again at submit), never once at module load: the app process lives for
+  // days, and the request window moves on the 1st-3rd of a month. A punch cannot be missed tomorrow, so it ends today.
+  const limits = requestPickerLimits(new Date(), { noFuture: true });
+
   const { user } = useAuth();
   const { data: emp } = useEmployee(user?.employeeId ?? null);
   const { data: shift } = useShift(user?.employeeId ?? null);
   const submit = useSubmitMissingPunch(user?.employeeId ?? null);
+  // Who approves a missing punch, and whether HR has switched new ones off. Only a hint that may be a minute old: the
+  // server refuses a new request either way and its message is shown (see onSubmit).
+  const { data: approvalSummary } = useApprovalSummary();
+  const missingPunchFlow = approvalSummary?.missingPunch;
 
   const [showSuccess, setShowSuccess] = React.useState(false);
+  const [successMsg, setSuccessMsg] = React.useState('Your Missing Punch request has been sent for approval.');
   const [toast, setToast] = React.useState({ message: '', type: 'success' as 'success' | 'error', visible: false });
 
-  const { control, handleSubmit, watch, setValue, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, watch, setValue, setError, clearErrors, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { date: todayStr, punchTime: '09:05', punchSlot: 'morning_in', reason: '' },
+    defaultValues: { date: limits.defaultDate, punchTime: '09:05', punchSlot: 'morning_in', reason: '' },
   });
 
   const punchTime = watch('punchTime');
@@ -92,11 +104,27 @@ export default function ReportMissingPunchScreen() {
   };
 
   const onSubmit = async (data: FormData) => {
+    // The server is the authority (India time); this check, with "now" read at submit, only guides the employee.
+    const dateMessage = checkRequestDate(data.date, new Date(), { noFuture: true });
+    if (dateMessage) {
+      setError('date', { message: dateMessage });
+      showToast(dateMessage, 'error');
+      return;
+    }
     try {
-      await submit.mutateAsync(data);
+      const created = await submit.mutateAsync(data);
+      // Who it went to first comes from the request the server just created (HR's pipeline decides).
+      const firstApprover = waitingPhrase(created?.approval);
+      setSuccessMsg(
+        firstApprover
+          ? `Your Missing Punch request has been sent to ${firstApprover} for approval.`
+          : 'Your Missing Punch request has been sent for approval.',
+      );
       setShowSuccess(true);
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.response?.data?.message || 'Failed to submit. Please try again.';
+      // A refused date (code request_window_closed) is also marked under the date field.
+      if (err?.response?.data?.code === 'request_window_closed') setError('date', { message: msg });
       showToast(msg, 'error');
     }
   };
@@ -114,17 +142,15 @@ export default function ReportMissingPunchScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.75}>
           <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <View style={styles.brandBadge}>
-          <Text style={styles.brandBadgeText}>XT</Text>
-        </View>
+        <UKTLogo size={26} />
         <View>
           <Text style={styles.brandName}>UKTEXTILES</Text>
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
         </View>
       </View>
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <KeyboardAvoider style={{ flex: 1 }}>
+        <FormScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <Text style={styles.title}>Report Missing Punch</Text>
           <Text style={styles.subtitle}>Submit the punch you missed for review</Text>
 
@@ -153,7 +179,15 @@ export default function ReportMissingPunchScreen() {
             control={control}
             name="date"
             render={({ field: { onChange, value } }) => (
-              <DatePickerField label="" value={value} onChange={onChange} error={errors.date?.message} maxDate={now} />
+              <DatePickerField
+                label=""
+                value={value}
+                onChange={(v) => { onChange(v); clearErrors('date'); }}
+                error={errors.date?.message}
+                minDate={limits.minDate}
+                maxDate={limits.maxDate}
+                hint={limits.hint}
+              />
             )}
           />
 
@@ -236,22 +270,29 @@ export default function ReportMissingPunchScreen() {
           <View style={styles.noteCard}>
             <MaterialCommunityIcons name="information-outline" size={16} color={Colors.primary} />
             <Text style={styles.noteText}>
-              Your Department Head reviews it first, then HR gives the final approval. Once approved, the punch is added to your attendance automatically.
+              {pipelineSentence(missingPunchFlow)} Once approved, the punch is added to your attendance automatically.
             </Text>
           </View>
 
-          <Button title="Submit Regularization Request" onPress={handleSubmit(onSubmit)} loading={submit.isPending} style={{ marginTop: 4 }} />
+          <WorkflowOffNote workflow={missingPunchFlow} style={styles.offNote} />
+          <Button
+            title="Submit Regularization Request"
+            onPress={handleSubmit(onSubmit)}
+            loading={submit.isPending}
+            disabled={workflowOff(missingPunchFlow)}
+            style={{ marginTop: 4 }}
+          />
           <TouchableOpacity style={styles.discardBtn} onPress={() => router.back()} activeOpacity={0.7}>
             <Text style={styles.discardBtnText}>Discard Draft</Text>
           </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        </FormScrollView>
+      </KeyboardAvoider>
 
       <Toast {...toast} />
       <SuccessOverlay
         visible={showSuccess}
         title="Request Submitted!"
-        message="Your Missing Punch request has been sent to your Department Head for approval."
+        message={successMsg}
         onDone={() => { setShowSuccess(false); router.back(); }}
       />
     </SafeAreaView>
@@ -272,8 +313,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
   backBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceLow },
-  brandBadge: { width: 26, height: 26, borderRadius: 7, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-  brandBadgeText: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 10 },
   brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 12, letterSpacing: 0.2 },
   brandSub: { color: Colors.textMuted, fontSize: 7.5, fontWeight: '700', letterSpacing: 0.6 },
 
@@ -338,6 +377,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     marginBottom: 18,
   },
   noteText: { flex: 1, color: Colors.textSecondary, fontSize: 11.5, lineHeight: 16 },
+  offNote: { marginBottom: 14 },
 
   discardBtn: { alignItems: 'center', paddingVertical: 14 },
   discardBtnText: { color: Colors.textMuted, fontFamily: FontFamily.bodySemibold, fontSize: 13 },

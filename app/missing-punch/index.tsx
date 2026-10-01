@@ -15,6 +15,10 @@ import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useMissingPunch, PUNCH_SLOT_LABEL, type MissingPunchItem } from '../../src/hooks/useRequests';
+import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { hasProgressed, pipelineSentence, workflowOff } from '../../src/lib/approval';
+import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
+import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
@@ -24,7 +28,6 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
 
-const now = new Date();
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
@@ -44,6 +47,16 @@ function badgeVariant(status: string): 'pending' | 'approved' | 'rejected' | 'on
   return 'pending';
 }
 
+// HR's pipeline decides who holds a pending request, and `pending_hod` / `pending_hr` no longer say so - the waiting
+// chip under the badge does. Blue once a step has been approved, as `pending_hr` used to show. Without `approval` (an
+// older backend, whose two stages are fixed) the status names still say it.
+function stageBadge(item: MissingPunchItem): { label: string; variant: ReturnType<typeof badgeVariant> } {
+  if (item.approval && (item.status === 'pending_hod' || item.status === 'pending_hr')) {
+    return { label: 'Pending', variant: hasProgressed(item.approval) ? 'onleave' : 'pending' };
+  }
+  return { label: STAGE_LABEL[item.status], variant: badgeVariant(item.status) };
+}
+
 const SLOT_ICON: Record<string, string> = {
   morning_in: 'login',
   lunch_out: 'silverware-fork-knife',
@@ -58,10 +71,15 @@ export default function MissingPunchScreen() {
   const styles = useThemedStyles(makeStyles);
 
   const { user } = useAuth();
+  // "Now" is read when the screen renders, never once at module load: the app process lives for days.
+  const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [tab, setTab] = useState<'active' | 'history'>('active');
   const { data, isLoading, refetch, isRefetching } = useMissingPunch(user?.employeeId ?? null, month, year);
+  // Who approves a missing punch, and whether HR has switched new ones off (Approval Workflow Control).
+  const { data: approvalSummary } = useApprovalSummary();
+  const missingPunchOff = workflowOff(approvalSummary?.missingPunch);
 
   const prevMonth = () => {
     if (month === 1) { setMonth(12); setYear((y) => y - 1); }
@@ -112,11 +130,12 @@ export default function MissingPunchScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.introTitle}>Missing Punch Regularization</Text>
                 <Text style={styles.introBody}>
-                  Forgot to punch in or out? Submit the date, time and reason — your Department Head reviews it first,
-                  then HR gives the final approval.
+                  Forgot to punch in or out? Submit the date, time and reason. {pipelineSentence(approvalSummary?.missingPunch)}
                 </Text>
               </View>
             </View>
+
+            <WorkflowOffNote workflow={approvalSummary?.missingPunch} style={styles.offNote} />
 
             <View style={styles.monthRow}>
               <TouchableOpacity onPress={prevMonth} style={styles.monthNavBtn}>
@@ -199,7 +218,7 @@ export default function MissingPunchScreen() {
                   <Text style={styles.dateTime}>{format(new Date(item.date), 'EEE, dd MMM yyyy')} · {item.punchTime}</Text>
                 </View>
               </View>
-              <Badge label={STAGE_LABEL[item.status]} variant={badgeVariant(item.status)} />
+              <Badge label={stageBadge(item).label} variant={stageBadge(item).variant} />
             </View>
 
             {item.reason && (
@@ -209,7 +228,11 @@ export default function MissingPunchScreen() {
               </View>
             )}
 
-            {(item.hodReviewedBy || item.hrReviewedBy) && (
+            <WaitingChip approval={item.approval} />
+
+            {item.approval ? (
+              <ApprovalTrail approval={item.approval} title="APPROVAL WORKFLOW" />
+            ) : (item.hodReviewedBy || item.hrReviewedBy) && (
               <View style={styles.workflow}>
                 <Text style={styles.workflowLabel}>APPROVAL WORKFLOW</Text>
                 {item.hodReviewedBy && (
@@ -244,7 +267,12 @@ export default function MissingPunchScreen() {
       />
 
       {/* FAB */}
-      <TouchableOpacity style={styles.fab} onPress={() => router.push('/missing-punch/report')} activeOpacity={0.85}>
+      <TouchableOpacity
+        style={[styles.fab, missingPunchOff && styles.fabOff]}
+        onPress={() => router.push('/missing-punch/report')}
+        activeOpacity={0.85}
+        disabled={missingPunchOff}
+      >
         <MaterialCommunityIcons name="plus" size={26} color="#fff" />
       </TouchableOpacity>
     </SafeAreaView>
@@ -281,6 +309,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   introIconWrap: { width: 38, height: 38, borderRadius: BorderRadius.md, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
   introTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 14, color: Colors.textPrimary, marginBottom: 4 },
   introBody: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
+  offNote: { marginBottom: 14 },
 
   monthRow: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -352,4 +381,5 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
       android: { elevation: 8 },
     }),
   },
+  fabOff: { opacity: 0.5 },
 });
