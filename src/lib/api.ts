@@ -15,6 +15,25 @@ declare module 'axios' {
   }
 }
 
+/**
+ * Who signs the employee out when the server says the session is no good (401). The root layout registers its
+ * sign-out here so that ONE place clears the token, the user and the cached data and leaves the screen; without a
+ * handler (it is registered at start-up, so only in tests) this falls back to clearing the token and going to Login.
+ */
+let onUnauthorized: (() => void | Promise<void>) | null = null;
+export function setUnauthorizedHandler(handler: (() => void | Promise<void>) | null) {
+  onUnauthorized = handler;
+}
+
+// While one 401 is being handled, the 401s of every other request that was in flight are the same event.
+let handlingUnauthorized = false;
+
+/** The token a request was sent with ('' when it carried none). */
+function sentToken(config: any): string {
+  const header = config?.headers?.Authorization ?? config?.headers?.get?.('Authorization');
+  return typeof header === 'string' ? header.replace(/^Bearer\s+/i, '') : '';
+}
+
 // Response: Django snake_case → frontend camelCase
 function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
@@ -80,8 +99,24 @@ api.interceptors.response.use(
       if (isNetworkFailure(error) || status === 502 || status === 503 || status === 504) markServerOffline();
     }
     if (error.response?.status === 401 && !error.config?.isPublic) {
-      await clearAuth();
-      router.replace('/(auth)/login');
+      // Only a request that was sent WITH the token that is still stored means the session ended. A request with
+      // no token, or with an old one, is a straggler from a screen that was already signed out (a poll that fired
+      // as the employee tapped Logout): signing out again from each of those is what made the Login screen
+      // re-open over and over and flicker for seconds after logging out.
+      const sent = sentToken(error.config);
+      const current = await getToken();
+      if (sent && current === sent && !handlingUnauthorized) {
+        handlingUnauthorized = true;
+        try {
+          if (onUnauthorized) await onUnauthorized();
+          else {
+            await clearAuth();
+            router.replace('/(auth)/login');
+          }
+        } finally {
+          handlingUnauthorized = false;
+        }
+      }
     }
     return Promise.reject(error);
   }

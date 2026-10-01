@@ -6,7 +6,8 @@ import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { StatusBar } from 'expo-status-bar';
 import { AuthContext, AuthUser, checkAuth, useAuth } from '../src/hooks/useAuth';
 import { clearAuth } from '../src/lib/auth';
-import { router } from 'expo-router';
+import { setUnauthorizedHandler } from '../src/lib/api';
+import { router, type Href } from 'expo-router';
 import { Colors } from '../src/constants/colors';
 import { useMyResignation } from '../src/hooks/useResignation';
 import { registerPushToken } from '../src/hooks/usePushToken';
@@ -36,6 +37,8 @@ import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
 // SPLASH_SAFETY_MS below, and the error boundary.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 const SPLASH_SAFETY_MS = 2500;
+// How long the signed-in screens get to slide away before the user and the cached data are dropped (see logout).
+const SIGN_OUT_SETTLE_MS = 450;
 
 // registerPushToken() (src/hooks/usePushToken.ts) guards internally against
 // Expo Go, where the push-token APIs throw an unrecoverable error on SDK
@@ -94,7 +97,7 @@ const queryClient = new QueryClient({
 // Resignation Guard — polls /api/my/resignation; deactivates on approval
 // ---------------------------------------------------------------------------
 function ResignationGuard() {
-  const { user, setUser } = useAuth();
+  const { user, logoutTo } = useAuth();
   const handledRef = useRef(false);
   const { data } = useMyResignation(user?.employeeId ?? null);
 
@@ -103,14 +106,7 @@ function ResignationGuard() {
       handledRef.current = true;
       const name = user?.name ?? '';
       const lastWorkingDate = data?.lastWorkingDate ?? '';
-      clearAuth().then(() => {
-        setUser(null);
-        queryClient.clear();
-        router.replace({
-          pathname: '/resignation/deactivated',
-          params: { name, lastWorkingDate },
-        });
-      });
+      logoutTo({ pathname: '/resignation/deactivated', params: { name, lastWorkingDate } });
     }
   }, [data?.status]);
 
@@ -226,13 +222,40 @@ export default function RootLayout() {
 
   const login = async (_id: string, _pw: string) => {};
 
-  const logout = async () => {
-    stopLiveTracking();
-    await clearAuth();
-    setUser(null);
-    queryClient.clear();
-    router.replace('/(auth)/login');
+  // Signing out, in this order, is what keeps the screen from glitching for seconds afterwards:
+  //  1. stop the background location pings and cancel every request still in flight;
+  //  2. LEAVE the signed-in screens (they are what poll the server every 15-60 s and re-fetch the moment their
+  //     data or the user disappears);
+  //  3. forget the token, and only then - once those screens are gone - the user and the cached data.
+  // Doing 3 before 2 (as this used to) made every mounted screen refetch without a token, collect a 401 each, and
+  // every 401 reopened the Login screen.
+  const signingOut = useRef(false);
+  const logoutTo = async (to: Href) => {
+    if (signingOut.current) return;
+    signingOut.current = true;
+    try {
+      stopLiveTracking();
+      await queryClient.cancelQueries();
+      router.replace(to);
+      await clearAuth();
+      setTimeout(() => {
+        setUser(null);
+        queryClient.clear();
+        signingOut.current = false;
+      }, SIGN_OUT_SETTLE_MS);
+    } catch {
+      signingOut.current = false;
+    }
   };
+
+  // The server saying the session is over (401) signs out the same way, exactly once.
+  const logout = () => logoutTo('/(auth)/login');
+  const logoutRef = useRef(logout);
+  logoutRef.current = logout;
+  useEffect(() => {
+    setUnauthorizedHandler(() => logoutRef.current());
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   if (!fontsReady) return null;
 
@@ -240,7 +263,7 @@ export default function RootLayout() {
     <ErrorBoundary>
       <ThemeProvider>
         <QueryClientProvider client={queryClient}>
-        <AuthContext.Provider value={{ user, isLoading, login, logout, setUser }}>
+        <AuthContext.Provider value={{ user, isLoading, login, logout, logoutTo, setUser }}>
           <StatusBar style="light" />
           <PermissionGate />
           <UpdatePrompt />

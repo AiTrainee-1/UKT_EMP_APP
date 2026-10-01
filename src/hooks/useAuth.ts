@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { Href } from 'expo-router';
 import api from '../lib/api';
 import { setToken, setEmployeeId, setEmployeeName, clearAuth, getToken, getEmployeeId, getEmployeeName } from '../lib/auth';
 
@@ -13,6 +14,8 @@ export interface AuthContextType {
   isLoading: boolean;
   login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Sign out and leave for `to` instead of the Login screen (a deactivated account). */
+  logoutTo: (to: Href) => Promise<void>;
   setUser: (user: AuthUser | null) => void;
 }
 
@@ -21,6 +24,7 @@ export const AuthContext = createContext<AuthContextType>({
   isLoading: true,
   login: async () => {},
   logout: async () => {},
+  logoutTo: async () => {},
   setUser: () => {},
 });
 
