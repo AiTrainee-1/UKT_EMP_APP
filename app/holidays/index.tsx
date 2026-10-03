@@ -38,7 +38,7 @@ const TYPE_TONE: Record<Holiday['type'], { bg: string; text: string }> = {
 function groupByMonth(holidays: Holiday[]) {
   const groups: Record<string, Holiday[]> = {};
   for (const h of holidays) {
-    const month = MONTHS[new Date(h.date).getMonth()];
+    const month = MONTHS[parseISO(h.date).getMonth()];
     if (!groups[month]) groups[month] = [];
     groups[month].push(h);
   }
@@ -205,7 +205,7 @@ export default function HolidaysScreen() {
           renderItem={({ item }) => {
             const past = isPast(parseISO(item.date)) && !isToday(parseISO(item.date));
             const isNext = next?.id === item.id;
-            const tone = TYPE_TONE[item.type];
+            const tone = TYPE_TONE[item.type] ?? TYPE_TONE.Company;
             return (
               <View style={[styles.card, past && styles.pastCard, isNext && styles.nextCard]}>
                 <View style={[styles.dayBadge, past && styles.dayBadgePast, isNext && styles.dayBadgeNext]}>

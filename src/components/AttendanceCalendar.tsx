@@ -9,6 +9,10 @@ import { BorderRadius } from '../constants/theme';
 import { AttendanceRecord } from '../hooks/useAttendance';
 import type { DetectionFlags } from '../hooks/useShiftStats';
 import { getRequestWindow } from '../lib/requestWindow';
+import {
+  DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING, marksOf, visualKeyOf,
+  type DayTone, type DayVisualKey,
+} from '../lib/attendanceVisual';
 import type { RequestWindow } from '../lib/requestWindow';
 import { BottomSheet } from './ui/BottomSheet';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -19,59 +23,25 @@ const CELL = Math.floor((width - 64) / 7);
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const makeStatusBg = (Colors: Palette): Record<string, string> => ({
-  Present: Colors.clayGreen,
-  'Half Day': Colors.clayOrange,
-  Absent: Colors.clayRed,
-  'Late-In': Colors.clayYellow,
-  // Early-Out has no soft tint of its own; the Leave-purple badge tint keeps it
-  // apart from Late-In's yellow and Half Day's orange.
-  'Early-Out': Colors.badgeLeaveBg,
-  Permission: Colors.clayBlue,
-  'On Leave': Colors.clayBlue,
-  Holiday: Colors.bgSurfaceMid,
-  Weekend: Colors.bgSurfaceHigh,
-});
+// Every kind of day has its own colour (see lib/attendanceVisual.ts, the one place that decides them). Late-In and
+// Early-Out are NOT colours: the day keeps the colour of what it was and a ring around the cell marks it.
+function toneOf(status: string): DayTone {
+  return DAY_TONES[visualKeyOf(status)];
+}
 
-const makeStatusText = (Colors: Palette): Record<string, string> => ({
-  Present: Colors.statusGreen,
-  'Half Day': Colors.statusOrange,
-  Absent: Colors.statusRed,
-  'Late-In': Colors.statusYellow,
-  'Early-Out': Colors.statusLeave,
-  Permission: Colors.statusBlue,
-  'On Leave': Colors.primary,
-  Holiday: Colors.textMuted,
-  Weekend: Colors.textMuted,
-});
+const fillOf = (tone: DayTone, isDark: boolean) => (isDark ? tone.fillDark : tone.fillLight);
+const inkOf = (tone: DayTone, isDark: boolean) => (isDark ? tone.inkDark : tone.inkLight);
 
-// A cell's fill alone isn't always enough (Half Day's orange and Late-In's
-// yellow sit close on the wheel) — every status also gets a vivid-toned
-// border ring, so the cell reads as a distinct outlined shape and not just a
-// flat wash of colour. Holiday/Weekend deliberately have no ring: they are
-// not attendance outcomes, and a ring around every non-future cell would
-// erase the contrast a ring is meant to add.
-const makeStatusBorder = (Colors: Palette): Record<string, string> => ({
-  Present: Colors.statusGreen,
-  'Half Day': Colors.statusOrange,
-  Absent: Colors.statusRed,
-  'Late-In': Colors.statusYellow,
-  'Early-Out': Colors.statusLeave,
-  Permission: Colors.statusBlue,
-  'On Leave': Colors.statusBlue,
-});
-
-const STATUS_ICON: Record<string, string> = {
-  Present: 'check',
-  'Half Day': 'clock-time-four-outline',
-  Absent: 'close',
-  'Late-In': 'alert',
-  'Early-Out': 'logout',
-  Permission: 'hand-back-right-outline',
-  'On Leave': 'umbrella',
-  Holiday: 'flag',
-  Weekend: 'minus',
-};
+/** Words for the day sheet: what a Sunday / holiday / casual-leave day is. */
+function dayNote(rec: AttendanceRecord): string | null {
+  if (rec.status === 'Holiday') {
+    const type = rec.holidayType ? `${rec.holidayType.charAt(0).toUpperCase()}${rec.holidayType.slice(1)} holiday` : 'Holiday';
+    return rec.holidayName ? `${rec.holidayName} · ${type}` : type;
+  }
+  if (rec.status === 'Weekend') return 'Sunday · weekly off';
+  if (rec.status === 'Casual Leave') return 'Approved Casual Leave · paid day';
+  return null;
+}
 
 // The day's facts beyond its one-word status, as small chips in the detail
 // sheet. Late-In / Early-Out / excess permissions are the three kinds of
@@ -117,11 +87,12 @@ function chipsFor(rec: AttendanceRecord, detect: DetectionFlags): DayChip[] {
   return chips;
 }
 
-const makeChipColors = (Colors: Palette): Record<ChipTone, { bg: string; fg: string }> => ({
-  late: { bg: Colors.clayYellow, fg: Colors.statusYellow },
-  early: { bg: Colors.badgeLeaveBg, fg: Colors.statusLeave },
-  permission: { bg: Colors.clayBlue, fg: Colors.statusBlue },
-  excess: { bg: Colors.clayYellow, fg: Colors.statusYellow },
+// The same hues as the calendar's rings (late = amber, early-out = indigo) and the Permission colour.
+const makeChipColors = (isDark: boolean): Record<ChipTone, { bg: string; fg: string }> => ({
+  late: { bg: `${RING.late}26`, fg: RING.late },
+  early: { bg: `${RING.earlyOut}26`, fg: isDark ? '#A5B4FC' : RING.earlyOut },
+  permission: { bg: fillOf(DAY_TONES.permission, isDark), fg: inkOf(DAY_TONES.permission, isDark) },
+  excess: { bg: `${RING.late}26`, fg: RING.late },
 });
 
 interface Props {
@@ -198,12 +169,9 @@ const ALL_CHECKS_ON: DetectionFlags = { lateIn: true, earlyOut: true };
 export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_ON }: Props) {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
+  const { C: Colors, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const STATUS_BG = makeStatusBg(Colors);
-  const STATUS_TEXT = makeStatusText(Colors);
-  const STATUS_BORDER = makeStatusBorder(Colors);
-  const CHIP_COLORS = makeChipColors(Colors);
+  const CHIP_COLORS = makeChipColors(isDark);
 
   const [selected, setSelected] = useState<AttendanceRecord | null>(null);
 
@@ -234,20 +202,10 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
         {days.map((d) => {
           const key = format(d, 'yyyy-MM-dd');
           const rec = recordMap.get(key);
-          const bg = rec ? (STATUS_BG[rec.status] ?? Colors.bgSurfaceLow) : undefined;
-          const iconColor = rec ? (STATUS_TEXT[rec.status] ?? Colors.textMuted) : undefined;
-          const iconName = rec ? (STATUS_ICON[rec.status] ?? 'help') : undefined;
-          const borderColor = rec ? STATUS_BORDER[rec.status] : undefined;
-
-          // A day can be Half Day/Permission AND late, early-out or carry an
-          // Excess permission at once (HRMS tracks these as independent flags,
-          // and all three are occurrences in the monthly late pool) — the small
-          // corner dot surfaces that without needing a second status color. A
-          // Late-In / Early-Out cell already says so itself.
-          const showLateDot = !!rec
-            && ((detect.lateIn && rec.isLate) || (detect.earlyOut && rec.isEarlyOut)
-              || rec.morningPermissionExcess || rec.eveningPermissionExcess)
-            && (rec.status === 'Present' || rec.status === 'Half Day' || rec.status === 'Permission');
+          const tone = rec ? toneOf(rec.status) : null;
+          const ink = tone ? inkOf(tone, isDark) : undefined;
+          const marks = rec ? marksOf(rec, detect) : null;
+          const isOff = !!rec && (rec.status === 'Holiday' || rec.status === 'Weekend');
 
           return (
             <TouchableOpacity
@@ -255,20 +213,29 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
               style={[
                 styles.cell,
                 { width: CELL, height: CELL },
-                bg ? { backgroundColor: bg } : styles.futureCell,
-                borderColor ? { borderWidth: 1.5, borderColor } : null,
+                tone ? { backgroundColor: fillOf(tone, isDark) } : styles.futureCell,
+                // A ring marks Late-In / Early-Out (no fill of its own). Every other cell keeps a transparent border of
+                // the same size, so nothing shifts.
+                tone ? { borderWidth: 2.5, borderColor: marks?.ring ?? 'transparent' } : null,
               ]}
               onPress={() => rec && setSelected(rec)}
               disabled={!rec}
               activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={
+                rec
+                  ? `${format(d, 'd MMMM')}, ${rec.holidayName ?? rec.status}${marks?.ring ? (rec.isLate ? ', late' : ', early out') : ''}`
+                  : format(d, 'd MMMM')
+              }
             >
-              {rec && iconName && (
-                <MaterialCommunityIcons name={iconName as any} size={10} color={iconColor} style={styles.cellIcon} />
+              {tone && (
+                <MaterialCommunityIcons name={tone.icon as any} size={isOff ? 12 : 10} color={ink} style={styles.cellIcon} />
               )}
-              <Text style={[styles.cellNum, !rec && styles.futureNum, rec && { color: iconColor ?? '#fff' }]}>
+              <Text style={[styles.cellNum, !rec && styles.futureNum, tone && { color: ink }]}>
                 {format(d, 'd')}
               </Text>
-              {showLateDot && <View style={styles.lateDot} />}
+              {marks?.earlyDot && <View style={[styles.markDot, styles.markDotBottom, { backgroundColor: RING.earlyOut }]} />}
+              {marks?.excessDot && <View style={[styles.markDot, { backgroundColor: RING.late }]} />}
             </TouchableOpacity>
           );
         })}
@@ -283,19 +250,19 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                 bottom of the sheet it sat below four rows of detail the
                 employee had already read past. */}
             <View style={styles.topRow}>
-              <View style={[styles.statusBadge, { backgroundColor: STATUS_BG[selected.status] ?? Colors.bgSurfaceLow }]}>
+              <View style={[styles.statusBadge, { backgroundColor: fillOf(toneOf(selected.status), isDark) }]}>
                 <MaterialCommunityIcons
-                  name={(STATUS_ICON[selected.status] ?? 'help') as any}
+                  name={toneOf(selected.status).icon as any}
                   size={18}
-                  color={STATUS_TEXT[selected.status] ?? Colors.textMuted}
+                  color={inkOf(toneOf(selected.status), isDark)}
                 />
-                <Text style={[styles.statusText, { color: STATUS_TEXT[selected.status] ?? Colors.textMuted }]}>
-                  {selected.status}
+                <Text style={[styles.statusText, { color: inkOf(toneOf(selected.status), isDark) }]}>
+                  {selected.status === 'Weekend' ? 'Sunday' : selected.status}
                 </Text>
                 {selected.isCompensationDay && (
-                  <View style={[styles.lateBadge, { backgroundColor: Colors.clayBlue }]}>
-                    <MaterialCommunityIcons name="calendar-star" size={11} color={Colors.statusBlue} />
-                    <Text style={[styles.lateBadgeText, { color: Colors.statusBlue }]}>Comp Day</Text>
+                  <View style={[styles.lateBadge, { backgroundColor: fillOf(DAY_TONES.permission, isDark) }]}>
+                    <MaterialCommunityIcons name="calendar-star" size={11} color={inkOf(DAY_TONES.permission, isDark)} />
+                    <Text style={[styles.lateBadgeText, { color: inkOf(DAY_TONES.permission, isDark) }]}>Comp Day</Text>
                   </View>
                 )}
               </View>
@@ -321,6 +288,8 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                 ))}
               </View>
             </View>
+
+            {dayNote(selected) && <Text style={styles.dayNote}>{dayNote(selected)}</Text>}
 
             {/* A problem day the request forms can no longer take: no chips above, only where to go instead. */}
             {dayActions?.closed && (
@@ -400,13 +369,21 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   cellIcon: { marginBottom: 1 },
   cellNum: { fontSize: 10, fontWeight: '800' },
   futureNum: { color: Colors.outline },
-  lateDot: {
+  markDot: {
     position: 'absolute',
     top: 3, right: 3,
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: Colors.statusYellow,
+    width: 7, height: 7, borderRadius: 3.5,
     borderWidth: 1, borderColor: '#fff',
   },
+  markDotBottom: { top: undefined, bottom: 3 },
+  dayNote: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 10 },
+
+  legendWrap: { marginTop: 12, gap: 10 },
+  legendTitle: { color: Colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 0.6 },
+  legendGrid: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 10, columnGap: 6 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7, width: '48%' },
+  legendSwatch: { width: 22, height: 22, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
+  legendText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', flexShrink: 1 },
 
   statusBadge: {
     flexDirection: 'row',
@@ -468,3 +445,68 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   chipText: { fontSize: 11.5, fontWeight: '800' },
 });
+
+/** One row of the legend: the exact swatch a calendar cell uses (fill + icon), so they cannot drift. */
+function LegendSwatch({ kind, isDark }: { kind: DayVisualKey; isDark: boolean }) {
+  const styles = useThemedStyles(makeStyles);
+  const tone = DAY_TONES[kind];
+  return (
+    <View style={[styles.legendSwatch, { backgroundColor: fillOf(tone, isDark) }]}>
+      <MaterialCommunityIcons name={tone.icon as any} size={13} color={inkOf(tone, isDark)} />
+    </View>
+  );
+}
+
+/** What every colour on the calendar means, including the two rings and the dot. */
+export function AttendanceLegend({ detect = ALL_CHECKS_ON }: { detect?: DetectionFlags }) {
+  const { isDark } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const ring = (color: string) => (
+    <View style={[styles.legendSwatch, { backgroundColor: fillOf(DAY_TONES.present, isDark), borderWidth: 2.5, borderColor: color }]}>
+      <MaterialCommunityIcons name="check" size={11} color={inkOf(DAY_TONES.present, isDark)} />
+    </View>
+  );
+  return (
+    <View style={styles.legendWrap} accessibilityLabel="Attendance colour legend">
+      <Text style={styles.legendTitle}>ATTENDANCE</Text>
+      <View style={styles.legendGrid}>
+        {OUTCOME_ORDER.map((k) => (
+          <View key={k} style={styles.legendItem}>
+            <LegendSwatch kind={k} isDark={isDark} />
+            <Text style={styles.legendText}>{DAY_TONES[k].label}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={styles.legendTitle}>DAYS OFF</Text>
+      <View style={styles.legendGrid}>
+        {OFF_DAY_ORDER.map((k) => (
+          <View key={k} style={styles.legendItem}>
+            <LegendSwatch kind={k} isDark={isDark} />
+            <Text style={styles.legendText}>{k === 'sunday' ? 'Sunday (weekly off)' : 'Declared holiday'}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={styles.legendTitle}>BORDER MARKS (THE DAY KEEPS ITS COLOUR)</Text>
+      <View style={styles.legendGrid}>
+        {detect.lateIn && (
+          <View style={styles.legendItem}>
+            {ring(RING.late)}
+            <Text style={styles.legendText}>Late-In</Text>
+          </View>
+        )}
+        {detect.earlyOut && (
+          <View style={styles.legendItem}>
+            {ring(RING.earlyOut)}
+            <Text style={styles.legendText}>Early-Out</Text>
+          </View>
+        )}
+        <View style={styles.legendItem}>
+          <View style={[styles.legendSwatch, { backgroundColor: fillOf(DAY_TONES.present, isDark) }]}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: RING.late }} />
+          </View>
+          <Text style={styles.legendText}>Excess permission</Text>
+        </View>
+      </View>
+    </View>
+  );
+}

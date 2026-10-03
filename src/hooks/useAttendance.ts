@@ -14,7 +14,14 @@ export interface AttendanceRecord {
   /** One word per day for the calendar cell. When several things hold, the one that costs the
    *  employee most wins (Half Day > Late-In > Early-Out > Permission); the rest stay readable
    *  through the flags below. */
-  status: 'Present' | 'Absent' | 'Late-In' | 'Early-Out' | 'On Leave' | 'Holiday' | 'Weekend' | 'Half Day' | 'Permission';
+  status: 'Present' | 'Absent' | 'Late-In' | 'Early-Out' | 'On Leave' | 'Casual Leave' | 'Holiday' | 'Weekend' | 'Half Day' | 'Permission';
+  /** "Holiday" for a declared holiday, "Weekend" for a Sunday off (staff): the calendar colours them apart. */
+  dayKind?: 'holiday' | 'weekly_off' | null;
+  /** The declared holiday's name and type (national / regional / company), when `dayKind` is "holiday". */
+  holidayName?: string;
+  holidayType?: string;
+  /** An approved Casual Leave day (the server stores it as a Present day, so only this flag tells it apart). */
+  isCasualLeave?: boolean;
   /** Morning Late-In: first punch after the (permission-adjusted) shift start + grace. */
   isLate?: boolean;
   /** Evening Early-Out: last punch before the (permission-adjusted) shift end - grace. Only
@@ -84,11 +91,23 @@ const STATUS_MAP: Record<string, AttendanceRecord['status']> = {
   future: 'Present', // filtered out below, placeholder
 };
 
+/** 'YYYY-MM-DD' is a Sunday (calendar date, no time zone involved). */
+function isSundayIso(date: string): boolean {
+  const [y, m, d] = date.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1).getDay() === 0;
+}
+
 function transformAttendance(raw: any): AttendanceSummary {
   const records: AttendanceRecord[] = (raw.records ?? [])
-    .filter((r: any) => r.status !== 'future') // exclude future days — shown as empty cells
+    // Future days are empty cells, except a holiday / Sunday off / approved Casual Leave: those show ahead of time.
+    .filter((r: any) => r.status !== 'future' || !!r.dayKind || !!r.isCasualLeave)
     .map((r: any) => {
       let status = STATUS_MAP[r.status] ?? (r.present ? 'Present' : 'Absent');
+      const dayKind: AttendanceRecord['dayKind'] = r.dayKind === 'holiday' || r.dayKind === 'weekly_off' ? r.dayKind : null;
+      if (r.status === 'future') status = dayKind ? 'Holiday' : 'Casual Leave'; // all that gets this far (see the filter)
+      // A day off the server marked as a Sunday is "Weekend" (its own colour); an older server sends no dayKind, so a
+      // Sunday with no holiday name is read as the weekly off.
+      if (status === 'Holiday' && (dayKind === 'weekly_off' || (!dayKind && isSundayIso(r.date)))) status = 'Weekend';
       // New keys with the old ones as fallback: an older backend only sends
       // permissionMorning / permissionDeparture (the new ones mirror them).
       const f = readDayFlags(r);
@@ -100,7 +119,8 @@ function transformAttendance(raw: any): AttendanceSummary {
       );
       // A late / early day outranks "Permission": it is an occurrence in the monthly late pool
       // even when a permission moved the boundary (the employee was late for the moved one).
-      if (status === 'Present') {
+      if (status === 'Present' && r.isCasualLeave) status = 'Casual Leave';
+      else if (status === 'Present') {
         if (f.isLate) status = 'Late-In';
         else if (f.isEarlyOut) status = 'Early-Out';
         else if (isPermission) status = 'Permission';
@@ -108,6 +128,10 @@ function transformAttendance(raw: any): AttendanceSummary {
       return {
         date: r.date,
         status,
+        dayKind,
+        holidayName: typeof r.holidayName === 'string' && r.holidayName ? r.holidayName : undefined,
+        holidayType: typeof r.holidayType === 'string' && r.holidayType ? r.holidayType : undefined,
+        isCasualLeave: !!r.isCasualLeave,
         isLate: f.isLate,
         isEarlyOut: f.isEarlyOut,
         isHalfShift: f.isHalfShift,
@@ -135,7 +159,7 @@ function transformAttendance(raw: any): AttendanceSummary {
     // Falls back to counting non-holiday records so an older backend that
     // doesn't send workingDays yet still shows a sensible number.
     workingDays: s.workingDays ?? s.working_days
-      ?? records.filter((r) => r.status !== 'Holiday').length,
+      ?? records.filter((r) => r.status !== 'Holiday' && r.status !== 'Weekend').length,
     present: s.present ?? raw.totalPresent ?? raw.present ?? 0,
     absent: s.absent ?? raw.totalAbsent ?? raw.absent ?? 0,
     late: s.late ?? raw.totalLate ?? raw.late ?? 0,

@@ -26,6 +26,9 @@ import {
   PlusJakartaSans_700Bold,
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
+// Only the Login / Set Password / Forgot Password screens use these two (see components/auth/authTheme.ts).
+import { Sora_600SemiBold, Sora_700Bold } from '@expo-google-fonts/sora';
+import { Manrope_500Medium, Manrope_600SemiBold, Manrope_700Bold } from '@expo-google-fonts/manrope';
 
 // Headline/body fonts are used on every screen (see src/constants/typography.ts),
 // so loading is a hard gate, not a progressive enhancement — keep the splash
@@ -192,6 +195,11 @@ export default function RootLayout() {
     PlusJakartaSans_700Bold,
     Inter_400Regular,
     Inter_600SemiBold,
+    Sora_600SemiBold,
+    Sora_700Bold,
+    Manrope_500Medium,
+    Manrope_600SemiBold,
+    Manrope_700Bold,
   });
 
   useEffect(() => {

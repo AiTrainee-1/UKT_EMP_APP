@@ -4,7 +4,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { format, startOfWeek, addDays, isSameDay, isToday, isBefore } from 'date-fns';
+import { format, startOfWeek, addDays, isToday, isBefore } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useShift } from '../../src/hooks/useShift';
@@ -18,13 +18,10 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
+import { DAY_TONES, type DayVisualKey } from '../../src/lib/attendanceVisual';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-const now = new Date();
-const month = now.getMonth() + 1;
-const year = now.getFullYear();
-const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-const weekDates = Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i));
+const isoOf = (d: Date) => format(d, 'yyyy-MM-dd');
 
 /**
  * `topInset` -who is responsible for clearing the status bar.
@@ -38,13 +35,26 @@ const weekDates = Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i))
 export default function ShiftScreen({ topInset = false }: { topInset?: boolean }) {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
+  const { C: Colors, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
+
+  // "Now" is read at render, not once at start-up: the screen stays mounted for days.
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const weekDates = Array.from({ length: 7 }).map((_, i) => addDays(weekStart, i));
+  // A week can straddle two months (28 Sep - 4 Oct): the days of the other month live in that month's stats.
+  const weekMonths = Array.from(new Set(weekDates.map((d) => `${d.getFullYear()}-${d.getMonth() + 1}`)))
+    .filter((k) => k !== `${year}-${month}`)
+    .map((k) => ({ year: Number(k.split('-')[0]), month: Number(k.split('-')[1]) }));
+  const other = weekMonths[0];
 
   const { user } = useAuth();
   const { data: shift, isLoading } = useShift(user?.employeeId ?? null);
   const { data: employee } = useEmployee(user?.employeeId ?? null);
   const { data: stats } = useShiftStats(month, year);
+  const otherStats = useShiftStats(other?.month ?? month, other?.year ?? year, { enabled: !!other });
   const { data: approvedCL } = useCasualLeaves(user?.employeeId ?? null, { status: 'approved', month, year });
 
   const isProduction = employee?.employmentType === 'production';
@@ -72,6 +82,18 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
     amber: { pill: { backgroundColor: Colors.badgeYellowBg }, text: { color: Colors.statusYellow } },
     muted: { pill: { backgroundColor: Colors.bgSurfaceLow }, text: { color: Colors.textMuted } },
   } as const;
+  // Holiday / Sunday / leave pills use the SAME colours as the attendance calendar.
+  const dayPill = (k: DayVisualKey) => ({
+    pill: { backgroundColor: isDark ? DAY_TONES[k].fillDark : DAY_TONES[k].fillLight },
+    text: { color: isDark ? DAY_TONES[k].inkDark : DAY_TONES[k].inkLight },
+  });
+  // The month's data a given day lives in: undefined while that month is still loading (or failed), so a past day
+  // is never called Absent just because its month has not arrived.
+  const logOf = (date: Date) => {
+    const src = date.getMonth() + 1 === month && date.getFullYear() === year ? stats : otherStats.data;
+    if (!src) return { loaded: false as const, log: undefined };
+    return { loaded: true as const, log: src.dailyLogs.find((d) => d.date === isoOf(date)) };
+  };
 
   const header = (
     <View style={styles.header}>
@@ -176,17 +198,20 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                     : []),
                 ]
               : [{ icon: 'calendar-check-outline', label: 'Sunday', value: 'Working Day' }]),
-          ].map(({ icon, label, value }) => (
-            <View key={label} style={styles.detailRow}>
-              <View style={styles.detailLeft}>
-                <View style={styles.detailIconWrap}>
-                  <MaterialCommunityIcons name={icon as any} size={16} color={Colors.primary} />
+          ].map(({ icon, label, value }) => {
+            const long = value.length > 24; // a sentence, not a figure: it gets the full width under its label
+            return (
+              <View key={label} style={[styles.detailRow, long && styles.detailRowStack]}>
+                <View style={styles.detailLeft}>
+                  <View style={styles.detailIconWrap}>
+                    <MaterialCommunityIcons name={icon as any} size={16} color={Colors.primary} />
+                  </View>
+                  <Text style={styles.detailLabel}>{label}</Text>
                 </View>
-                <Text style={styles.detailLabel}>{label}</Text>
+                <Text style={[styles.detailValue, long ? styles.detailValueLong : styles.detailValueShort]}>{value}</Text>
               </View>
-              <Text style={styles.detailValue}>{value}</Text>
-            </View>
-          ))}
+            );
+          })}
           {!isProduction && halfRule && (
             <Text style={[styles.deductionNote, { marginTop: 8, marginBottom: 0 }]}>
               Punches in both halves = Full Day, in one half = Half Day.
@@ -309,7 +334,7 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
             {weekDates.map((date) => {
               const dayAbbr = ALL_DAYS[(date.getDay() + 6) % 7];
               const isWorking = workingDays.includes(dayAbbr);
-              const log = stats?.dailyLogs.find((d) => isSameDay(new Date(d.date), date));
+              const { loaded, log } = logOf(date);
               const today = isToday(date);
               const past = isBefore(date, now) && !today;
 
@@ -329,22 +354,48 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
               // The pill carries the first flag; the sub-line spells out the rest.
               const extraNotes = [...(flagLabels.length > 1 ? flagLabels : []), ...permNotes];
 
+              // What kind of day it is, in the order that matters: a holiday / Sunday off nobody worked, approved
+              // leave, the shift's own off day, today, a worked day, then a day gone by with no punch.
               let statusLabel = 'Upcoming';
-              let statusTone: 'green' | 'blue' | 'muted' | 'amber' = 'muted';
-              if (!isWorking) {
+              let statusStyle: { pill: object; text: object } = weekStatusStyles.muted;
+              let title = isWorking ? `${shift.startTime} – ${shift.endTime}` : 'Off Day';
+              let subLine: string | null = null;
+              if (loaded && log?.dayKind && !log.firstPunch) {
+                if (log.dayKind === 'holiday') {
+                  statusLabel = 'Holiday';
+                  statusStyle = dayPill('holiday');
+                  title = log.holidayName || 'Holiday';
+                  subLine = log.holidayType
+                    ? `${log.holidayType.charAt(0).toUpperCase()}${log.holidayType.slice(1)} holiday`
+                    : 'Declared holiday';
+                } else {
+                  statusLabel = 'Sunday';
+                  statusStyle = dayPill('sunday');
+                  title = 'Weekly Off';
+                }
+              } else if (loaded && log?.isCasualLeave) {
+                statusLabel = 'Casual Leave';
+                statusStyle = dayPill('casualLeave');
+                title = 'Casual Leave';
+              } else if (loaded && log?.status === 'on_leave') {
+                statusLabel = 'On Leave';
+                statusStyle = dayPill('onLeave');
+                title = 'On Leave';
+              } else if (!isWorking) {
                 statusLabel = 'Off Day';
-                statusTone = 'muted';
               } else if (today) {
                 statusLabel = 'Today';
-                statusTone = 'blue';
+                statusStyle = weekStatusStyles.blue;
+              } else if (!loaded && past) {
+                statusLabel = '—'; // that month's data has not arrived (yet): say nothing rather than guess
               } else if (log?.firstPunch) {
                 statusLabel = flagLabels.length
                   ? `${flagLabels[0]}${flagLabels.length > 1 ? ` +${flagLabels.length - 1}` : ''}`
                   : 'Completed';
-                statusTone = flagLabels.length ? 'amber' : 'green';
+                statusStyle = flagLabels.length ? weekStatusStyles.amber : weekStatusStyles.green;
               } else if (past) {
                 statusLabel = 'Absent';
-                statusTone = 'amber';
+                statusStyle = dayPill('absent');
               }
 
               return (
@@ -354,9 +405,8 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                     <Text style={[styles.weekDateNum, TabularNums, today && styles.weekDateTextToday]}>{format(date, 'd')}</Text>
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.weekRowTime}>
-                      {isWorking ? `${shift.startTime} – ${shift.endTime}` : 'Off Day'}
-                    </Text>
+                    <Text style={styles.weekRowTime} numberOfLines={1}>{title}</Text>
+                    {subLine && <Text style={styles.weekRowSub}>{subLine}</Text>}
                     {log?.firstPunch && (
                       <Text style={styles.weekRowSub}>
                         In {log.firstPunch}{log.lastPunch ? ` · Out ${log.lastPunch}` : ''}
@@ -368,8 +418,8 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                     {/* Plain-language explanation of the day's boundary/flag, whenever the server sent one. */}
                     {!!log?.lateReason && <Text style={styles.weekRowSub}>{log.lateReason}</Text>}
                   </View>
-                  <View style={[styles.weekStatusPill, weekStatusStyles[statusTone].pill]}>
-                    <Text style={[styles.weekStatusText, weekStatusStyles[statusTone].text]}>{statusLabel}</Text>
+                  <View style={[styles.weekStatusPill, statusStyle.pill]}>
+                    <Text style={[styles.weekStatusText, statusStyle.text]} numberOfLines={1}>{statusLabel}</Text>
                   </View>
                 </View>
               );
@@ -467,7 +517,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.outlineVariant,
   },
-  detailLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  detailRowStack: { flexDirection: 'column', alignItems: 'stretch', gap: 8 },
+  detailLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
   detailIconWrap: {
     width: 30, height: 30, borderRadius: 10,
     backgroundColor: Colors.primaryFixed,
@@ -475,6 +526,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   detailLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '500' },
   detailValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '700' },
+  detailValueShort: { flex: 1, textAlign: 'right', marginLeft: 12 },
+  detailValueLong: { fontSize: 12.5, lineHeight: 18, fontWeight: '600', color: Colors.textSecondary },
 
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap' },
   statBox: { width: '25%', alignItems: 'center', gap: 6, paddingVertical: 6 },

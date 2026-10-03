@@ -7,6 +7,12 @@ export interface DailyShiftLog extends DayFlags {
   firstPunch?: string | null;
   lastPunch?: string | null;
   status: string;
+  /** "holiday" (declared) | "weekly_off" (a Sunday off) | null. Sent for future days too; absent on an older backend. */
+  dayKind?: 'holiday' | 'weekly_off' | null;
+  holidayName?: string | null;
+  holidayType?: string | null;
+  /** An approved Casual Leave day (stored as a Present day, so only this tells it apart). */
+  isCasualLeave?: boolean;
 }
 
 export interface ShiftStatsSummary {
@@ -199,10 +205,11 @@ export function halfDayRule(policy?: ShiftPolicy): { morning: string; evening: s
 }
 
 /** GET /attendance/employee-shift-stats — self-scoped for employee tokens. */
-export function useShiftStats(month: number, year: number, options?: { staleTime?: number }) {
+export function useShiftStats(month: number, year: number, options?: { staleTime?: number; enabled?: boolean }) {
   return useQuery({
     queryKey: ['employee-shift-stats', month, year],
     staleTime: options?.staleTime,
+    enabled: options?.enabled ?? true,
     queryFn: async (): Promise<ShiftStats | null> => {
       try {
         const res = await api.get('/attendance/employee-shift-stats', { params: { month, year } });

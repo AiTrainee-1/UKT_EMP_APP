@@ -5,32 +5,28 @@ import {
   StyleSheet,
   Platform,
   TouchableOpacity,
-  StatusBar,
   Modal,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 import { MotiView } from 'moti';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { KeyboardAvoider, useKeyboardVisible } from '../../src/components/KeyboardAvoider';
-import { FormScrollView } from '../../src/components/FormScrollView';
-import { Input } from '../../src/components/ui/Input';
 import { Toast } from '../../src/components/ui/Toast';
+import { AuthShell } from '../../src/components/auth/AuthShell';
+import { AuthInput } from '../../src/components/auth/AuthInput';
+import { AuthButton } from '../../src/components/auth/AuthButton';
+import { AuthColors, AuthFont } from '../../src/components/auth/authTheme';
 import { OtpFlow } from '../../src/components/auth/OtpFlow';
 import { SupportContactCard } from '../../src/components/support/SupportContactCard';
 import { SupportInlineLink } from '../../src/components/support/SupportInlineLink';
 import { UKTLogo } from '../../src/components/UKTLogo';
-import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
-import { FontFamily } from '../../src/constants/typography';
 import { useAuth } from '../../src/hooks/useAuth';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
 import { isServerProblem } from '../../src/lib/supportContact';
@@ -45,6 +41,14 @@ type FormData = z.infer<typeof schema>;
 
 const REMEMBER_KEY = 'uktex.rememberedIdentifier';
 
+// What the portal is for, shown on the header (the company details part of the design).
+const FEATURES: { icon: string; label: string }[] = [
+  { icon: 'calendar-check-outline', label: 'Attendance' },
+  { icon: 'clock-outline', label: 'Duty shifts' },
+  { icon: 'umbrella-outline', label: 'Leave' },
+  { icon: 'cash-multiple', label: 'Salary slips' },
+];
+
 export default function LoginScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
@@ -52,7 +56,6 @@ export default function LoginScreen() {
   const styles = useThemedStyles(makeStyles);
 
   const { setUser } = useAuth();
-  const keyboardVisible = useKeyboardVisible();
   const [loading, setLoading] = useState(false);
   const [remember, setRemember] = useState(true);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
@@ -148,156 +151,161 @@ export default function LoginScreen() {
     }
   };
 
-  return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
-
-      <View pointerEvents="none" style={styles.decorWrap}>
-        <View style={styles.decorCircle1} />
-        <View style={styles.decorCircle2} />
+  const header = (
+    <View>
+      <View style={styles.brandRow}>
+        <UKTLogo size={34} />
+        <View style={styles.brandText}>
+          <Text style={styles.brandName}>UK TEXTILES</Text>
+          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
+        </View>
+        <View style={styles.versionPill}>
+          <View style={styles.versionDot} />
+          <Text style={styles.versionText}>{APP_VERSION_LABEL}</Text>
+        </View>
       </View>
 
-      <KeyboardAvoider style={{ flex: 1 }}>
-        <FormScrollView
-          contentContainerStyle={[styles.container, keyboardVisible && styles.containerKeyboard]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Brand */}
-          <View style={styles.logoSection}>
-            <View style={styles.brandLogo}>
-              <UKTLogo size={72} />
-            </View>
-            <View style={styles.brandRow}>
-              <Text style={styles.brand}>UK</Text>
-              <Text style={styles.brandTail}> TEXTILES</Text>
-            </View>
-            <Text style={styles.tagline}>EMPLOYEE PORTAL</Text>
+      <Text style={styles.headline}>Log in to stay on top of your tasks and attendance.</Text>
+      <Text style={styles.headSub}>
+        Access your attendance, duty shifts, leave approvals & salary slips seamlessly.
+      </Text>
 
-            <View style={styles.versionPill}>
-              <View style={styles.versionDot} />
-              <Text style={styles.versionText}>Employee Portal {APP_VERSION_LABEL}</Text>
-            </View>
+      <View style={styles.featureRow}>
+        {FEATURES.map((f) => (
+          <View key={f.label} style={styles.featureChip}>
+            <MaterialCommunityIcons name={f.icon as any} size={13} color="#fff" />
+            <Text style={styles.featureText}>{f.label}</Text>
           </View>
+        ))}
+      </View>
+    </View>
+  );
 
-          {/* Welcome */}
-          <Text style={styles.heading}>Welcome Back</Text>
-          <Text style={styles.subheading}>
-            Sign in to access your attendance, leave, salary slips and more.
-          </Text>
+  return (
+    <>
+      <AuthShell header={header}>
+        <Text style={styles.title}>Login</Text>
+        <View style={styles.activateRow}>
+          <Text style={styles.activateText}>Don't have an account? </Text>
+          <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} hitSlop={8}>
+            <Text style={styles.activateLink}>Activate</Text>
+          </TouchableOpacity>
+        </View>
 
-          {/* Form card */}
-          <View style={styles.card}>
-            {showOtp ? (
-              <OtpFlow
-                purpose="login"
-                submitLabel="Verify & Sign In"
-                initialIdentifier={rememberedCode}
-                onSubmit={async (identifier, otp) => {
-                  const result = await otpLoginRequest(identifier, otp);
-                  await finishSignIn(identifier, result);
-                }}
-              />
-            ) : (
-              <>
-                <Controller
-                  control={control}
-                  name="identifier"
-                  render={({ field: { onChange, value, onBlur } }) => (
-                    <Input
-                      label="Employee Code"
-                      placeholder="e.g. UKT-10482"
-                      keyboardType="numeric"
-                      value={value}
-                      onChangeText={onChange}
-                      onBlur={onBlur}
-                      error={errors.identifier?.message}
-                      returnKeyType="next"
-                      leftIconName="badge-account-outline"
-                    />
-                  )}
-                />
-
-                <View style={styles.passwordLabelRow}>
-                  <Text style={styles.passwordLabel}>Password</Text>
-                  <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')} hitSlop={8}>
-                    <Text style={styles.forgotLink}>Forgot?</Text>
-                  </TouchableOpacity>
-                </View>
-                <Controller
-                  control={control}
-                  name="password"
-                  render={({ field: { onChange, value, onBlur } }) => (
-                    <Input
-                      placeholder="Enter your password"
-                      value={value}
-                      onChangeText={onChange}
-                      onBlur={onBlur}
-                      isPassword
-                      error={errors.password?.message}
-                      returnKeyType="done"
-                      onSubmitEditing={handleSubmit(onSubmit)}
-                      leftIconName="lock-outline"
-                      containerStyle={{ marginBottom: 12 }}
-                    />
-                  )}
-                />
-
-                <TouchableOpacity style={styles.rememberRow} onPress={() => setRemember(v => !v)} activeOpacity={0.75}>
-                  <View style={[styles.checkbox, remember && styles.checkboxChecked]}>
-                    {remember && <MaterialCommunityIcons name="check" size={13} color="#fff" />}
-                  </View>
-                  <Text style={styles.rememberText}>Keep roll saved on device</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.signInBtn} onPress={handleSubmit(onSubmit)} disabled={loading} activeOpacity={0.85}>
-                  <LinearGradient colors={Colors.gradientPrimary} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.signInGradient}>
-                    <Text style={styles.signInText}>{loading ? 'Signing In…' : 'Sign In to Dashboard'}</Text>
-                    {!loading && <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />}
-                  </LinearGradient>
-                </TouchableOpacity>
-              </>
-            )}
-
-            {canSwitch && (
-              <TouchableOpacity onPress={() => setMode(showOtp ? 'password' : 'otp')} style={styles.switchRow} activeOpacity={0.8}>
-                <MaterialCommunityIcons name={showOtp ? 'lock-outline' : 'whatsapp'} size={16} color={Colors.primary} />
-                <Text style={styles.switchText}>
-                  {showOtp ? 'Use my password instead' : 'Sign in with a WhatsApp code'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} style={styles.firstTimeRow} activeOpacity={0.8}>
-              <View style={styles.firstTimeIcon}>
-                <MaterialCommunityIcons name="key-outline" size={18} color={Colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.firstTimeTitle}>First time at UKTextiles?</Text>
-                <Text style={styles.firstTimeSub}>Activate your account & set your password</Text>
-              </View>
-              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          </View>
-
-          {serverDown && (
-            <SupportContactCard
-              situation="server"
-              compact
-              description="The server is not responding, so nobody can sign in right now. If it stays like this, contact:"
-              style={styles.serverCard}
-            />
-          )}
-
-          <SupportInlineLink
-            situation="hr"
-            prefix="Need help? "
-            style={styles.helpRow}
-            textStyle={styles.helpText}
-            accentStyle={styles.helpAccent}
+        {showOtp ? (
+          <OtpFlow
+            purpose="login"
+            submitLabel="Verify & Sign In"
+            initialIdentifier={rememberedCode}
+            onSubmit={async (identifier, otp) => {
+              const result = await otpLoginRequest(identifier, otp);
+              await finishSignIn(identifier, result);
+            }}
           />
-        </FormScrollView>
-      </KeyboardAvoider>
+        ) : (
+          <>
+            <Controller
+              control={control}
+              name="identifier"
+              render={({ field: { onChange, value, onBlur } }) => (
+                <AuthInput
+                  label="Employee Code"
+                  placeholder="e.g. UKT-10482"
+                  keyboardType="numeric"
+                  value={value}
+                  onChangeText={onChange}
+                  onBlur={onBlur}
+                  error={errors.identifier?.message}
+                  returnKeyType="next"
+                  leftIconName="badge-account-outline"
+                />
+              )}
+            />
+
+            <View style={styles.passwordLabelRow}>
+              <Text style={styles.passwordLabel}>Password</Text>
+              <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')} hitSlop={8}>
+                <Text style={styles.forgotLink}>Forgot?</Text>
+              </TouchableOpacity>
+            </View>
+            <Controller
+              control={control}
+              name="password"
+              render={({ field: { onChange, value, onBlur } }) => (
+                <AuthInput
+                  placeholder="Enter your password"
+                  value={value}
+                  onChangeText={onChange}
+                  onBlur={onBlur}
+                  isPassword
+                  error={errors.password?.message}
+                  returnKeyType="done"
+                  onSubmitEditing={handleSubmit(onSubmit)}
+                  leftIconName="lock-outline"
+                  containerStyle={{ marginBottom: 12 }}
+                />
+              )}
+            />
+
+            <TouchableOpacity style={styles.rememberRow} onPress={() => setRemember(v => !v)} activeOpacity={0.75}>
+              <View style={[styles.checkbox, remember && styles.checkboxChecked]}>
+                {remember && <MaterialCommunityIcons name="check" size={13} color="#fff" />}
+              </View>
+              <Text style={styles.rememberText}>Keep roll saved on device</Text>
+            </TouchableOpacity>
+
+            <AuthButton
+              title="Sign In to Dashboard"
+              onPress={handleSubmit(onSubmit)}
+              loading={loading}
+              style={styles.signIn}
+            />
+          </>
+        )}
+
+        {canSwitch && (
+          <TouchableOpacity onPress={() => setMode(showOtp ? 'password' : 'otp')} style={styles.switchRow} activeOpacity={0.8}>
+            <MaterialCommunityIcons name={showOtp ? 'lock-outline' : 'whatsapp'} size={16} color={AuthColors.accentDark} />
+            <Text style={styles.switchText}>
+              {showOtp ? 'Use my password instead' : 'Sign in with a WhatsApp code'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>NEW JOINING</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
+        <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} style={styles.firstTimeRow} activeOpacity={0.8}>
+          <View style={styles.firstTimeIcon}>
+            <MaterialCommunityIcons name="key-outline" size={18} color={AuthColors.accentDark} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.firstTimeTitle}>First time at UKTextiles?</Text>
+            <Text style={styles.firstTimeSub}>Activate your account & set your password</Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
+        </TouchableOpacity>
+
+        {serverDown && (
+          <SupportContactCard
+            situation="server"
+            compact
+            description="The server is not responding, so nobody can sign in right now. If it stays like this, contact:"
+            style={styles.serverCard}
+          />
+        )}
+
+        <SupportInlineLink
+          situation="hr"
+          prefix="Need help? "
+          style={styles.helpRow}
+          textStyle={styles.helpText}
+          accentStyle={styles.helpAccent}
+        />
+      </AuthShell>
 
       <Toast {...toast} />
 
@@ -342,101 +350,92 @@ export default function LoginScreen() {
               situation="hr"
               lead="Contact HR"
               showIcon
-              iconColor={Colors.primary}
+              iconColor={AuthColors.accentDark}
               style={styles.errHelpRow}
               textStyle={styles.errHelpText}
             />
           </MotiView>
         </View>
       </Modal>
-    </SafeAreaView>
+    </>
   );
 }
 
 const makeStyles = (Colors: Palette) => StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgLight },
-  container: { flexGrow: 1, padding: 24, justifyContent: 'center', gap: 4 },
-  containerKeyboard: { justifyContent: 'flex-start', paddingBottom: 32 },
-  decorWrap: { position: 'absolute', top: -40, right: -30, zIndex: 0 },
-  decorCircle1: { width: 180, height: 180, borderRadius: 90, backgroundColor: Colors.primaryFixed, opacity: 0.5 },
-  decorCircle2: {
-    width: 90, height: 90, borderRadius: 45,
-    backgroundColor: Colors.secondaryFixed, opacity: 0.6,
-    position: 'absolute', bottom: -10, right: 30,
-  },
-
-  logoSection: { alignItems: 'center', gap: 8, zIndex: 1, marginBottom: 20 },
-  brandLogo: { alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
-  brandRow: { flexDirection: 'row', alignItems: 'baseline' },
-  brand: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 26, letterSpacing: 0.3 },
-  brandTail: { color: Colors.primary, fontFamily: FontFamily.displayBold, fontSize: 26, letterSpacing: 0.3 },
-  tagline: { color: Colors.textMuted, fontSize: 11, fontWeight: '700', letterSpacing: 1.6, marginTop: 2 },
+  // ── header (on the emerald backdrop) ──
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 22 },
+  brandText: { flex: 1 },
+  brandName: { color: '#fff', fontFamily: AuthFont.display, fontSize: 15, letterSpacing: 0.8 },
+  brandSub: { color: 'rgba(255,255,255,0.78)', fontFamily: AuthFont.bodyBold, fontSize: 9.5, letterSpacing: 1.6, marginTop: 1 },
   versionPill: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.primaryFixed,
-    paddingHorizontal: 12, paddingVertical: 6,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+    paddingHorizontal: 10, paddingVertical: 5,
     borderRadius: BorderRadius.full,
-    marginTop: 12,
   },
-  versionDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.statusGreen },
-  versionText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12 },
+  versionDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#5EEAD4' },
+  versionText: { color: '#fff', fontFamily: AuthFont.bodyBold, fontSize: 11 },
 
-  heading: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 24, textAlign: 'center', marginBottom: 6 },
-  subheading: { color: Colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 22, paddingHorizontal: 8 },
-
-  card: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xxl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 22,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.08, shadowRadius: 15 },
-      android: { elevation: 8 },
-    }),
+  headline: { color: '#fff', fontFamily: AuthFont.display, fontSize: 27, lineHeight: 35, letterSpacing: -0.3 },
+  headSub: { color: 'rgba(255,255,255,0.86)', fontFamily: AuthFont.body, fontSize: 13.5, lineHeight: 20, marginTop: 10 },
+  featureRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 16 },
+  featureChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius: BorderRadius.full,
+    paddingHorizontal: 10, paddingVertical: 5,
   },
-  passwordLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, marginLeft: 4 },
-  passwordLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', letterSpacing: 0.3 },
-  forgotLink: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  featureText: { color: '#fff', fontFamily: AuthFont.bodySemi, fontSize: 11.5 },
+
+  // ── sheet ──
+  title: { color: Colors.textPrimary, fontFamily: AuthFont.display, fontSize: 25, textAlign: 'center' },
+  activateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 4, marginBottom: 22 },
+  activateText: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 13 },
+  activateLink: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 13 },
+
+  passwordLabelRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7, marginLeft: 2 },
+  passwordLabel: { color: Colors.textSecondary, fontFamily: AuthFont.bodyBold, fontSize: 11, letterSpacing: 0.9, textTransform: 'uppercase' },
+  forgotLink: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 12.5 },
 
   rememberRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 18 },
   checkbox: {
-    width: 20, height: 20, borderRadius: 5,
+    width: 20, height: 20, borderRadius: 6,
     borderWidth: 1.5, borderColor: Colors.outlineVariant,
     alignItems: 'center', justifyContent: 'center',
   },
-  checkboxChecked: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  rememberText: { color: Colors.textSecondary, fontSize: 13 },
+  checkboxChecked: { backgroundColor: AuthColors.accent, borderColor: AuthColors.accent },
+  rememberText: { color: Colors.textSecondary, fontFamily: AuthFont.body, fontSize: 13 },
 
-  signInBtn: { borderRadius: BorderRadius.full, overflow: 'hidden', marginBottom: 14 },
-  signInGradient: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 15,
-  },
-  signInText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 15 },
+  signIn: { marginBottom: 6 },
 
-  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, marginBottom: 6 },
-  switchText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14 },
+  switchText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 13.5 },
+
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, marginBottom: 14 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: Colors.outlineVariant },
+  dividerText: { color: Colors.textMuted, fontFamily: AuthFont.bodyBold, fontSize: 10.5, letterSpacing: 1.4 },
 
   firstTimeRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: Colors.primaryFixed,
-    borderRadius: BorderRadius.lg,
-    padding: 12,
+    backgroundColor: AuthColors.accentSoft,
+    borderRadius: 18,
+    padding: 13,
   },
   firstTimeIcon: {
-    width: 36, height: 36, borderRadius: BorderRadius.md,
-    backgroundColor: Colors.bgCard,
+    width: 38, height: 38, borderRadius: 12,
+    backgroundColor: '#fff',
     alignItems: 'center', justifyContent: 'center',
   },
-  firstTimeTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
-  firstTimeSub: { color: Colors.textMuted, fontSize: 11, marginTop: 1 },
+  firstTimeTitle: { color: '#0F2F2C', fontFamily: AuthFont.bodyBold, fontSize: 13.5 },
+  firstTimeSub: { color: '#4B6663', fontFamily: AuthFont.body, fontSize: 11.5, marginTop: 1 },
 
   serverCard: { marginTop: 14 },
-  helpRow: { alignItems: 'center', paddingVertical: 16 },
-  helpText: { color: Colors.textMuted, fontSize: 13 },
-  helpAccent: { color: Colors.primary, fontFamily: FontFamily.bodySemibold },
+  helpRow: { alignItems: 'center', paddingTop: 22, paddingBottom: 4 },
+  helpText: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 13 },
+  helpAccent: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold },
 
+  // ── "Authentication Failed" notice ──
   errBackdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   errCard: {
     width: '100%', maxWidth: 340,
@@ -451,21 +450,21 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   errHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   errIconWrap: { width: 42, height: 42, borderRadius: 14, backgroundColor: Colors.statusRed, alignItems: 'center', justifyContent: 'center' },
-  errTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 17 },
-  errSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 2 },
+  errTitle: { color: Colors.textPrimary, fontFamily: AuthFont.display, fontSize: 17 },
+  errSubtitle: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 11.5, marginTop: 2 },
   errInfoBox: { backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.lg, padding: 12 },
   errInfoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
-  errInfoLabel: { color: Colors.textMuted, fontSize: 12.5, flexShrink: 1 },
-  errInfoPill: { backgroundColor: Colors.primaryFixed, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
-  errInfoPillText: { color: Colors.primary, fontSize: 12, fontWeight: '800' },
-  errMessage: { color: Colors.textSecondary, fontSize: 13.5, lineHeight: 19 },
+  errInfoLabel: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 12.5, flexShrink: 1 },
+  errInfoPill: { backgroundColor: AuthColors.accentSoft, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
+  errInfoPillText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 12 },
+  errMessage: { color: Colors.textSecondary, fontFamily: AuthFont.body, fontSize: 13.5, lineHeight: 19 },
   errRetryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: Colors.statusRed,
     borderRadius: BorderRadius.full,
     paddingVertical: 14,
   },
-  errRetryText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 14.5 },
+  errRetryText: { color: '#fff', fontFamily: AuthFont.displaySemi, fontSize: 14.5 },
   errHelpRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 },
-  errHelpText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
+  errHelpText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 12.5 },
 });

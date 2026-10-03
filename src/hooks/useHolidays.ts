@@ -1,19 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
+import { toHolidays } from '../lib/holidays';
 
-export interface Holiday {
-  id: number;
-  name: string;
-  date: string;
-  type: 'National' | 'Regional' | 'Company';
-}
+export type { Holiday, HolidayType } from '../lib/holidays';
 
 export function useHolidays(year: number) {
   return useQuery({
     queryKey: ['holidays', year],
     queryFn: async () => {
       const res = await api.get('/holidays', { params: { year } });
-      return res.data as Holiday[];
+      return toHolidays(res.data);
     },
   });
 }

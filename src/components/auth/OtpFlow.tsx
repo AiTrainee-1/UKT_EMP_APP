@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-import { Input } from '../ui/Input';
-import { Button } from '../ui/Button';
+import { AuthInput } from './AuthInput';
+import { AuthButton } from './AuthButton';
+import { AuthColors, AuthFont } from './authTheme';
 import { SupportContactCard } from '../support/SupportContactCard';
 import { isServerProblem } from '../../lib/supportContact';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
-import { FontFamily } from '../../constants/typography';
 import { useCountdown } from '../../hooks/useCountdown';
 import { authErrorMessage, requestOtp, type OtpPurpose, type OtpRequestResult } from '../../hooks/useAuth';
 
@@ -109,7 +109,7 @@ export function OtpFlow({
   if (!sent) {
     return (
       <View>
-        <Input
+        <AuthInput
           label="Employee Code"
           placeholder="e.g. UKT-10482"
           keyboardType="numeric"
@@ -122,11 +122,11 @@ export function OtpFlow({
         />
         <Text style={styles.hint}>We will send a 6-digit code on WhatsApp to the number registered with HR.</Text>
         {errorNote}
-        <Button
+        <AuthButton
           title="Send code on WhatsApp"
           onPress={ask}
           loading={busy}
-          icon={<MaterialCommunityIcons name="whatsapp" size={17} color="#fff" />}
+          icon={<MaterialCommunityIcons name="whatsapp" size={18} color={AuthColors.pillCircle} />}
         />
       </View>
     );
@@ -142,7 +142,7 @@ export function OtpFlow({
         </Text>
       </View>
 
-      <Input
+      <AuthInput
         label="6-digit code"
         placeholder="Enter the code"
         keyboardType="number-pad"
@@ -158,7 +158,7 @@ export function OtpFlow({
       />
       {extraFields}
       {errorNote}
-      <Button
+      <AuthButton
         title={submitLabel}
         onPress={submit}
         loading={busy}
@@ -190,7 +190,7 @@ export function OtpFlow({
 
 const makeStyles = (Colors: Palette) =>
   StyleSheet.create({
-    hint: { color: Colors.textMuted, fontSize: 12, lineHeight: 17, marginBottom: 14, marginLeft: 4 },
+    hint: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 12, lineHeight: 17, marginBottom: 16, marginLeft: 2 },
     errorBox: {
       flexDirection: 'row',
       alignItems: 'flex-start',
@@ -201,7 +201,7 @@ const makeStyles = (Colors: Palette) =>
       paddingVertical: 10,
       marginBottom: 12,
     },
-    errorText: { flex: 1, color: Colors.badgeRedText, fontSize: 13, lineHeight: 18 },
+    errorText: { flex: 1, color: Colors.badgeRedText, fontFamily: AuthFont.bodySemi, fontSize: 13, lineHeight: 18 },
     serverCard: { marginBottom: 12 },
     sentBox: {
       flexDirection: 'row',
@@ -213,10 +213,10 @@ const makeStyles = (Colors: Palette) =>
       paddingVertical: 10,
       marginBottom: 14,
     },
-    sentText: { flex: 1, color: Colors.badgeGreenText, fontSize: 13, lineHeight: 18 },
-    sentStrong: { fontFamily: FontFamily.bodySemibold },
+    sentText: { flex: 1, color: Colors.badgeGreenText, fontFamily: AuthFont.body, fontSize: 13, lineHeight: 18 },
+    sentStrong: { fontFamily: AuthFont.bodyBold },
     footerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginTop: 16 },
-    footerLink: { color: Colors.textMuted, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
-    footerAccent: { color: Colors.primary },
+    footerLink: { color: Colors.textMuted, fontFamily: AuthFont.bodyBold, fontSize: 13 },
+    footerAccent: { color: AuthColors.accentDark },
     footerDisabled: { color: Colors.textMuted },
   });

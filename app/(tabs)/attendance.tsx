@@ -22,8 +22,9 @@ import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
 import { useCLEligibility } from '../../src/hooks/useCasualLeave';
 import { casualLeaveAvailable } from '../../src/lib/requestWindowForm';
 import { useGeoPunchStatus } from '../../src/hooks/useGeoAttendance';
-import { AttendanceCalendar } from '../../src/components/AttendanceCalendar';
-import { AttendanceTrendChart } from '../../src/components/AttendanceTrendChart';
+import { AttendanceCalendar, AttendanceLegend } from '../../src/components/AttendanceCalendar';
+import { AttendanceOverview } from '../../src/components/AttendanceOverview';
+import { DAY_TONES, RING } from '../../src/lib/attendanceVisual';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
@@ -48,11 +49,11 @@ const SUMMARY = (Colors: Palette, data: any, lateInEnabled: boolean) => {
   const presentPct = workingDays > 0 ? Math.round((present / workingDays) * 100) : 0;
   return [
     { label: 'Working', value: workingDays, unit: 'days', dot: Colors.textMuted, badge: null, badgeBg: null, badgeText: null },
-    { label: 'Present', value: present, unit: null, dot: Colors.statusGreen, badge: `${presentPct}%`, badgeBg: Colors.badgeGreenBg, badgeText: Colors.statusGreen },
-    { label: 'Absent', value: data?.absent ?? 0, unit: null, dot: Colors.statusRed, badge: (data?.absent ?? 0) > 0 ? `${data?.absent} day${data?.absent === 1 ? '' : 's'}` : null, badgeBg: Colors.badgeRedBg, badgeText: Colors.statusRed },
-    { label: 'Late-In', value: data?.late ?? 0, unit: null, dot: Colors.statusYellow, badge: (data?.late ?? 0) > 0 ? 'Alert' : null, badgeBg: Colors.badgeYellowBg, badgeText: Colors.statusYellow },
-    { label: 'Half Day', value: data?.halfShift ?? 0, unit: null, dot: Colors.statusOrange, badge: null, badgeBg: null, badgeText: null },
-    { label: 'Leave', value: data?.onLeave ?? 0, unit: null, dot: Colors.categoryTracking, badge: (data?.onLeave ?? 0) > 0 ? 'Approved' : null, badgeBg: Colors.badgeBlueBg, badgeText: Colors.categoryTracking },
+    { label: 'Present', value: present, unit: null, dot: DAY_TONES.present.solid, badge: `${presentPct}%`, badgeBg: Colors.badgeGreenBg, badgeText: Colors.statusGreen },
+    { label: 'Absent', value: data?.absent ?? 0, unit: null, dot: DAY_TONES.absent.solid, badge: (data?.absent ?? 0) > 0 ? `${data?.absent} day${data?.absent === 1 ? '' : 's'}` : null, badgeBg: Colors.badgeRedBg, badgeText: Colors.statusRed },
+    { label: 'Late-In', value: data?.late ?? 0, unit: null, dot: RING.late, badge: (data?.late ?? 0) > 0 ? 'Alert' : null, badgeBg: Colors.badgeYellowBg, badgeText: Colors.statusYellow },
+    { label: 'Half Day', value: data?.halfShift ?? 0, unit: null, dot: DAY_TONES.halfDay.solid, badge: null, badgeBg: null, badgeText: null },
+    { label: 'Leave', value: data?.onLeave ?? 0, unit: null, dot: DAY_TONES.onLeave.solid, badge: (data?.onLeave ?? 0) > 0 ? 'Approved' : null, badgeBg: Colors.badgeBlueBg, badgeText: Colors.categoryTracking },
   // The Late-In card goes when HR has switched Morning Late-In detection off.
   ].filter((c) => lateInEnabled || c.label !== 'Late-In');
 };
@@ -270,10 +271,10 @@ export default function AttendanceScreen() {
         {!isLoading && (
           <View style={styles.card}>
             <View style={styles.cardHeaderRow}>
-              <Text style={styles.cardTitle}>Monthly Trend</Text>
-              <Text style={styles.cardHint}>Daily breakdown</Text>
+              <Text style={styles.cardTitle}>Monthly Overview</Text>
+              <Text style={styles.cardHint}>{MONTHS[month - 1]} {year}</Text>
             </View>
-            <AttendanceTrendChart records={data?.records ?? []} />
+            <AttendanceOverview records={data?.records ?? []} month={month} year={year} detect={detect} />
           </View>
         )}
 
@@ -290,31 +291,9 @@ export default function AttendanceScreen() {
           )}
         </View>
 
-        {/* ─── Legend ─── same hues as the calendar cells above. The small
-            dot is the corner mark on a day that is also Late-In, Early-Out or
-            carries an Excess permission (all three count toward late deductions). */}
-        <View style={styles.legend}>
-          {[
-            { label: 'Present', color: Colors.statusGreen },
-            // Late-In / Early-Out entries only while HR has that check switched on.
-            ...(detect.lateIn ? [{ label: 'Late-In', color: Colors.statusYellow }] : []),
-            ...(detect.earlyOut ? [{ label: 'Early-Out', color: Colors.statusLeave }] : []),
-            { label: 'Half Day', color: Colors.statusOrange },
-            { label: 'Permission', color: Colors.statusBlue },
-            { label: 'Absent', color: Colors.statusRed },
-            { label: 'On Leave', color: Colors.categoryTracking },
-          ].map(({ label, color }) => (
-            <View key={label} style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: color }]} />
-              <Text style={styles.legendText}>{label}</Text>
-            </View>
-          ))}
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, styles.legendMark, { backgroundColor: Colors.statusYellow }]} />
-            <Text style={styles.legendText}>
-              {[detect.lateIn && 'Late', detect.earlyOut && 'Early', 'Excess'].filter(Boolean).join(' / ')} mark
-            </Text>
-          </View>
+        {/* ─── Legend ─── rendered by the calendar component from the same colour table as its cells. */}
+        <View style={styles.card}>
+          <AttendanceLegend detect={detect} />
         </View>
       </ScrollView>
 
