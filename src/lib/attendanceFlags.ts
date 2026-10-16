@@ -26,12 +26,45 @@ export interface DayFlags {
   permissionAfternoon: boolean;
   /** Why the day was flagged, in the server's words. Only some endpoints send it. */
   lateReason?: string;
+  /** What compensation shaped the day (see readCompensationMarker). All three are absent on an older backend. */
+  compensationKind?: string | null;
+  compensationMinutes?: number;
+  compensationNote?: string | null;
+}
+
+/**
+ * The compensation marker of one attendance day: which compensation the day used, in the server's own key
+ * (`ot_allowance`, `window_late_in`, `window_early_out`, `birthday`, `relaxation`, or a kind added later), the allowance
+ * minutes the arrival used, and the server's one-sentence explanation. Sent by every attendance endpoint
+ * (backend/api/attendance_final.py::compensation_marker_json); a day with none, or an older backend, reads as
+ * `{ kind: null, minutes: 0, note: null }`. Never throws: anything that is not the promised type counts as not sent.
+ */
+export interface CompensationMarker {
+  kind: string | null;
+  minutes: number;
+  note: string | null;
+}
+
+export function readCompensationMarker(raw: any): CompensationMarker {
+  const r = raw ?? {};
+  const kind = typeof r.compensationKind === 'string' ? r.compensationKind.trim() : '';
+  const note = typeof r.compensationNote === 'string' ? r.compensationNote.trim() : '';
+  const minutes = Number(r.compensationMinutes);
+  return {
+    kind: kind || null,
+    minutes: Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : 0,
+    note: note || null,
+  };
 }
 
 export function readDayFlags(raw: any): DayFlags {
   const r = raw ?? {};
   const reason = typeof r.lateReason === 'string' ? r.lateReason.trim() : '';
+  const comp = readCompensationMarker(r);
   return {
+    compensationKind: comp.kind,
+    compensationMinutes: comp.minutes,
+    compensationNote: comp.note,
     isLate: !!r.isLate,
     isEarlyOut: !!(r.isEarlyOut ?? r.earlyLeave),
     isHalfShift: !!r.isHalfShift,

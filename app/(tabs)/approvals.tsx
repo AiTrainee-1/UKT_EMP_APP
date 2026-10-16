@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,7 @@ import {
   useApproveAttendance,
   useApproveMissingPunch,
   useApproveOutpass,
+  useApproveHolidayWork,
   TeamLeaveRequest,
   TeamPermissionRequest,
   TeamResignationRequest,
@@ -34,6 +35,7 @@ import {
   TeamAttendanceRequest,
   TeamMissingPunchRequest,
   TeamOutpassRequest,
+  TeamHolidayWorkClaim,
 } from '../../src/hooks/useManager';
 import { PUNCH_SLOT_LABEL } from '../../src/hooks/useRequests';
 import {
@@ -46,6 +48,7 @@ import {
 import { useManagerProfile } from '../../src/hooks/useManager';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { shownApprovalTabs } from '../../src/lib/approvalBadge';
 import {
   approvalErrorMessage,
   decisionMessage,
@@ -56,6 +59,13 @@ import {
   type ApprovalProgress,
   type WorkflowKey,
 } from '../../src/lib/approval';
+import {
+  claimCreditedMessage,
+  claimDateLabel,
+  claimDayLabel,
+  claimTypeLabel,
+  shiftsLabel,
+} from '../../src/lib/compensation';
 import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Badge } from '../../src/components/ui/Badge';
@@ -69,8 +79,8 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
 
-type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch' | 'outpass';
-type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest | TeamOutpassRequest;
+type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch' | 'outpass' | 'holidayWork';
+type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest | TeamOutpassRequest | TeamHolidayWorkClaim;
 type SelectedRequest =
   | { kind: 'leave'; item: TeamLeaveRequest }
   | { kind: 'permission'; item: TeamPermissionRequest }
@@ -78,7 +88,8 @@ type SelectedRequest =
   | { kind: 'casualLeave'; item: TeamCasualLeaveRequest }
   | { kind: 'attendance'; item: TeamAttendanceRequest }
   | { kind: 'missingPunch'; item: TeamMissingPunchRequest }
-  | { kind: 'outpass'; item: TeamOutpassRequest };
+  | { kind: 'outpass'; item: TeamOutpassRequest }
+  | { kind: 'holidayWork'; item: TeamHolidayWorkClaim };
 
 function empName(item: GenericItem): string {
   return item.employeeName || item.employee?.name || '—';
@@ -129,6 +140,8 @@ const makeTabMeta = (Colors: Palette): Record<Tab, { label: string; icon: string
   attendance: { label: 'Attendance', icon: 'calendar-edit', iconOutline: 'calendar-edit', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
   missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: Colors.categoryPunch, bg: Colors.badgeLeaveBg },
   outpass: { label: 'Outpass', icon: 'exit-run', iconOutline: 'exit-run', color: Colors.primary, bg: Colors.primaryFixed },
+  // Holiday / Sunday work compensation claims HR raised for the team.
+  holidayWork: { label: 'Compensation', icon: 'briefcase-clock', iconOutline: 'briefcase-clock-outline', color: Colors.categoryDocs, bg: Colors.badgeGreenBg },
 });
 
 // Which of HR's approval pipelines (Approval Workflow Control) each tab's requests follow.
@@ -140,6 +153,7 @@ const TAB_WORKFLOW: Record<Tab, WorkflowKey> = {
   attendance: 'attendanceCorrection',
   missingPunch: 'missingPunch',
   outpass: 'outpass',
+  holidayWork: 'holidayWork',
 };
 
 // The lists hold only what this Department Head can decide, so this is only seen when a row went stale.
@@ -163,6 +177,7 @@ function itemTypeLabel(tab: Tab, item: GenericItem): string {
     return p.punchSlot ? PUNCH_SLOT_LABEL[p.punchSlot] : (p.punchType === 'IN' ? 'Check-In' : 'Check-Out');
   }
   if (tab === 'outpass') return (item as TeamOutpassRequest).destination;
+  if (tab === 'holidayWork') return claimTypeLabel(item as TeamHolidayWorkClaim);
   return '—';
 }
 
@@ -189,6 +204,7 @@ function itemDateLabel(tab: Tab, item: GenericItem): string {
     return d ? format(new Date(d + 'T00:00:00'), 'dd MMM yyyy') : '—';
   }
   if (tab === 'outpass') return appliedOn(item);
+  if (tab === 'holidayWork') return claimDateLabel(item as TeamHolidayWorkClaim);
   return '—';
 }
 
@@ -218,15 +234,21 @@ export default function ApprovalsScreen() {
   const approveAttendance = useApproveAttendance();
   const approveMissingPunch = useApproveMissingPunch();
   const approveOutpass = useApproveOutpass();
+  const approveHolidayWork = useApproveHolidayWork();
 
-  const canApproveResignations = manager?.canApproveResignations ?? false;
-  const canApproveCasualLeave = manager?.canApproveCasualLeave ?? false;
-  const canApproveAttendance = manager?.canApproveAttendance ?? false;
-  const canApproveMissingPunch = manager?.canApproveMissingPunch ?? false;
-  // Outpass reuses the Permissions capability -see
-  // backend/api/manager_views.py::manager_update_outpass_status, which
-  // deliberately shares can_approve_permissions rather than a new flag.
-  const canApproveOutpass = manager?.canApprovePermissions ?? false;
+  // Which tabs this head sees: ONE definition shared with the Approvals badge on the tab bar (src/lib/approvalBadge.ts), so
+  // the number on the icon is always the sum of the tabs listed here.
+  //  * Outpass reuses the Permissions capability -see backend/api/manager_views.py::manager_update_outpass_status, which
+  //    deliberately shares can_approve_permissions rather than a new flag.
+  //  * Holiday / Sunday work claims: the per-person switch "Can approve compensation". An older backend does not send it,
+  //    and then there are no claims either, so the tab stays hidden.
+  const shown = shownApprovalTabs(manager);
+  const canApproveResignations = shown.resignation;
+  const canApproveCasualLeave = shown.casualLeave;
+  const canApproveAttendance = shown.attendance;
+  const canApproveMissingPunch = shown.missingPunch;
+  const canApproveOutpass = shown.outpass;
+  const canApproveCompensation = shown.holidayWork;
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
@@ -260,15 +282,20 @@ export default function ApprovalsScreen() {
         result = await approveMissingPunch.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else if (selected.kind === 'outpass') {
         result = await approveOutpass.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
+      } else if (selected.kind === 'holidayWork') {
+        result = await approveHolidayWork.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       } else {
         result = await approveAttendance.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
       }
       showToast(
         status === 'approved'
-          // Worded from the request the server sent back. Without its `approval` (an older backend, whose pipeline is
-          // fixed) it is the old two-stage wording.
-          ? (decisionMessage('approved', result?.approval)
-              ?? (selected.kind === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.'))
+          // A compensation claim is decided by the head alone: its approval is final, and says what it added to whom.
+          ? (selected.kind === 'holidayWork' && result?.credited
+              ? claimCreditedMessage({ ...selected.item, ...result })
+              // Worded from the request the server sent back. Without its `approval` (an older backend, whose pipeline is
+              // fixed) it is the old two-stage wording.
+              : decisionMessage('approved', result?.approval)
+                ?? (selected.kind === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.'))
           : 'Request rejected.',
         status === 'approved' ? 'success' : 'error',
       );
@@ -302,7 +329,7 @@ export default function ApprovalsScreen() {
 
   const isPending = approveLeave.isPending || approvePermission.isPending || resignationAction.isPending
     || approveCasualLeave.isPending || approveAttendance.isPending || approveMissingPunch.isPending
-    || approveOutpass.isPending;
+    || approveOutpass.isPending || approveHolidayWork.isPending;
 
   const leaveList = data?.leaveRequests ?? [];
   const permList = data?.permissionRequests ?? [];
@@ -311,6 +338,7 @@ export default function ApprovalsScreen() {
   const attendanceList = data?.attendanceRequests ?? [];
   const missingPunchList = data?.missingPunchRequests ?? [];
   const outpassList = data?.outpassRequests ?? [];
+  const holidayWorkList = data?.holidayWorkClaims ?? [];
 
   const TABS: { key: Tab; icon: string; iconOutline: string; label: string; count: number }[] = [
     { key: 'leave', ...TAB_META.leave, count: leaveList.length },
@@ -327,10 +355,20 @@ export default function ApprovalsScreen() {
     ...(canApproveOutpass
       ? [{ key: 'outpass' as Tab, ...TAB_META.outpass, count: outpassList.length }]
       : []),
+    ...(canApproveCompensation
+      ? [{ key: 'holidayWork' as Tab, ...TAB_META.holidayWork, count: holidayWorkList.length }]
+      : []),
     ...(canApproveResignations
       ? [{ key: 'resignation' as Tab, ...TAB_META.resignation, count: resignList.length }]
       : []),
   ];
+
+  // A tab can disappear while it is open: HR switched the head's approval switch off, and the profile refetch that follows a
+  // refused decision (or the 30 s poll) no longer lists it. Fall back to the first tab instead of an unselected, empty list.
+  const tabKeys = TABS.map((t) => t.key).join(',');
+  useEffect(() => {
+    if (!tabKeys.split(',').includes(tab)) setTab('leave');
+  }, [tabKeys, tab]);
 
   const activeList: any[] =
     tab === 'leave' ? leaveList
@@ -339,6 +377,7 @@ export default function ApprovalsScreen() {
     : tab === 'attendance' ? attendanceList
     : tab === 'missingPunch' ? missingPunchList
     : tab === 'outpass' ? outpassList
+    : tab === 'holidayWork' ? holidayWorkList
     : resignList;
 
   return (
@@ -558,9 +597,9 @@ export default function ApprovalsScreen() {
         }}
       />
 
-      {/* Detail Sheet — Leave / Permission / Casual Leave / Attendance / Missing Punch */}
+      {/* Detail Sheet — Leave / Permission / Casual Leave / Attendance / Missing Punch / Outpass / Compensation */}
       <BottomSheet
-        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance', 'missingPunch', 'outpass'].includes(selected.kind)}
+        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance', 'missingPunch', 'outpass', 'holidayWork'].includes(selected.kind)}
         onClose={closeSheet}
         title={selected && selected.kind !== 'resignation' ? `${TAB_META[selected.kind].label} Request` : ''}
       >
@@ -582,7 +621,16 @@ export default function ApprovalsScreen() {
                 ? ['From', format(new Date((selected.item as TeamLeaveRequest).startDate + 'T00:00:00'), 'dd MMM yyyy')]
                 : selected.kind === 'outpass'
                 ? null
-                : ['Date', itemDateLabel(selected.kind, selected.item).split(' · ')[0]],
+                : [selected.kind === 'holidayWork' ? 'Work date' : 'Date', itemDateLabel(selected.kind, selected.item).split(' · ')[0]],
+              selected.kind === 'holidayWork'
+                ? ['Day', claimDayLabel(selected.item as TeamHolidayWorkClaim)]
+                : null,
+              selected.kind === 'holidayWork' && shiftsLabel((selected.item as TeamHolidayWorkClaim).shifts)
+                ? ['Shifts claimed', shiftsLabel((selected.item as TeamHolidayWorkClaim).shifts)!]
+                : null,
+              selected.kind === 'holidayWork' && (selected.item as TeamHolidayWorkClaim).requestedBy
+                ? ['Raised by', `${(selected.item as TeamHolidayWorkClaim).requestedBy} (HR)`]
+                : null,
               selected.kind === 'leave'
                 ? ['To', format(new Date((selected.item as TeamLeaveRequest).endDate + 'T00:00:00'), 'dd MMM yyyy')]
                 : selected.kind === 'permission'
@@ -598,7 +646,7 @@ export default function ApprovalsScreen() {
                 ? ['Days', totalDays(selected.item as TeamLeaveRequest)!]
                 : null,
               ['Reason', selected.item.reason],
-              ['Applied', appliedOn(selected.item)],
+              [selected.kind === 'holidayWork' ? 'Raised on' : 'Applied', appliedOn(selected.item)],
             ] as ([string, string] | null)[]).filter((x): x is [string, string] => x !== null).map(([label, value]) => (
               <View key={label} style={styles.sheetRow}>
                 <Text style={styles.sheetLabel}>{label}</Text>
@@ -614,6 +662,13 @@ export default function ApprovalsScreen() {
                 Only the first {(selected.item as TeamPermissionRequest).monthlyLimit ?? DEFAULT_PERMISSION_MONTHLY_LIMIT}{' '}
                 approved permissions an employee has in a month are Allowed. Approving one beyond that makes it
                 Overdue / Excess: it will not protect the day and counts toward late deductions.
+              </Text>
+            )}
+
+            {selected.kind === 'holidayWork' && (
+              <Text style={styles.sheetHint}>
+                Approving adds {shiftsLabel((selected.item as TeamHolidayWorkClaim).shifts) ?? 'the claimed shifts'} to{' '}
+                {empName(selected.item)}'s compensation balance. Rejecting is final and adds nothing.
               </Text>
             )}
 

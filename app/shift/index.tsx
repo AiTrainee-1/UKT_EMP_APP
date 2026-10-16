@@ -18,7 +18,10 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
-import { DAY_TONES, type DayVisualKey } from '../../src/lib/attendanceVisual';
+import {
+  COMPENSATION_TONES, DAY_TONES, compensationKeyOf, compensationLabelOf, isCompensatedWholeDay,
+  type CompensationKey, type DayVisualKey,
+} from '../../src/lib/attendanceVisual';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const isoOf = (d: Date) => format(d, 'yyyy-MM-dd');
@@ -58,7 +61,11 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
   const { data: approvedCL } = useCasualLeaves(user?.employeeId ?? null, { status: 'approved', month, year });
 
   const isProduction = employee?.employmentType === 'production';
-  const presentDays = stats?.dailyLogs.filter((d) => !!d.firstPunch).length ?? 0;
+  // A day with a punch, plus a birthday / relaxation day: paid as worked, but with no punches to count.
+  const presentDays = stats?.dailyLogs.filter((d) => (
+    !!d.firstPunch
+    || (isCompensatedWholeDay(d.compensationKind) && (d.status === 'present' || d.status === 'half_shift'))
+  )).length ?? 0;
   // Deduction preview with the new API fields defaulted (older backends omit them); the company
   // `policy`, when present, wins over the summary's copies and says which checks are switched on.
   // Production staff get no split and the flat free allowance (see latePoolView).
@@ -86,6 +93,11 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
   const dayPill = (k: DayVisualKey) => ({
     pill: { backgroundColor: isDark ? DAY_TONES[k].fillDark : DAY_TONES[k].fillLight },
     text: { color: isDark ? DAY_TONES[k].inkDark : DAY_TONES[k].inkLight },
+  });
+  // A day that used a compensation (birthday, relaxation, allowance, company time) takes that compensation's own colours.
+  const compPill = (k: CompensationKey) => ({
+    pill: { backgroundColor: isDark ? COMPENSATION_TONES[k].softDark : COMPENSATION_TONES[k].softLight },
+    text: { color: isDark ? COMPENSATION_TONES[k].inkDark : COMPENSATION_TONES[k].inkLight },
   });
   // The month's data a given day lives in: undefined while that month is still loading (or failed), so a past day
   // is never called Absent just because its month has not arrived.
@@ -381,6 +393,12 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                 statusLabel = 'On Leave';
                 statusStyle = dayPill('onLeave');
                 title = 'On Leave';
+              } else if (loaded && !log?.firstPunch && isCompensatedWholeDay(log?.compensationKind) && compensationKeyOf(log?.compensationKind)) {
+                // A birthday or a relaxation day is made up by the compensation itself: there are no punches, and it is
+                // neither "Absent" nor an ordinary "Off Day".
+                statusLabel = compensationLabelOf(log?.compensationKind) ?? 'Compensation';
+                statusStyle = compPill(compensationKeyOf(log?.compensationKind)!);
+                title = statusLabel;
               } else if (!isWorking) {
                 statusLabel = 'Off Day';
               } else if (today) {
@@ -417,6 +435,8 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
                     )}
                     {/* Plain-language explanation of the day's boundary/flag, whenever the server sent one. */}
                     {!!log?.lateReason && <Text style={styles.weekRowSub}>{log.lateReason}</Text>}
+                    {/* What compensation did to the day, in the server's words. */}
+                    {!!log?.compensationNote && <Text style={styles.weekRowSub}>{log.compensationNote}</Text>}
                   </View>
                   <View style={[styles.weekStatusPill, statusStyle.pill]}>
                     <Text style={[styles.weekStatusText, statusStyle.text]} numberOfLines={1}>{statusLabel}</Text>

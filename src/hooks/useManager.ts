@@ -16,13 +16,25 @@ export interface ManagerProfile {
   canApproveCasualLeave?: boolean;
   canApproveAttendance?: boolean;
   canApproveMissingPunch?: boolean;
+  /** Holiday / Sunday work compensation claims (the HR User Management switch "Can approve compensation"). Absent on an
+   *  older backend, which reads as "cannot": the tab stays hidden. */
+  canApproveCompensation?: boolean;
+  /** The server's own total. It also counts On-Duty requests, which this app has no tab for, so the Approvals badge is NOT
+   *  this number: see approvalsBadgeCount() in src/lib/approvalBadge.ts. */
   pendingApprovalsCount: number;
   pendingLeavesCount?: number;
   pendingPermissionsCount?: number;
   pendingResignationsCount?: number;
-  pendingCasualLeavesCount?: number;
+  /** The wire key is `pendingCasualLeaveCount` (singular "Leave"). */
+  pendingCasualLeaveCount?: number;
   pendingAttendanceCount?: number;
   pendingMissingPunchCount?: number;
+  /** Gate outpass requests waiting for this head (inside `pendingApprovalsCount`). */
+  pendingOutpassCount?: number;
+  /** On-Duty requests waiting for this head. Sent, but this app has no On-Duty approvals tab, so nothing reads it. */
+  pendingOnDutyCount?: number;
+  /** Claims waiting for this head: already inside `pendingApprovalsCount`. */
+  pendingCompensationCount?: number;
 }
 
 export interface TeamOutpassRequest {
@@ -139,6 +151,33 @@ export interface TeamMissingPunchRequest {
   approval?: ApprovalProgress | null;
 }
 
+/**
+ * A Holiday / Sunday work compensation claim HR raised for someone on this Department Head's team: the employee worked on a
+ * Sunday or a company holiday, HR claims 0.25 / 0.5 / 0.75 / 1 shift for them, and the shifts go onto the employee's
+ * compensation balance only once the head approves (backend/api/holiday_work_views.py::claim_json).
+ */
+export interface TeamHolidayWorkClaim {
+  id: number;
+  employeeName?: string;
+  employeeCode?: string;
+  employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
+  department?: string | null;
+  /** The day the work was done (YYYY-MM-DD). */
+  workDate: string;
+  /** "sunday" | "holiday" */
+  dayKind?: string | null;
+  holidayName?: string | null;
+  shifts: number;
+  reason: string;
+  status: string;
+  /** Who in HR raised it. */
+  requestedBy?: string | null;
+  createdAt?: string;
+  /** True once the approval added the shifts to the employee's balance (a reply to the head's own approval). */
+  credited?: boolean;
+  approval?: ApprovalProgress | null;
+}
+
 export interface PendingRequests {
   leaveRequests: TeamLeaveRequest[];
   permissionRequests: TeamPermissionRequest[];
@@ -147,6 +186,7 @@ export interface PendingRequests {
   attendanceRequests: TeamAttendanceRequest[];
   missingPunchRequests: TeamMissingPunchRequest[];
   outpassRequests: TeamOutpassRequest[];
+  holidayWorkClaims: TeamHolidayWorkClaim[];
 }
 
 export function useManagerProfile(enabled = true) {
@@ -185,6 +225,8 @@ export function usePendingRequests(enabled = true) {
         attendanceRequests: raw.attendanceRequests ?? [],
         missingPunchRequests: raw.missingPunchRequests ?? [],
         outpassRequests: raw.outpassRequests ?? [],
+        // Additive: an older backend sends none.
+        holidayWorkClaims: Array.isArray(raw.holidayWorkClaims) ? raw.holidayWorkClaims : [],
       };
     },
     enabled,
@@ -295,6 +337,30 @@ export function useApproveOutpass() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+  });
+}
+
+/**
+ * PATCH /manager/holiday-work/{id}/status: the Department Head approves (the claimed shifts go onto the employee's
+ * compensation balance, once) or rejects (final) a holiday / Sunday work claim, with an optional comment. Refusals come
+ * back as plain sentences in `error` (the head's profile switch is off, the claim was already decided, it is not in their
+ * team) and are shown as they are. After a refusal the manager profile is refetched: the switch that was just turned off
+ * is what hides the tab.
+ */
+export function useApproveHolidayWork() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
+      const res = await api.patch(`/manager/holiday-work/${id}/status`, { status, comment });
+      return res.data as TeamHolidayWorkClaim;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+    },
+    onError: () => {
       queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
     },
   });

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useManagerProfile } from '../../src/hooks/useManager';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
+import { approvalsBadgeCount } from '../../src/lib/approvalBadge';
 import { useTheme } from '../../src/theme/ThemeProvider';
 import { DockTabIcon } from '../../src/components/DockTabIcon';
 
@@ -48,11 +49,9 @@ export default function TabsLayout() {
   useApprovalSummary();
 
   const isManager = manager?.isManager ?? false;
-  const summedCount =
-    (manager?.pendingLeavesCount ?? 0) +
-    (manager?.pendingPermissionsCount ?? 0) +
-    (manager?.pendingResignationsCount ?? 0);
-  const pendingCount = summedCount || (manager?.pendingApprovalsCount ?? 0);
+  // The sum of what the Approvals screen lists as tabs (leave, permission, casual leave, attendance, missing punch,
+  // compensation, resignation), every count from /manager/me: what the head can clear there, no more and no less.
+  const pendingCount = approvalsBadgeCount(manager);
 
   return (
     <Tabs

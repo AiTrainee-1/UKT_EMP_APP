@@ -50,6 +50,12 @@ export interface AttendanceRecord {
    *  Late/Permission penalties are exempted, but Full/Half Day is still
    *  judged from real punches, never auto-granted. */
   isCompensationDay?: boolean;
+  /** What compensation shaped the day: `ot_allowance`, `window_late_in`, `window_early_out`, `birthday`, `relaxation`
+   *  (or a kind added later), with the server's one-sentence explanation and, for an allowance, the minutes the arrival used.
+   *  Absent on an older backend. A relaxation day has no punches at all: it is a compensation day, not "a half day". */
+  compensationKind?: string | null;
+  compensationMinutes?: number;
+  compensationNote?: string | null;
   firstIn?: string;
   lastOut?: string;
   punchCount?: number;
@@ -145,6 +151,9 @@ function transformAttendance(raw: any): AttendanceSummary {
         permissionAfternoon: f.permissionAfternoon,
         permissionWithRequest,
         isCompensationDay: !!r.isCompensationDay,
+        compensationKind: f.compensationKind ?? null,
+        compensationMinutes: f.compensationMinutes ?? 0,
+        compensationNote: f.compensationNote ?? null,
         firstIn: r.firstPunch ?? r.firstIn ?? undefined,
         lastOut: r.lastPunch ?? r.lastOut ?? undefined,
         punchCount: r.totalPunches ?? r.punchCount ?? undefined,

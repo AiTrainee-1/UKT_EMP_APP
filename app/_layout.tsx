@@ -1,7 +1,7 @@
 import React, { useState, useEffect, Component, ReactNode, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { StatusBar } from 'expo-status-bar';
 import { AuthContext, AuthUser, checkAuth, useAuth } from '../src/hooks/useAuth';
@@ -12,12 +12,14 @@ import { Colors } from '../src/constants/colors';
 import { useMyResignation } from '../src/hooks/useResignation';
 import { registerPushToken } from '../src/hooks/usePushToken';
 import { useEmployee } from '../src/hooks/useEmployee';
+import type { ManagerProfile } from '../src/hooks/useManager';
 import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
 import { useNotificationObserver } from '../src/hooks/useNotifications';
 import { PermissionGate } from '../src/components/PermissionGate';
 import { UpdatePrompt } from '../src/components/UpdatePrompt';
 import { ServerStatusBanner } from '../src/components/support/ServerStatusBanner';
 import { prefetchSupportContact } from '../src/hooks/useSupportContact';
+import { notificationRoute, pushNotificationType } from '../src/lib/compensation';
 import * as Location from 'expo-location';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
@@ -178,8 +180,15 @@ function LiveLocationTracker() {
 // useNotifications.ts's setNotificationHandler call).
 // ---------------------------------------------------------------------------
 function NotificationTapHandler() {
-  useNotificationObserver(() => {
-    router.push('/(tabs)/notifications');
+  const client = useQueryClient();
+  useNotificationObserver((notification) => {
+    // A compensation push (`data.type`, see backend/api/signals.py) opens the Compensation screen, a "holiday_work" one (a
+    // claim waits for the Department Head) opens the Approvals tab; every other one opens the Notifications list, as before.
+    // Whether this person is still a head is read from the profile if the tab bar has already fetched it (cold start: unknown,
+    // and only a head is ever sent a "holiday_work" push).
+    const manager = client.getQueryData<ManagerProfile>(['manager-profile']);
+    const target = notificationRoute(pushNotificationType(notification), manager) ?? '/(tabs)/notifications';
+    router.push(target as Href);
   });
   return null;
 }
@@ -302,6 +311,8 @@ export default function RootLayout() {
             <Stack.Screen name="on-duty" />
             <Stack.Screen name="outpass" />
             <Stack.Screen name="help" />
+            <Stack.Screen name="compensation" />
+            <Stack.Screen name="hod-assignment" />
           </Stack>
           </View>
           </AuthContext.Provider>

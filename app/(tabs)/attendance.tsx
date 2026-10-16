@@ -16,6 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useAttendance } from '../../src/hooks/useAttendance';
+import { useEmployee } from '../../src/hooks/useEmployee';
+import { isStaffEmployee } from '../../src/lib/employmentType';
 import { useLatePolicy } from '../../src/hooks/useShiftStats';
 import { useShift } from '../../src/hooks/useShift';
 import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
@@ -83,6 +85,11 @@ export default function AttendanceScreen() {
     year
   );
   const { data: shift } = useShift(user?.employeeId ?? null);
+  // Compensation is for staff only: the calendar legend lists the compensation days once the employee's own profile has
+  // said 'staff' (never for a production employee, and not while the profile is still loading). The same cached profile
+  // the Home screen and the drawer already hold.
+  const { data: employee } = useEmployee(user?.employeeId ?? null);
+  const showCompensationLegend = isStaffEmployee(employee?.employmentType);
   const { data: syncStatus } = useAttendanceSyncStatus();
   const { data: clEligibility } = useCLEligibility(user?.employeeId ?? null);
   // On the grace days (1st / 2nd) the top-level `eligible` is about the new month only while last month may still be open:
@@ -293,7 +300,7 @@ export default function AttendanceScreen() {
 
         {/* ─── Legend ─── rendered by the calendar component from the same colour table as its cells. */}
         <View style={styles.card}>
-          <AttendanceLegend detect={detect} />
+          <AttendanceLegend detect={detect} showCompensation={showCompensationLegend} />
         </View>
       </ScrollView>
 

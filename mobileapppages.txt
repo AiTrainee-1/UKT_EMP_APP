@@ -42,6 +42,9 @@ app/
   company/
     _layout.tsx
     index.tsx                    -> /company
+  compensation/
+    _layout.tsx
+    index.tsx                    -> /compensation              (staff only)
   documents/
     _layout.tsx
     index.tsx                    -> /documents
@@ -51,6 +54,9 @@ app/
   geo-tracking/
     _layout.tsx
     index.tsx                    -> /geo-tracking
+  hod-assignment/
+    _layout.tsx
+    index.tsx                    -> /hod-assignment            (every employee type)
   holidays/
     _layout.tsx
     index.tsx                    -> /holidays
@@ -178,7 +184,7 @@ UI:
     Present, Absent, Leave), skeleton while loading
   - "Quick Actions" section: grid of tiles, first 6 shown by default,
     "Show all N / Show less" toggle expands to the full list
-    (full 19-item list in Section 4 below)
+    (full 21-item list in Section 4 below)
   - "My Punches Today" card: chips of today's IN/OUT punches with
     times, or empty state
   - "Live Attendance" section: LiveFeedTicker — scrolling ticker of
@@ -230,6 +236,32 @@ PAGE: Attendance (tab 2 of 5)
 Route:    /(tabs)/attendance
 File:     app/(tabs)/attendance.tsx
 Purpose:  Monthly attendance overview, calendar, trend chart.
+
+COMPENSATION ON THE CALENDAR (staff; additive, an older backend sends none):
+  Every attendance day can carry compensationKind / compensationMinutes /
+  compensationNote (GET /attendance/employee/{id} records, and
+  /attendance/employee-shift-stats dailyLogs). A day that used a compensation is
+  drawn SOLID in that kind's own colour with its own white symbol (every ordinary
+  status is a soft tint), so it can never be mistaken for one:
+    ot_allowance       lime     clock-plus-outline     Late-in allowance used
+    window_late_in     sky      clock-start            Company late-in time
+    window_early_out   fuchsia  clock-end              Company early-out time
+    relaxation         emerald  sofa-outline           Compensation day (relaxation)
+    birthday           rose     cake-variant-outline   Birthday leave (paid)
+  Late-In / Early-Out rings still go on top. The colours live in
+  src/lib/attendanceVisual.ts (COMPENSATION_TONES, pure + tested). A kind the app
+  does not know is NOT recoloured: the day keeps its status colour and the day
+  sheet shows a plain "Compensation" chip and the server's own sentence.
+  - Legend: a "COMPENSATION DAYS" section lists the five kinds, once the
+    employee's profile has said "staff" (never for a production employee, and
+    not while the profile is still loading).
+  - Day sheet: a chip for the kind (an allowance says how many minutes the arrival
+    used), the server's compensationNote as a quote line, and a "See all my
+    compensation" link -> /compensation. A birthday / relaxation day (made up by
+    the compensation, no punches) shows the compensation as its badge and a
+    "Day counted as" row (Present / Half Day), and offers no Missing Punch /
+    Apply Leave remedy.
+  - Monthly Overview: chips such as "2 late-in allowance" for the month.
 
 UI:
   - Gradient header with hamburger + month pager (prev/next; next
@@ -287,14 +319,20 @@ PAGE: Approvals (tab 4 of 5 — MANAGER ONLY)
 Route:    /(tabs)/approvals
 File:     app/(tabs)/approvals.tsx
 Purpose:  Managers review and approve/reject team requests across
-          7 categories.
+          8 categories.
 
 UI:
   - Gradient header ("Approvals / Review pending requests")
   - Horizontal scroll of per-category stat cards: Leave, Permission,
-    Casual Leave*, Attendance*, Missing Punch*, Outpass*, Resignations*
+    Casual Leave*, Attendance*, Missing Punch*, Outpass*, Compensation*,
+    Resignations*
     (starred categories only appear if the manager has that specific
     approval capability) — each shows a pending count, tap to switch tab
+  - "Compensation" = Holiday / Sunday work claims HR raised for the team:
+    employee, work date + shifts, Sunday / holiday, reason, who raised it,
+    approval progress. The sheet says "Approving adds 0.50 shift to <name>'s
+    compensation balance; rejecting is final". The approval is final (the HOD
+    is the only step) and the toast names what was added to whom.
   - FlatList of request cards for the active category: avatar initial,
     employee name/code, type chip, date, reason preview, inline
     Approve/Reject buttons, staggered entrance animation
@@ -322,13 +360,34 @@ API calls:
   - useApproveAttendance() -> PATCH /manager/attendance-requests/{id}/status
   - useApproveMissingPunch() -> PATCH /manager/missing-punch-requests/{id}/status
   - useApproveOutpass() -> PATCH /manager/outpass-requests/{id}/status
+  - useApproveHolidayWork() -> PATCH /manager/holiday-work/{id}/status
+    body {status, comment}; GET /manager/pending-requests carries
+    holidayWorkClaims, GET /manager/me carries canApproveCompensation and
+    pendingCompensationCount (already inside pendingApprovalsCount). Errors
+    such as APPROVE_COMPENSATION_DISABLED or "already approved" are shown as
+    the server's own sentence; a refusal refreshes the list and the profile.
 
 Conditional/role-gated:
   - The whole tab is hidden from non-managers (href: isManager ?
     undefined : null in the tab layout)
   - Within the screen, Casual Leave / Attendance / Missing Punch /
-    Outpass / Resignation tabs each only appear if the matching
-    manager.canApprove* flag is true (Outpass reuses canApprovePermissions)
+    Outpass / Compensation / Resignation tabs each only appear if the
+    matching manager.canApprove* flag is true (Outpass reuses
+    canApprovePermissions; Compensation = canApproveCompensation, absent on
+    an older backend = hidden)
+  - If the open tab disappears (HR switched the head's approval switch off and
+    the profile refetch no longer lists it), the screen falls back to the
+    Leave tab instead of an unselected, empty list
+  - The tab-bar badge is the sum of the pending counts of the tabs this screen
+    shows, every count read from /manager/me: leave + permission, plus casual
+    leave / attendance / missing punch / compensation / resignation when that
+    tab is listed (src/lib/approvalBadge.ts, which the screen also uses to
+    decide the tab list). It is NOT the server's pendingApprovalsCount: that
+    total also counts On-Duty requests, and this app has no On-Duty tab, so the
+    badge could never be cleared. The Outpass tab is counted from the
+    additive pendingOutpassCount key of /manager/me (an older backend without
+    it leaves outpass out of the badge). Only an older backend that sends no
+    per-kind count falls back to pendingApprovalsCount
 
 
 --------------------------------------------------------------------
@@ -393,7 +452,13 @@ UI:
   - SideDrawer
 
 Actions:
-  - Tap an unread notification -> marks it read
+  - Tap an unread notification -> marks it read; a "compensation" one
+    (a holiday / Sunday work claim decided by the Department Head) also
+    opens /compensation. A "holiday_work" one (a claim waits for the
+    Department Head's decision; sent to the head only) opens the Approvals
+    tab, /(tabs)/approvals, unless the profile says the person is no longer a
+    head. A delivered push of either type does the same (the root layout's
+    NotificationTapHandler reads data.type; every other push opens this list)
   - "Mark all read"
   - Pull-to-refresh
   - Open drawer
@@ -406,8 +471,8 @@ API calls:
 Conditional content:
   - Notification "title" is derived client-side from its type
     (leave/casual_leave/permission/on_duty/missing_punch/attendance/
-    employee_request/resignation/general) since the backend sends no
-    title field.
+    employee_request/resignation/compensation/general) since the backend
+    sends no title field.
 
 
 --------------------------------------------------------------------
@@ -693,6 +758,108 @@ API calls:
   - useHolidays(year) -> GET /holidays?year=
 
 Conditional content: none.
+
+
+--------------------------------------------------------------------
+PAGE: Compensation (STAFF ONLY)
+--------------------------------------------------------------------
+Route:    /compensation
+File:     app/compensation/index.tsx
+Purpose:  Everything compensation for the signed-in staff employee: what the
+          system DETECTED and what HR ASSIGNED. The employee cannot assign or
+          claim anything from the app; they ask HR.
+
+UI:
+  - Header (back, "Compensation"); two tabs: "My Compensation" and
+    "Ask Request for Compensation"
+  - My Compensation:
+      * Balance card (gradient): the compensation balance in shifts (Sunday /
+        holiday work approved by the Department Head, less what HR took),
+        written like the web app and the server: two decimals, "0.50 shift",
+        "1.00 shift", "1.50 shifts" ("shift" up to 1, "shifts" above it); the
+        same text on every title, fact and toast
+      * Banner for today's / tomorrow's next-day LATE-IN ALLOWANCE (lime):
+        "Late-in allowance tomorrow: 1 h", the server's sentence, and an
+        "On time until 10:15" chip (shift start + allowance + grace). When the
+        next working day is a Monday it says the date instead of "tomorrow"
+      * Note when HR has switched compensation off (records stay readable)
+      * Items grouped by the API's `group`: Detected for you / Assigned by HR /
+        Company announcements / Birthday leave / Balance used (a group added
+        later is shown after them, named after itself). Each item: kind chip
+        (colours and symbols match the attendance calendar), status chip,
+        title, date, detail, and facts (shifts, minutes, minutes used, the
+        announced time, the day worked); an "Earlier record" chip on a record
+        from before the overhaul (the server's legacy: true), as on the web.
+        Kinds: ot_allowance, ot_shift,
+        ot_shift_relaxation, ot_shift_pay, holiday_work (status pending_hod =
+        "Waiting for your Department Head"), redemption, window_late_in,
+        window_early_out, birthday. An unknown kind renders with the server's
+        title / detail and a neutral chip
+      * Empty state with a "How to ask HR" button; skeletons while loading; a
+        Retry state when the request fails; pull-to-refresh
+  - Ask Request for Compensation: the server's wording (askHr.title / text /
+    points), an explicit note that compensation is assigned by HR and cannot be
+    claimed in the app, and a contact card with Call / WhatsApp / Email rows
+    (askHr.contact; falls back to the HR contact saved on the phone, then to
+    "Please contact your HR department.")
+  - A production employee sees "Staff employees only" and nothing else
+
+Actions:
+  - Switch tab, pull-to-refresh, Retry, Call / WhatsApp / Email HR
+  - Entry points: side drawer (HR Operations, staff only), Home quick action
+    (staff only), the attendance day sheet's "See all my compensation", and a
+    compensation notification / push
+
+API calls:
+  - useEmployeeCompensation() -> GET /employee/compensation
+    (src/hooks/useCompensation.ts; pure reading rules in src/lib/compensation.ts)
+
+Conditional content:
+  - The drawer entry and the Home tile are shown only once the employee's own
+    profile has said "staff" (src/lib/employmentType.ts, the web app's
+    isStaff approach): hidden from a production employee, and not flashed up
+    while the profile is still loading
+  - Balance card only when holiday-work compensation is on or the balance > 0
+
+
+--------------------------------------------------------------------
+PAGE: HOD Assignment (every employee type)
+--------------------------------------------------------------------
+Route:    /hod-assignment
+File:     app/hod-assignment/index.tsx
+Purpose:  Who the employee's Department Head is, how to reach them, and which
+          kinds of request that head can approve.
+
+UI:
+  - Header (back, "HOD Assignment")
+  - Person card: photo (the relative photoUrl is resolved against the API base;
+    initials when there is none or it fails to load), "Your Department Head"
+    badge, name, designation · department; rows for Phone (tap the number or
+    the Call button to dial, plus a share/copy button), Email (selectable text
+    + Email button), Designation, Department, Branch
+  - "What your Department Head can approve": one row per kind of request
+    (Leave, Permission, Casual Leave, Missing Punch, On-Duty, Attendance
+    Correction, Resignation, Outpass, Holiday / Sunday work compensation) with
+    a green "Can approve" or red "Cannot approve" mark, the reason when not
+    ("Switched off by HR.", "HR decides this one.", "Not enabled for your
+    Department Head.") and the approval path. Production employees do not get
+    Casual Leave or Holiday / Sunday work
+  - The note "For any question about approvals, contact HR." and the HR contact
+    card (Call / WhatsApp / Email)
+  - assigned:false -> "No Department Head assigned" + the server's message;
+    isSelf:true -> "You are a Department Head" + "HR decides your own requests"
+  - Skeletons, Retry state, pull-to-refresh
+
+Actions:
+  - Call the head, share / copy the number (the system share sheet, which has
+    Copy: the installed app has no clipboard module, and adding one needs a new
+    APK), email the head, contact HR
+
+API calls:
+  - useEmployeeHod() -> GET /employee/hod
+
+Conditional content:
+  - Entry points: side drawer (HR Operations) and a Home quick action
 
 
 --------------------------------------------------------------------
@@ -1098,7 +1265,10 @@ UI:
   - "Permission Usage & Deductions" card: explanatory note,
     Permissions Used/Billable/Shift Deductions stat row, Salary
     Impact (Rupee amount) row
-  - "Weekly Schedule" card: 7 day chips, working days highlighted
+  - "Weekly Schedule" card: 7 day chips, working days highlighted. A birthday
+    or relaxation day (no punches) shows that compensation as its pill instead
+    of "Absent"; any day that used a compensation shows the server's note. The
+    Present figure of "This Month's Summary" also counts those paid days.
   - Info box: contact HR to change shift
   - Skeletons; EmptyState if no shift assigned
 
@@ -1201,6 +1371,14 @@ Non-"ui/" components (feature-level, cross-page):
   UKTLogo
     Company logo as an inline SVG (traced artwork), size-configurable.
     Used by: Splash, Login, Company, SideDrawer, ID Card.
+
+  support/ContactBlockCard
+    HR's contact details as tappable Call / WhatsApp / Email rows, for a screen
+    whose own reply already carries the HR block (askHr.contact, hrContact).
+    Uses the same helpers as SupportContactCard (contactActions,
+    openContactAction); falls back to the HR contact saved on the phone, then
+    to a plain sentence with no numbers.
+    Used by: Compensation (Ask tab), HOD Assignment.
 
   outpass/OutpassFlipCard
     Two-sided animated flip card for an outpass request. Front =
@@ -1318,10 +1496,13 @@ Group: Home & Attendance
   - Missing Punch             -> /missing-punch
   - Holidays                  -> /holidays
 
-Group: HR Operations   (both entries are staffOnly — hidden for
-                        production employees)
+Group: HR Operations   (Leave, Permissions and Compensation are staffOnly —
+                        hidden for production employees; HOD Assignment is
+                        for everybody)
   - Leave                     -> /(tabs)/leave
   - Permissions                -> /requests
+  - Compensation               -> /compensation
+  - HOD Assignment              -> /hod-assignment
 
 Group: Payroll & Salary
   - Salary Slips               -> /salary
@@ -1347,8 +1528,8 @@ Footer:
 --------------------------------------------------------------------
 4c. Home Screen "Quick Actions" grid (app/(tabs)/home.tsx)
 --------------------------------------------------------------------
-19 tiles total. First 6 shown by default; a "Show all 19 / Show
-less" toggle reveals the rest.
+21 tiles total (20 for a production employee: Compensation is staff only).
+First 6 shown by default; a "Show all N / Show less" toggle reveals the rest.
 
 TOP SIX (shown by default):
   1. On-Duty              briefcase-outline               -> /on-duty              #815600
@@ -1367,11 +1548,13 @@ BEHIND "Show all":
   12. Digital ID Card      card-account-details-outline        -> /idcard               #2c3e50
   13. My Documents         folder-outline                      -> /documents            #00897b
   14. Holidays             flag-outline                        -> /holidays             #c0392b
-  15. Notifications        bell-outline                        -> /(tabs)/notifications #735c00
-  16. Chat                 chat-outline                        -> /chat                 #0984e3
-  17. My Profile           account-circle-outline               -> /(tabs)/profile      #2c3e50
-  18. About Company        office-building-outline               -> /company            theme primary
-  19. Resignation          file-sign                             -> /resignation/warning #c62828
+  15. Compensation         briefcase-clock-outline (staff only) -> /compensation        #047857
+  16. HOD Assignment       shield-account-outline               -> /hod-assignment      #6D28D9
+  17. Notifications        bell-outline                        -> /(tabs)/notifications #735c00
+  18. Chat                 chat-outline                        -> /chat                 #0984e3
+  19. My Profile           account-circle-outline               -> /(tabs)/profile      #2c3e50
+  20. About Company        office-building-outline               -> /company            theme primary
+  21. Resignation          file-sign                             -> /resignation/warning #c62828
 
 
 ====================================================================
@@ -1394,6 +1577,10 @@ useAuth.ts
   loginRequest()                             POST /auth/employee-login
   setPasswordRequest()                       POST /auth/set-password
   checkAuth()                                GET /auth/me
+
+useCompensation.ts
+  useEmployeeCompensation()                  GET /employee/compensation   (staff only)
+  useEmployeeHod()                           GET /employee/hod
 
 useCasualLeave.ts
   useCasualLeaves(employeeId, params)        GET /casual-leaves
@@ -1474,6 +1661,7 @@ useManager.ts
   useApproveAttendance()                     PATCH /manager/attendance-requests/{id}/status
   useApproveOutpass()                        PATCH /manager/outpass-requests/{id}/status
   useApproveMissingPunch()                   PATCH /manager/missing-punch-requests/{id}/status
+  useApproveHolidayWork()                    PATCH /manager/holiday-work/{id}/status
 
 useNotifications.ts
   requestNotificationPermission()            none — device-local
@@ -1518,7 +1706,9 @@ NOTES FOR PARITY / UI-RECREATION WORK
        canApprove* capability flags)
     2. employee.employmentType === 'production' (drawer's Leave/
        Permissions items hidden for production staff; ID card & My
-       Shift layouts differ; weekly schedule differs)
+       Shift layouts differ; weekly schedule differs; the Compensation
+       tile / drawer entry / calendar-legend section appear only once the
+       profile has said 'staff')
     3. resignation.status (Profile screen's action-card state machine)
 
 - Device-local-only data: the profile photo (useLocalProfilePhoto)

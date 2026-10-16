@@ -4,13 +4,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  COMPENSATION_LEGEND,
+  COMPENSATION_ORDER,
+  COMPENSATION_TONES,
   DAY_TONES,
   OFF_DAY_ORDER,
   OUTCOME_ORDER,
   RING,
   attendanceRate,
+  compensationKeyOf,
+  compensationLabelOf,
+  hasCompensationMarker,
+  isCompensatedWholeDay,
   marksOf,
   tally,
+  tallyCompensation,
   visualKeyOf,
   weeksOf,
 } from './attendanceVisual.ts'
@@ -120,4 +128,101 @@ test('weeks of a month that starts on a Sunday and of February', () => {
   const feb = weeksOf([], 2, 2026, ON) // 1-Feb-2026 Sunday, 28 days = exactly four rows
   assert.equal(feb.length, 4)
   assert.equal(feb[3].to, '2026-02-28')
+})
+
+// ── compensation days ───────────────────────────────────────────────────────
+
+/** WCAG relative luminance of '#RRGGBB'. */
+const luminance = (hex: string) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+const contrastWithWhite = (hex: string) => 1.05 / (luminance(hex) + 0.05)
+
+test('the five compensation kinds have a colour AND a symbol of their own, and none can be mistaken for a status or a ring', () => {
+  assert.deepEqual([...COMPENSATION_ORDER].sort(), ['birthday', 'ot_allowance', 'relaxation', 'window_early_out', 'window_late_in'])
+  const tones = COMPENSATION_ORDER.map((k) => COMPENSATION_TONES[k])
+  for (const field of ['solid', 'softLight', 'softDark', 'icon', 'label'] as const) {
+    assert.equal(new Set(tones.map((t) => t[field])).size, 5, `${field} must be unique per compensation kind`)
+  }
+  const statusSolids = [...OUTCOME_ORDER, ...OFF_DAY_ORDER].map((k) => DAY_TONES[k].solid)
+  const statusIcons = [...OUTCOME_ORDER, ...OFF_DAY_ORDER].map((k) => DAY_TONES[k].icon)
+  for (const t of tones) {
+    assert.ok(!statusSolids.includes(t.solid), `${t.label} reuses a status colour`)
+    assert.ok(!statusIcons.includes(t.icon), `${t.label} reuses a status symbol`)
+    assert.notEqual(t.solid, RING.late)
+    assert.notEqual(t.solid, RING.earlyOut)
+  }
+  assert.equal(Object.keys(COMPENSATION_LEGEND).length, 5)
+  for (const k of COMPENSATION_ORDER) assert.ok(COMPENSATION_LEGEND[k].length > 3, `legend text for ${k}`)
+})
+
+test('the white number and symbol on a compensation cell are readable (WCAG AA, 4.5:1)', () => {
+  for (const k of COMPENSATION_ORDER) {
+    assert.ok(contrastWithWhite(COMPENSATION_TONES[k].solid) >= 4.5, `${k} ${contrastWithWhite(COMPENSATION_TONES[k].solid).toFixed(2)}`)
+  }
+})
+
+test('compensationKeyOf knows the five kinds the server sends and nothing else', () => {
+  assert.equal(compensationKeyOf('ot_allowance'), 'ot_allowance')
+  assert.equal(compensationKeyOf('window_late_in'), 'window_late_in')
+  assert.equal(compensationKeyOf('window_early_out'), 'window_early_out')
+  assert.equal(compensationKeyOf('birthday'), 'birthday')
+  assert.equal(compensationKeyOf('relaxation'), 'relaxation')
+  assert.equal(compensationKeyOf(' Birthday '), 'birthday')
+  for (const bad of ['holiday_work', '', '   ', null, undefined, 7, {}, ['birthday']]) assert.equal(compensationKeyOf(bad), null, String(bad))
+})
+
+test('a kind added after this app was built is still a compensation day in words, never a crash', () => {
+  assert.equal(hasCompensationMarker('holiday_work'), true)
+  assert.equal(hasCompensationMarker(''), false)
+  assert.equal(hasCompensationMarker(null), false)
+  assert.equal(compensationLabelOf('holiday_work'), 'Compensation')
+  assert.equal(compensationLabelOf('birthday'), 'Birthday leave')
+  assert.equal(compensationLabelOf(undefined), null)
+})
+
+test('only a birthday and a relaxation day are made up by the compensation itself', () => {
+  assert.equal(isCompensatedWholeDay('birthday'), true)
+  assert.equal(isCompensatedWholeDay('relaxation'), true)
+  for (const k of ['ot_allowance', 'window_late_in', 'window_early_out', 'holiday_work', null, undefined]) assert.equal(isCompensatedWholeDay(k), false, String(k))
+})
+
+test('a relaxation day is a half day with no punches and no ring: the status stays readable, nothing is flagged', () => {
+  const d = day('2026-10-12', 'Half Day', { compensationKind: 'relaxation' })
+  assert.equal(visualKeyOf(d.status), 'halfDay')
+  assert.deepEqual(marksOf(d, ON), { ring: null, earlyDot: false, excessDot: false })
+})
+
+test('a window day that is still late after the announced time keeps its Late-In ring on top of the compensation fill', () => {
+  const d = day('2026-10-12', 'Late-In', { isLate: true, compensationKind: 'window_late_in' })
+  assert.equal(marksOf(d, ON).ring, RING.late)
+})
+
+test('the month tally counts each known kind once per day, ignores unknown kinds and days that have not happened', () => {
+  const days: DayLike[] = [
+    day('2026-10-01', 'Present', { compensationKind: 'ot_allowance' }),
+    day('2026-10-02', 'Present', { compensationKind: 'ot_allowance' }),
+    day('2026-10-05', 'Present', { compensationKind: 'birthday' }),
+    day('2026-10-06', 'Half Day', { compensationKind: 'relaxation' }),
+    day('2026-10-07', 'Present', { compensationKind: 'window_late_in' }),
+    day('2026-10-08', 'Present', { compensationKind: 'window_early_out' }),
+    day('2026-10-09', 'Present', { compensationKind: 'holiday_work' }), // unknown to this app
+    day('2026-10-10', 'Present', { compensationKind: null }),
+    day('2026-10-11', 'Present'),
+    day('2026-10-20', 'Present', { compensationKind: 'birthday' }), // not yet
+  ]
+  assert.deepEqual(tallyCompensation(days, '2026-10-12'), { ot_allowance: 2, window_late_in: 1, window_early_out: 1, relaxation: 1, birthday: 1 })
+  assert.equal(tallyCompensation(days).birthday, 2) // no `today`: every day counts
+  assert.deepEqual(tallyCompensation([]), { ot_allowance: 0, window_late_in: 0, window_early_out: 0, relaxation: 0, birthday: 0 })
+})
+
+test('the status tally and the rate are untouched by compensation markers', () => {
+  const days: DayLike[] = [
+    day('2026-10-01', 'Present', { compensationKind: 'birthday' }),
+    day('2026-10-02', 'Half Day', { compensationKind: 'relaxation' }),
+    day('2026-10-03', 'Absent'),
+  ]
+  const c = tally(days, ON, '2026-10-10')
+  assert.deepEqual({ p: c.present, h: c.halfDay, a: c.absent }, { p: 1, h: 1, a: 1 })
 })

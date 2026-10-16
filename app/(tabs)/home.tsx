@@ -22,6 +22,7 @@ import { useDashboard } from '../../src/hooks/useDashboard';
 import { useAppNotifications } from '../../src/hooks/useAppNotifications';
 import { useLiveFeed } from '../../src/hooks/useHomeSummary';
 import { useEmployee } from '../../src/hooks/useEmployee';
+import { showsForEmployee } from '../../src/lib/employmentType';
 import { useAttendance } from '../../src/hooks/useAttendance';
 import { useShift } from '../../src/hooks/useShift';
 import { SlideToPunch } from '../../src/components/SlideToPunch';
@@ -46,7 +47,7 @@ const TOUR_STEPS = [
 ] as const;
 
 // Matches the Stitch "Home Dashboard" mock exactly: 6 tiles visible by
-// default (2 rows of 3), "Show all 19" expands the rest. Colors here are
+// default (2 rows of 3), "Show all N" expands the rest. Colors here are
 // per-tile pastel pairs lifted straight from the mock, not the app-wide
 // category palette — this screen's tile set intentionally reads as its own
 // small system (soft fill + saturated icon) rather than reusing badge tones.
@@ -65,12 +66,18 @@ const makeQuickActions = (Colors: Palette) => ([
   { label: 'Digital ID Card', icon: 'card-account-details-outline', route: '/idcard' as const, iconColor: '#2c3e50', bg: Colors.bgSurfaceLow },
   { label: 'My Documents', icon: 'folder-outline', route: '/documents' as const, iconColor: Colors.categoryDocs, bg: '#E1F4F2' },
   { label: 'Holidays', icon: 'flag-outline', route: '/holidays' as const, iconColor: '#c0392b', bg: Colors.badgeRedBg },
+  { label: 'Compensation', icon: 'briefcase-clock-outline', route: '/compensation' as const, iconColor: '#047857', bg: '#E1F5EC' },
+  { label: 'HOD Assignment', icon: 'shield-account-outline', route: '/hod-assignment' as const, iconColor: '#6D28D9', bg: '#EFEBFF' },
   { label: 'Notifications', icon: 'bell-outline', route: '/(tabs)/notifications' as const, iconColor: Colors.secondary, bg: Colors.secondaryFixed },
   { label: 'Chat', icon: 'chat-outline', route: '/chat' as const, iconColor: Colors.categoryChat, bg: Colors.badgeBlueBg },
   { label: 'My Profile', icon: 'account-circle-outline', route: '/(tabs)/profile' as const, iconColor: '#2c3e50', bg: Colors.bgSurfaceLow },
   { label: 'About Company', icon: 'office-building-outline', route: '/company' as const, iconColor: Colors.primary, bg: Colors.primaryFixed },
   { label: 'Resignation', icon: 'file-sign', route: '/resignation/warning' as const, iconColor: Colors.categoryDestructive, bg: Colors.badgeRedBg },
 ]);
+
+// Tiles only a staff employee gets (compensation is for staff only). Listed once the profile has said 'staff': a production
+// employee never sees the tile flash up while the profile loads (src/lib/employmentType.ts).
+const STAFF_ONLY_ROUTES: ReadonlySet<string> = new Set(['/compensation']);
 
 const PUNCH_SLOTS = [
   { key: 'in', label: 'In (GPS)' },
@@ -84,7 +91,6 @@ export default function HomeScreen() {
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const QUICK_ACTIONS = makeQuickActions(Colors);
 
   const { user, logout } = useAuth();
   const now = new Date();
@@ -92,6 +98,8 @@ export default function HomeScreen() {
   const { data: notifs } = useAppNotifications(user?.employeeId ?? null);
   const { data: liveFeed } = useLiveFeed();
   const { data: emp } = useEmployee(user?.employeeId ?? null);
+  const QUICK_ACTIONS = makeQuickActions(Colors).filter((a) =>
+    showsForEmployee({ staffProfileOnly: STAFF_ONLY_ROUTES.has(a.route) }, emp?.employmentType));
   const { data: myAttendance } = useAttendance(user?.employeeId ?? null, now.getMonth() + 1, now.getFullYear());
   const { data: shift } = useShift(user?.employeeId ?? null);
   const [drawerOpen, setDrawerOpen] = useState(false);

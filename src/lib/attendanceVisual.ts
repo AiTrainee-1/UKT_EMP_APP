@@ -53,6 +53,85 @@ export const RING = { late: '#D97706', earlyOut: '#4F46E5' } as const;
 export const OUTCOME_ORDER: DayVisualKey[] = ['present', 'halfDay', 'permission', 'casualLeave', 'onLeave', 'absent'];
 export const OFF_DAY_ORDER: DayVisualKey[] = ['sunday', 'holiday'];
 
+// ── Compensation days ───────────────────────────────────────────────────────
+//
+// The server marks a day that used a compensation (`compensationKind` on every attendance day, see
+// backend/api/attendance_final.py::compensation_marker_json). Five kinds exist; an older backend sends none, and a newer
+// one may send a kind this app has never heard of (that one is NOT drawn differently: the day keeps its status colour and
+// the day sheet shows the server's own words).
+//
+// A compensation day is drawn SOLID (strong colour, white symbol), where every ordinary status is a soft pastel tint with a
+// coloured symbol: the two families cannot be mistaken for each other whatever the hue, and each kind still has a hue and a
+// symbol of its own. Late-In / Early-Out rings go on top of it as on any worked day.
+//
+// The hues are the gaps the status palette leaves (lime, sky, fuchsia, emerald, rose); the rings are amber and indigo, so
+// none of the five is either of those.
+
+export type CompensationKey = 'ot_allowance' | 'window_late_in' | 'window_early_out' | 'relaxation' | 'birthday';
+
+export interface CompensationTone {
+  /** Short name: legend, day sheet, month chips. */
+  label: string;
+  /** Strong colour: the calendar cell. White symbol and number on it. */
+  solid: string;
+  /** Soft tint + ink for chips on a card (light and dark ground). */
+  softLight: string;
+  softDark: string;
+  inkLight: string;
+  inkDark: string;
+  /** MaterialCommunityIcons name: the symbol. Different for every kind. */
+  icon: string;
+}
+
+export const COMPENSATION_TONES: Record<CompensationKey, CompensationTone> = {
+  ot_allowance: { label: 'Late-in allowance', solid: '#4D7C0F', softLight: '#ECFCCB', softDark: '#65A30D38', inkLight: '#3F6212', inkDark: '#BEF264', icon: 'clock-plus-outline' },
+  window_late_in: { label: 'Company late-in time', solid: '#0369A1', softLight: '#E0F2FE', softDark: '#0284C738', inkLight: '#075985', inkDark: '#7DD3FC', icon: 'clock-start' },
+  window_early_out: { label: 'Company early-out time', solid: '#A21CAF', softLight: '#FAE8FF', softDark: '#C026D338', inkLight: '#86198F', inkDark: '#F0ABFC', icon: 'clock-end' },
+  relaxation: { label: 'Compensation day', solid: '#047857', softLight: '#D1FAE5', softDark: '#05966938', inkLight: '#065F46', inkDark: '#6EE7B7', icon: 'sofa-outline' },
+  birthday: { label: 'Birthday leave', solid: '#E11D48', softLight: '#FFE4E6', softDark: '#E11D4838', inkLight: '#BE123C', inkDark: '#FDA4AF', icon: 'cake-variant-outline' },
+};
+
+/** Order of the legend and of the month chips. */
+export const COMPENSATION_ORDER: CompensationKey[] = ['ot_allowance', 'window_late_in', 'window_early_out', 'relaxation', 'birthday'];
+
+/** What the legend says each one means (the calendar cell shows only the symbol). */
+export const COMPENSATION_LEGEND: Record<CompensationKey, string> = {
+  ot_allowance: 'Late-in allowance used',
+  window_late_in: 'Company late-in time',
+  window_early_out: 'Company early-out time',
+  relaxation: 'Compensation day (relaxation)',
+  birthday: 'Birthday leave (paid)',
+};
+
+/** The key of a kind this app knows, or null (no marker, an unknown kind, anything that is not a string). */
+export function compensationKeyOf(kind: unknown): CompensationKey | null {
+  if (typeof kind !== 'string') return null;
+  const k = kind.trim().toLowerCase();
+  return (COMPENSATION_ORDER as string[]).includes(k) ? (k as CompensationKey) : null;
+}
+
+/** Does the day carry any compensation marker at all (a kind this app does not know included)? */
+export function hasCompensationMarker(kind: unknown): boolean {
+  return typeof kind === 'string' && kind.trim() !== '';
+}
+
+/** "Birthday leave", "Late-in allowance"... and a plain "Compensation" for a kind added after this app was built. */
+export function compensationLabelOf(kind: unknown): string | null {
+  const key = compensationKeyOf(kind);
+  if (key) return COMPENSATION_TONES[key].label;
+  return hasCompensationMarker(kind) ? 'Compensation' : null;
+}
+
+/**
+ * Days whose attendance is made up by the compensation itself rather than by punches: a birthday is paid whatever the
+ * punches say, and a relaxation day is topped up with no punches at all. Neither is "a half day with a missing punch" or
+ * "an absence to apply leave for", so the day sheet offers no such remedy for them.
+ */
+export function isCompensatedWholeDay(kind: unknown): boolean {
+  const key = compensationKeyOf(kind);
+  return key === 'relaxation' || key === 'birthday';
+}
+
 /** The part of an attendance record the visuals read (a structural subset of AttendanceRecord). */
 export interface DayLike {
   date: string;
@@ -61,6 +140,8 @@ export interface DayLike {
   isEarlyOut?: boolean;
   morningPermissionExcess?: boolean;
   eveningPermissionExcess?: boolean;
+  /** Optional: absent on an older backend. */
+  compensationKind?: string | null;
 }
 
 export interface Detect {
@@ -138,6 +219,20 @@ export function tally(days: DayLike[], detect: Detect, today?: string): Counts {
       if (detect.lateIn && d.isLate) c.late += 1;
       if (detect.earlyOut && d.isEarlyOut) c.earlyOut += 1;
     }
+  }
+  return c;
+}
+
+export type CompensationCounts = Record<CompensationKey, number>;
+
+/** How many days of each KNOWN compensation kind. `today` (ISO) leaves out days that have not happened (the server only
+ *  marks a day once it has been judged, so this is a guard, not a rule). A kind this app does not know is not counted. */
+export function tallyCompensation(days: DayLike[], today?: string): CompensationCounts {
+  const c: CompensationCounts = { ot_allowance: 0, window_late_in: 0, window_early_out: 0, relaxation: 0, birthday: 0 };
+  for (const d of days) {
+    if (today && d.date > today) continue;
+    const key = compensationKeyOf(d.compensationKind);
+    if (key) c[key] += 1;
   }
   return c;
 }

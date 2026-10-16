@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import Svg, { Circle, G } from 'react-native-svg';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format, parseISO } from 'date-fns';
 import { useTheme, useThemedStyles } from '../theme/ThemeProvider';
 import type { Palette } from '../theme/palettes';
 import type { AttendanceRecord } from '../hooks/useAttendance';
 import type { DetectionFlags } from '../hooks/useShiftStats';
 import {
-  DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING, attendanceRate, tally, weeksOf,
+  COMPENSATION_ORDER, COMPENSATION_TONES, DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING, attendanceRate, tally,
+  tallyCompensation, weeksOf,
   type Counts, type DayVisualKey,
 } from '../lib/attendanceVisual';
 
@@ -55,6 +57,7 @@ export function AttendanceOverview({ records, month, year, detect }: Props) {
 
   const todayIso = format(new Date(), 'yyyy-MM-dd');
   const counts = useMemo(() => tally(records, detect, todayIso), [records, detect, todayIso]);
+  const compCounts = useMemo(() => tallyCompensation(records, todayIso), [records, todayIso]);
   const weeks = useMemo(() => weeksOf(records, month, year, detect, todayIso), [records, month, year, detect, todayIso]);
   const rate = attendanceRate(counts);
   const total = OUTCOME_ORDER.reduce((n, k) => n + counts[k], 0);
@@ -153,6 +156,23 @@ export function AttendanceOverview({ records, month, year, detect }: Props) {
         </View>
       )}
 
+      {/* Days that used a compensation this month, in the calendar's compensation colours. */}
+      {COMPENSATION_ORDER.some((k) => compCounts[k] > 0) && (
+        <View style={styles.chipRow}>
+          {COMPENSATION_ORDER.filter((k) => compCounts[k] > 0).map((k) => {
+            const t = COMPENSATION_TONES[k];
+            return (
+              <View key={k} style={[styles.chip, styles.chipSoft, styles.compChip, { backgroundColor: isDark ? t.softDark : t.softLight }]}>
+                <MaterialCommunityIcons name={t.icon as any} size={12} color={isDark ? t.inkDark : t.inkLight} />
+                <Text style={[styles.chipText, { color: isDark ? t.inkDark : t.inkLight }]}>
+                  {compCounts[k]} {t.label.toLowerCase()}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
       <Text style={styles.sectionLabel}>WEEK BY WEEK  ·  TAP A BAR</Text>
       <View style={styles.bars}>
         {weeks.map((w) => {
@@ -247,6 +267,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 12 },
   chip: { borderWidth: 1.5, borderColor: 'transparent', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   chipSoft: { borderWidth: 0 },
+  compChip: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   chipText: { fontSize: 11, fontWeight: '800' },
 
   sectionLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 0.6, marginTop: 18, marginBottom: 8 },

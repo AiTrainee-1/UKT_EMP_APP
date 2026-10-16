@@ -70,7 +70,8 @@ export type WorkflowKey =
   | 'outpass'
   | 'request'
   | 'resignation'
-  | 'advance';
+  | 'advance'
+  | 'holidayWork';
 
 export type ApprovalSummary = Partial<Record<WorkflowKey, ApprovalSummaryItem>>;
 

@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { UKTLogo } from './UKTLogo';
 import { APP_VERSION_LABEL } from '../lib/appVersion';
+import { showsForEmployee, type EmploymentGate } from '../lib/employmentType';
 import { useEmployee } from '../hooks/useEmployee';
 import { useGeoPunchStatus } from '../hooks/useGeoAttendance';
 import { Colors } from '../constants/colors';
@@ -28,13 +29,13 @@ import { FontFamily } from '../constants/typography';
 
 const DRAWER_WIDTH = Math.min(Dimensions.get('window').width * 0.78, 300);
 
-interface NavItem {
+// `staffOnly` / `staffProfileOnly` come from EmploymentGate (src/lib/employmentType.ts).
+interface NavItem extends EmploymentGate {
   icon: string;
   label: string;
   route: string;
   badge?: number;
   color?: string;
-  staffOnly?: boolean;
 }
 
 interface NavGroup {
@@ -65,6 +66,10 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { icon: 'umbrella-outline', label: 'Leave', route: '/(tabs)/leave', color: '#8E44AD', staffOnly: true },
       { icon: 'hand-wave-outline', label: 'Permissions', route: '/requests', color: '#2980B9', staffOnly: true },
+      // Compensation is for staff only, and is listed only once the profile has said so (never flashes up for a production
+      // employee while it loads); the Department Head card is for everybody.
+      { icon: 'briefcase-clock-outline', label: 'Compensation', route: '/compensation', color: '#047857', staffProfileOnly: true },
+      { icon: 'shield-account-outline', label: 'HOD Assignment', route: '/hod-assignment', color: '#6D28D9' },
     ],
   },
   {
@@ -104,7 +109,7 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
   const insets = useSafeAreaInsets();
   const { data: employee } = useEmployee(user?.employeeId ?? null);
   const { data: geoStatus } = useGeoPunchStatus();
-  const isProduction = employee?.employmentType === 'production';
+  const employmentType = employee?.employmentType;
   const onDutySessionStatus = geoStatus?.onDutySession?.status;
   const onDutyBadge =
     onDutySessionStatus === 'pending_hod' || onDutySessionStatus === 'pending_hr' || onDutySessionStatus === 'active'
@@ -114,7 +119,7 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
     .map((group) => ({
       ...group,
       items: group.items
-        .filter((item) => !item.staffOnly || !isProduction)
+        .filter((item) => showsForEmployee(item, employmentType))
         .map((item) => (item.route === '/on-duty' ? { ...item, badge: onDutyBadge || undefined } : item)),
     }))
     .filter((group) => group.items.length > 0);

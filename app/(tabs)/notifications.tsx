@@ -26,6 +26,8 @@ import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Colors } from '../../src/constants/colors';
 import { UKTLogo } from '../../src/components/UKTLogo';
+import { notificationHint, notificationRoute } from '../../src/lib/compensation';
+import { useManagerProfile } from '../../src/hooks/useManager';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
@@ -45,7 +47,7 @@ function timeAgo(dateStr: string) {
 // are derived here from the real `type` values the backend actually
 // creates (grep-confirmed against every Notification.objects.create() call
 // site): leave, casual_leave, permission, on_duty, missing_punch,
-// attendance, employee_request, resignation, general (default).
+// attendance, employee_request, resignation, compensation, holiday_work, general (default).
 const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: string; color: string; title: string }> => ({
   leave: { icon: 'umbrella', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Leave Update' },
   casual_leave: { icon: 'calendar-heart', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Casual Leave Update' },
@@ -55,6 +57,10 @@ const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: stri
   attendance: { icon: 'calendar-check-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Attendance Update' },
   employee_request: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
   resignation: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Update' },
+  // Holiday / Sunday work compensation, to the employee: the Department Head decided the claim HR raised (type "compensation").
+  compensation: { icon: 'briefcase-clock-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Compensation Update' },
+  // ... and to the Department Head: a claim is waiting for their decision (type "holiday_work"); a tap opens Approvals.
+  holiday_work: { icon: 'clipboard-clock-outline', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Compensation Approval' },
   general: { icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' },
 });
 const makeDefaultNotifMeta = (Colors: Palette) => ({ icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' });
@@ -94,6 +100,9 @@ export default function NotificationsScreen() {
   const { data, isLoading, refetch, isRefetching } = useAppNotifications(user?.employeeId ?? null);
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
+  // Only to decide where a "holiday_work" notice opens (the Approvals tab exists for a Department Head only). The same
+  // cached query the tab bar already holds: no extra request.
+  const { data: manager } = useManagerProfile(!!user);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
 
@@ -199,8 +208,17 @@ export default function NotificationsScreen() {
           >
             <TouchableOpacity
               style={[styles.card, { borderLeftColor: notifMeta(Colors, item.type).color, borderLeftWidth: 3 }, item.isRead && styles.cardRead]}
-              onPress={() => { if (!item.isRead) markRead.mutate(item.id); }}
+              onPress={() => {
+                if (!item.isRead) markRead.mutate(item.id);
+                // A compensation notice opens the Compensation screen, a "waiting for your approval" one opens Approvals;
+                // the others only mark themselves read.
+                const target = notificationRoute(item.type, manager);
+                if (target) router.push(target as any);
+              }}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`${notifMeta(Colors, item.type).title}. ${item.message}`}
+              accessibilityHint={notificationHint(item.type, manager)}
             >
               <NotifIcon type={item.type} />
               <View style={styles.cardBody}>

@@ -10,9 +10,11 @@ import { AttendanceRecord } from '../hooks/useAttendance';
 import type { DetectionFlags } from '../hooks/useShiftStats';
 import { getRequestWindow } from '../lib/requestWindow';
 import {
-  DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING, marksOf, visualKeyOf,
-  type DayTone, type DayVisualKey,
+  COMPENSATION_LEGEND, COMPENSATION_ORDER, COMPENSATION_TONES, DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING,
+  compensationKeyOf, compensationLabelOf, hasCompensationMarker, isCompensatedWholeDay, marksOf, visualKeyOf,
+  type CompensationKey, type DayTone, type DayVisualKey,
 } from '../lib/attendanceVisual';
+import { minutesText } from '../lib/compensation';
 import type { RequestWindow } from '../lib/requestWindow';
 import { BottomSheet } from './ui/BottomSheet';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -47,17 +49,35 @@ function dayNote(rec: AttendanceRecord): string | null {
 // sheet. Late-In / Early-Out / excess permissions are the three kinds of
 // occurrence that share the monthly late pool, so they share the yellow (and
 // Early-Out its own purple); an applied permission is the blue "Permission".
-type ChipTone = 'late' | 'early' | 'permission' | 'excess';
+type ChipTone = 'late' | 'early' | 'permission' | 'excess' | 'neutral';
 
 interface DayChip {
   key: string;
   label: string;
   icon: string;
   tone: ChipTone;
+  /** A compensation chip is coloured by its own kind (the same colours as the calendar cell). */
+  comp?: CompensationKey;
+}
+
+/** The compensation the day used, first: it is what the day is about (a relaxation day or a birthday has no punches). A kind
+ *  this app does not know gets a plain neutral "Compensation" chip: the server's own sentence is shown under it. */
+function compensationChip(rec: AttendanceRecord): DayChip | null {
+  if (!hasCompensationMarker(rec.compensationKind)) return null;
+  // A birthday / relaxation day already says it in the sheet's badge (see badgeFor): no second chip with the same words.
+  if (isCompensatedWholeDay(rec.compensationKind)) return null;
+  const comp = compensationKeyOf(rec.compensationKind);
+  if (!comp) return { key: 'comp', label: compensationLabelOf(rec.compensationKind) ?? 'Compensation', icon: 'star-four-points-outline', tone: 'neutral' };
+  const tone = COMPENSATION_TONES[comp];
+  // An allowance says how much of it the arrival used.
+  const used = comp === 'ot_allowance' ? minutesText(rec.compensationMinutes) : null;
+  return { key: 'comp', label: used ? `${tone.label} · ${used} used` : tone.label, icon: tone.icon, tone: 'neutral', comp };
 }
 
 function chipsFor(rec: AttendanceRecord, detect: DetectionFlags): DayChip[] {
   const chips: DayChip[] = [];
+  const comp = compensationChip(rec);
+  if (comp) chips.push(comp);
   // The status badge already says it when it IS the status; chip it otherwise (e.g. on a Half Day).
   // Late-In / Early-Out wording is dropped when HR has switched that check off.
   if (detect.lateIn && rec.isLate && rec.status !== 'Late-In') {
@@ -93,7 +113,30 @@ const makeChipColors = (isDark: boolean): Record<ChipTone, { bg: string; fg: str
   early: { bg: `${RING.earlyOut}26`, fg: isDark ? '#A5B4FC' : RING.earlyOut },
   permission: { bg: fillOf(DAY_TONES.permission, isDark), fg: inkOf(DAY_TONES.permission, isDark) },
   excess: { bg: `${RING.late}26`, fg: RING.late },
+  neutral: { bg: fillOf(DAY_TONES.sunday, isDark), fg: inkOf(DAY_TONES.sunday, isDark) },
 });
+
+/** The day sheet's badge: the status, except on a birthday / relaxation day, which is made up by the compensation itself
+ *  (no punches): the badge says what the compensation was, and a row below says how the day is counted. */
+function badgeFor(rec: AttendanceRecord, isDark: boolean): { bg: string; fg: string; icon: string; label: string } {
+  const comp = isCompensatedWholeDay(rec.compensationKind) ? compensationKeyOf(rec.compensationKind) : null;
+  if (comp) {
+    const t = COMPENSATION_TONES[comp];
+    return { bg: isDark ? t.softDark : t.softLight, fg: isDark ? t.inkDark : t.inkLight, icon: t.icon, label: t.label };
+  }
+  const tone = toneOf(rec.status);
+  return { bg: fillOf(tone, isDark), fg: inkOf(tone, isDark), icon: tone.icon, label: rec.status === 'Weekend' ? 'Sunday' : rec.status };
+}
+
+function chipColors(
+  chip: DayChip,
+  base: Record<ChipTone, { bg: string; fg: string }>,
+  isDark: boolean,
+): { bg: string; fg: string } {
+  if (!chip.comp) return base[chip.tone];
+  const t = COMPENSATION_TONES[chip.comp];
+  return { bg: isDark ? t.softDark : t.softLight, fg: isDark ? t.inkDark : t.inkLight };
+}
 
 interface Props {
   records: AttendanceRecord[];
@@ -128,8 +171,11 @@ interface DayAction {
  */
 function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWindow): { actions: DayAction[]; closed: boolean } {
   const actions: DayAction[] = [];
+  // A birthday or a relaxation day is made up by the compensation itself: it has no punches to be "missing", and it is no
+  // absence to apply leave for.
+  const covered = isCompensatedWholeDay(rec.compensationKind);
 
-  if (rec.status === 'Absent') {
+  if (rec.status === 'Absent' && !covered) {
     actions.push({
       label: 'Apply Leave',
       icon: 'umbrella-outline',
@@ -140,7 +186,7 @@ function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWin
 
   // Half Day almost always means a punch never reached the system -the
   // employee worked the day but only half of it can be proven.
-  if (rec.status === 'Half Day') {
+  if (rec.status === 'Half Day' && !covered) {
     actions.push({
       label: 'Missing Punch',
       icon: 'fingerprint',
@@ -183,6 +229,7 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
 
   // "Now" is read at render: the screen stays mounted for days and the request window moves on the 1st-3rd of a month.
   const dayActions = selected ? actionsFor(selected, detect, getRequestWindow(new Date())) : null;
+  const badge = selected ? badgeFor(selected, isDark) : null;
 
   return (
     <View>
@@ -203,7 +250,11 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
           const key = format(d, 'yyyy-MM-dd');
           const rec = recordMap.get(key);
           const tone = rec ? toneOf(rec.status) : null;
-          const ink = tone ? inkOf(tone, isDark) : undefined;
+          // A day that used a compensation is SOLID in that compensation's colour with its own symbol (the status stays
+          // readable in the day sheet); every ordinary status is a soft tint. See lib/attendanceVisual.ts.
+          const compKey = rec ? compensationKeyOf(rec.compensationKind) : null;
+          const compTone = compKey ? COMPENSATION_TONES[compKey] : null;
+          const ink = compTone ? '#FFFFFF' : tone ? inkOf(tone, isDark) : undefined;
           const marks = rec ? marksOf(rec, detect) : null;
           const isOff = !!rec && (rec.status === 'Holiday' || rec.status === 'Weekend');
 
@@ -213,7 +264,7 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
               style={[
                 styles.cell,
                 { width: CELL, height: CELL },
-                tone ? { backgroundColor: fillOf(tone, isDark) } : styles.futureCell,
+                tone ? { backgroundColor: compTone ? compTone.solid : fillOf(tone, isDark) } : styles.futureCell,
                 // A ring marks Late-In / Early-Out (no fill of its own). Every other cell keeps a transparent border of
                 // the same size, so nothing shifts.
                 tone ? { borderWidth: 2.5, borderColor: marks?.ring ?? 'transparent' } : null,
@@ -224,12 +275,12 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
               accessibilityRole="button"
               accessibilityLabel={
                 rec
-                  ? `${format(d, 'd MMMM')}, ${rec.holidayName ?? rec.status}${marks?.ring ? (rec.isLate ? ', late' : ', early out') : ''}`
+                  ? `${format(d, 'd MMMM')}, ${rec.holidayName ?? rec.status}${marks?.ring ? (rec.isLate ? ', late' : ', early out') : ''}${compensationLabelOf(rec.compensationKind) ? `, ${compensationLabelOf(rec.compensationKind)}` : ''}`
                   : format(d, 'd MMMM')
               }
             >
               {tone && (
-                <MaterialCommunityIcons name={tone.icon as any} size={isOff ? 12 : 10} color={ink} style={styles.cellIcon} />
+                <MaterialCommunityIcons name={(compTone ? compTone.icon : tone.icon) as any} size={isOff || compTone ? 12 : 10} color={ink} style={styles.cellIcon} />
               )}
               <Text style={[styles.cellNum, !rec && styles.futureNum, tone && { color: ink }]}>
                 {format(d, 'd')}
@@ -243,22 +294,16 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
 
       {/* Detail sheet */}
       <BottomSheet visible={!!selected} onClose={() => setSelected(null)} title="Attendance Detail">
-        {selected && (
+        {selected && badge && (
           <View>
             {/* Status on the left, what-to-do-about-it on the right, on one
                 row. The action belongs beside the problem it answers -at the
                 bottom of the sheet it sat below four rows of detail the
                 employee had already read past. */}
             <View style={styles.topRow}>
-              <View style={[styles.statusBadge, { backgroundColor: fillOf(toneOf(selected.status), isDark) }]}>
-                <MaterialCommunityIcons
-                  name={toneOf(selected.status).icon as any}
-                  size={18}
-                  color={inkOf(toneOf(selected.status), isDark)}
-                />
-                <Text style={[styles.statusText, { color: inkOf(toneOf(selected.status), isDark) }]}>
-                  {selected.status === 'Weekend' ? 'Sunday' : selected.status}
-                </Text>
+              <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+                <MaterialCommunityIcons name={badge.icon as any} size={18} color={badge.fg} />
+                <Text style={[styles.statusText, { color: badge.fg }]}>{badge.label}</Text>
                 {selected.isCompensationDay && (
                   <View style={[styles.lateBadge, { backgroundColor: fillOf(DAY_TONES.permission, isDark) }]}>
                     <MaterialCommunityIcons name="calendar-star" size={11} color={inkOf(DAY_TONES.permission, isDark)} />
@@ -306,13 +351,23 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                 <>
                   {chips.length > 0 && (
                     <View style={styles.flagRow}>
-                      {chips.map((c) => (
-                        <View key={c.key} style={[styles.flagChip, { backgroundColor: CHIP_COLORS[c.tone].bg }]}>
-                          <MaterialCommunityIcons name={c.icon as any} size={12} color={CHIP_COLORS[c.tone].fg} />
-                          <Text style={[styles.flagChipText, { color: CHIP_COLORS[c.tone].fg }]}>{c.label}</Text>
-                        </View>
-                      ))}
+                      {chips.map((c) => {
+                        const colors = chipColors(c, CHIP_COLORS, isDark);
+                        return (
+                          <View key={c.key} style={[styles.flagChip, { backgroundColor: colors.bg }]}>
+                            <MaterialCommunityIcons name={c.icon as any} size={12} color={colors.fg} />
+                            <Text style={[styles.flagChipText, { color: colors.fg }]}>{c.label}</Text>
+                          </View>
+                        );
+                      })}
                     </View>
+                  )}
+                  {/* What compensation did to the day, in the server's own words (a late arrival inside an allowance, a
+                      company late-in time, a birthday, a compensation day). */}
+                  {!!selected.compensationNote && (
+                    <Text style={[styles.compNote, compensationKeyOf(selected.compensationKind) && { borderLeftColor: COMPENSATION_TONES[compensationKeyOf(selected.compensationKind)!].solid }]}>
+                      {selected.compensationNote}
+                    </Text>
                   )}
                   {/* Shown whenever the server sent one (plain-language deadline explanation). */}
                   {!!selected.lateReason && <Text style={styles.flagNote}>{selected.lateReason}</Text>}
@@ -331,6 +386,8 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
               ['First Punch', selected.firstIn || '—'],
               ['Last Punch', selected.lastOut || '—'],
               ['Total Punches', selected.punchCount != null ? String(selected.punchCount) : '—'],
+              // The badge above says what the compensation was; this says how the day is counted.
+              ...(isCompensatedWholeDay(selected.compensationKind) ? [['Day counted as', selected.status]] : []),
             ] as [string, string][]).map(([label, value]) => (
               <View key={label} style={styles.detailRow}>
                 <Text style={styles.detailLabel}>{label}</Text>
@@ -338,6 +395,23 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
               </View>
             ))}
 
+            {hasCompensationMarker(selected.compensationKind) && (
+              <TouchableOpacity
+                style={styles.compLink}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="See all my compensation"
+                onPress={() => {
+                  // Close first, as the action chips do.
+                  setSelected(null);
+                  router.push('/compensation' as any);
+                }}
+              >
+                <MaterialCommunityIcons name="briefcase-clock-outline" size={15} color={Colors.primary} />
+                <Text style={styles.compLinkText}>See all my compensation</Text>
+                <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.primary} />
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </BottomSheet>
@@ -416,6 +490,16 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   flagChipText: { fontSize: 11, fontWeight: '800' },
   flagNote: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, marginBottom: 8 },
+  // The server's sentence about what compensation did to the day: a quote-style note, in the kind's colour when it is known.
+  compNote: {
+    color: Colors.textSecondary, fontSize: 12.5, lineHeight: 18, marginBottom: 10,
+    borderLeftWidth: 3, borderLeftColor: Colors.outlineVariant, paddingLeft: 10,
+  },
+  compLink: {
+    flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start',
+    marginTop: 14, minHeight: 44, paddingHorizontal: 4,
+  },
+  compLinkText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
 
   detailRow: {
     flexDirection: 'row',
@@ -457,8 +541,32 @@ function LegendSwatch({ kind, isDark }: { kind: DayVisualKey; isDark: boolean })
   );
 }
 
-/** What every colour on the calendar means, including the two rings and the dot. */
-export function AttendanceLegend({ detect = ALL_CHECKS_ON }: { detect?: DetectionFlags }) {
+/** One row of the compensation legend: the exact swatch a compensation cell uses (solid colour + white symbol). */
+function CompensationSwatch({ kind }: { kind: CompensationKey }) {
+  const styles = useThemedStyles(makeStyles);
+  const tone = COMPENSATION_TONES[kind];
+  return (
+    <View style={[styles.legendSwatch, { backgroundColor: tone.solid }]}>
+      <MaterialCommunityIcons name={tone.icon as any} size={13} color="#FFFFFF" />
+    </View>
+  );
+}
+
+/**
+ * What every colour on the calendar means, including the two rings and the dot.
+ *
+ * `showCompensation` lists the five compensation days too. It is off unless the caller says so: compensation is for staff
+ * employees only (a production employee never gets a marker, so there is nothing to explain), and the caller passes true
+ * only once the employee's profile has said 'staff' (isStaffEmployee in src/lib/employmentType.ts), so the section never
+ * flashes up while the profile loads.
+ */
+export function AttendanceLegend({
+  detect = ALL_CHECKS_ON,
+  showCompensation = false,
+}: {
+  detect?: DetectionFlags;
+  showCompensation?: boolean;
+}) {
   const { isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const ring = (color: string) => (
@@ -507,6 +615,19 @@ export function AttendanceLegend({ detect = ALL_CHECKS_ON }: { detect?: Detectio
           <Text style={styles.legendText}>Excess permission</Text>
         </View>
       </View>
+      {showCompensation && (
+        <>
+          <Text style={styles.legendTitle}>COMPENSATION DAYS (SOLID COLOUR AND SYMBOL)</Text>
+          <View style={styles.legendGrid}>
+            {COMPENSATION_ORDER.map((k) => (
+              <View key={k} style={styles.legendItem}>
+                <CompensationSwatch kind={k} />
+                <Text style={styles.legendText}>{COMPENSATION_LEGEND[k]}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
     </View>
   );
 }

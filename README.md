@@ -60,6 +60,10 @@ uktextiles-employee-app/
 │   │   └── index.tsx             # Shift schedule
 │   ├── holidays/
 │   │   └── index.tsx             # Holiday calendar
+│   ├── compensation/
+│   │   └── index.tsx             # Compensation (staff only): detected + HR-assigned, Ask HR tab
+│   ├── hod-assignment/
+│   │   └── index.tsx             # HOD Assignment: your Department Head + what they can approve
 │   └── settlement/
 │       └── index.tsx             # Full & final settlement details
 │
@@ -240,6 +244,23 @@ For requesting short absences (not full-day leave):
 
 ---
 
+### Compensation — `app/compensation/index.tsx` (staff only)
+
+- **My Compensation**: the balance in shifts, a banner for today's / tomorrow's next-day late-in allowance, and every compensation the system detected or HR assigned (late-in allowance, extra hours, compensation days, overtime pay, Sunday / holiday work, company late-in / early-out times, birthday leave), grouped and coloured like the attendance calendar
+- **Ask Request for Compensation**: explains that compensation is assigned by HR (the employee cannot claim it in the app) with Call / WhatsApp / Email buttons for HR
+- Calls `GET /api/employee/compensation`; a production employee sees a "staff only" message
+- The attendance calendar draws days that used a compensation as solid-colour cells with their own symbol (see `src/lib/attendanceVisual.ts`)
+
+---
+
+### HOD Assignment — `app/hod-assignment/index.tsx`
+
+- Shows the employee's Department Head (photo, name, phone with Call / copy, email, designation, department, branch)
+- Lists which kinds of request that head can approve, with a Can / Cannot mark and the reason
+- Calls `GET /api/employee/hod`; for every employee type
+
+---
+
 ### Settlement — `app/settlement/index.tsx`
 
 - Shows Full & Final Settlement details if applicable
@@ -279,6 +300,9 @@ The Axios instance in `src/lib/api.ts` automatically:
 | GET | `/manager/pending-requests` | Team's pending requests |
 | PATCH | `/manager/leave-requests/{id}/status` | Approve/reject leave |
 | PATCH | `/manager/permissions/{id}/status` | Approve/reject permission |
+| PATCH | `/manager/holiday-work/{id}/status` | Approve/reject a Holiday / Sunday work compensation claim |
+| GET | `/employee/compensation` | Compensation page (staff only) |
+| GET | `/employee/hod` | Assigned Department Head + what they can approve |
 
 ---
 
