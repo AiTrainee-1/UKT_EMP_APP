@@ -147,7 +147,7 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
 
   return (
     <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+      <StatusBar barStyle="dark-content" />
       {header}
       <ScrollView contentContainerStyle={styles.pad} showsVerticalScrollIndicator={false}>
         {/* Main Card */}

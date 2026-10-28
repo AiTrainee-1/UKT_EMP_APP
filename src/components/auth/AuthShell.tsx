@@ -31,7 +31,7 @@ export function AuthShell({ header, children }: Props) {
 
   return (
     <View style={[styles.root, { backgroundColor: Colors.bgCard }]}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle="light-content" />
 
       {/* The coloured backdrop reaches 40 px under the sheet so its rounded corners never show a gap. */}
       <View pointerEvents="none" style={[styles.backdrop, { height: headerHeight + 40 }]}>

@@ -2,6 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import api from '../lib/api';
 import type { ApprovalProgress } from '../lib/approval';
+import { punchFormEntries } from '../lib/onDutyPhotos';
+import { ensureTracking, startOnDutyTracking } from '../tracking/actions';
+import type { EnsureResult } from '../tracking/controller';
 
 export interface GeoPunchPrecheckResult {
   insideRadius: boolean;
@@ -38,7 +41,9 @@ export interface GeoPunchResult {
  *
  * The session ends the same day, one of three ways: the employee taps Done,
  * all 4 punches are in (closed at capture, not at approval), or the
- * server's 23:00 job closes it. */
+ * server's end-of-day job closes it (23:50 IST by default; HR sets the time).
+ * A rejection also ends it. The route is recorded (src/tracking) from the moment
+ * the request is submitted until the session ends. */
 export interface OnDutySession {
   id: number;
   destination: string;
@@ -83,6 +88,8 @@ export interface OnDutyPunchVerification {
   accuracyM: number | null;
   isMocked: boolean;
   hasPhoto: boolean;
+  /** The second photo (when HR requires two per punch). Absent on an older backend. */
+  hasPhoto2?: boolean;
   status: 'pending' | 'approved' | 'rejected';
   hrReviewedBy: string | null;
   hrReviewComment: string | null;
@@ -160,6 +167,8 @@ export interface OnDutySessionStatusResult {
   session: OnDutySession | null;
   punchVerifications: OnDutyPunchVerification[];
   punchSlots: PunchSlot[];
+  /** How many photos a punch needs now (HR's Geo-tracking rules): 1 or 2. Absent on an older backend, which means 1. */
+  requiredPhotos?: number;
 }
 
 /** The employee's current/most recent On-Duty session (pending/active, or
@@ -182,20 +191,28 @@ export function useOnDutySessionStatus() {
 export function useSubmitOnDutySessionRequest() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (body: { destination: string }) =>
-      (await api.post('/on-duty-sessions/request', body)).data as {
+    mutationFn: async (body: { destination: string }) => {
+      const data = (await api.post('/on-duty-sessions/request', body)).data as {
         status: string; sessionId: number; isProvisional: boolean; canPunch: boolean; message: string;
-      },
+      };
+      // The route is recorded from the moment the request exists (before any approval): start the collector now. It never
+      // throws and never fails the request; `tracking.decision.blockedBy` says why it could not start (consent, location
+      // permission, the app not on screen), and the screen sends the employee to the set-up for that.
+      const tracking: EnsureResult | null = await startOnDutyTracking();
+      return { ...data, tracking };
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
+      queryClient.invalidateQueries({ queryKey: ['tracking-state'] });
     },
   });
 }
 
 /** Employee-only manual "Mark as Done" — ends the session early. If they
- * don't tap it, the session closes on its own: at the 4th punch, or at
- * 23:00 IST, whichever comes first. Ending the day does not decide the
+ * don't tap it, the session closes on its own: at the 4th punch, or at the
+ * end-of-day time (23:50 IST by default), whichever comes first. The tracking
+ * stops with it (the server says so, the app follows). Ending the day does not decide the
  * request — a still-unapproved session stays in HR's queue. */
 export function useCompleteOnDutySession() {
   const queryClient = useQueryClient();
@@ -204,6 +221,10 @@ export function useCompleteOnDutySession() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
+      queryClient.invalidateQueries({ queryKey: ['tracking-state'] });
+      // The server ended the track with the session. Make the phone follow now instead of at the next background tick:
+      // the collector flushes what is queued and stops (the "recording" notification goes away).
+      void ensureTracking('manual');
     },
   });
 }
@@ -234,24 +255,25 @@ export function useSubmitOnDutyPunch() {
       longitude: number;
       accuracy?: number;
       isMocked?: boolean;
-      photoUri: string;
+      /** One local photo URI, or two when HR requires two per punch (sent as `photo` and `photo2`). */
+      photoUris: string[];
       punchNumber?: number;
     }) => {
       const form = new FormData();
-      form.append('latitude', String(body.latitude));
-      form.append('longitude', String(body.longitude));
-      if (body.accuracy != null) form.append('accuracy', String(body.accuracy));
-      if (body.punchNumber != null) form.append('punchNumber', String(body.punchNumber));
-      form.append('isMocked', String(!!body.isMocked));
-      form.append('photo', { uri: body.photoUri, name: 'punch.jpg', type: 'image/jpeg' } as any);
+      for (const entry of punchFormEntries(body)) form.append(entry.name, entry.value as any);
       const res = await api.post('/on-duty-sessions/punch', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       return res.data as OnDutyPunchResult;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
+      // The 4th punch closes the session on the server, which ends the track there: look again soon.
+      if (result?.sessionEnded) {
+        queryClient.invalidateQueries({ queryKey: ['tracking-state'] });
+        void ensureTracking('manual');
+      }
     },
   });
 }

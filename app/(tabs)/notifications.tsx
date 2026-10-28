@@ -118,7 +118,7 @@ export default function NotificationsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+      <StatusBar barStyle="dark-content" />
 
       <View style={styles.topBar}>
         <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
@@ -185,7 +185,7 @@ export default function NotificationsScreen() {
         keyExtractor={n => String(n.id)}
         contentContainerStyle={[styles.list, !visible.length && styles.listCenter]}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} colors={[Colors.primary]} />
+          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
         ListEmptyComponent={
           isLoading ? (

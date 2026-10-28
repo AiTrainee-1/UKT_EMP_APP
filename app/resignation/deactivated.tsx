@@ -57,7 +57,7 @@ export default function AccountDeactivatedScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+      <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
         <UKTLogo size={28} />

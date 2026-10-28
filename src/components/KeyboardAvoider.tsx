@@ -8,6 +8,7 @@ import {
   View,
   ViewStyle,
   type KeyboardEvent,
+  type ViewInstance,
   type ViewProps,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -90,7 +91,7 @@ interface AvoiderProps {
 }
 
 function AndroidAvoider({ children, style, enabled = true, pointerEvents }: AvoiderProps) {
-  const ref = useRef<View>(null);
+  const ref = useRef<ViewInstance>(null);
   const metrics = useKeyboardMetrics();
   const navBarInset = useSafeAreaInsets().bottom;
   const [pad, setPad] = useState(0);

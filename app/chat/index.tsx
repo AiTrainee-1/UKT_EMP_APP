@@ -14,7 +14,9 @@ import {
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { GestureHandlerRootView, Swipeable } from 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+// Gesture Handler 3 (SDK 58) no longer exports the legacy `Swipeable`; ReanimatedSwipeable is its replacement.
+import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { format } from 'date-fns';
 
 import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
@@ -55,7 +57,7 @@ export default function ChatScreen() {
     message: '', type: 'error', visible: false,
   });
   const listRef = useRef<FlatList<ChatMessage>>(null);
-  const swipeRefs = useRef<Record<number, Swipeable | null>>({});
+  const swipeRefs = useRef<Record<number, SwipeableMethods | null>>({});
 
   const showToast = (message: string, type: 'success' | 'error' = 'error') => {
     setToast({ message, type, visible: true });
@@ -100,7 +102,7 @@ export default function ChatScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+      <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>

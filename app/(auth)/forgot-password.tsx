@@ -14,8 +14,9 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { loginOptionsRequest, otpResetPasswordRequest } from '../../src/hooks/useAuth';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
+import { otpCopy } from '../../src/lib/otp';
 
-/** Forgot / reset password: a WhatsApp code proves it's really you, then choose a new password. */
+/** Forgot / reset password: a one-time code (by SMS or WhatsApp, as HR chose) proves it's really you, then choose a new password. */
 export default function ForgotPasswordScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -24,11 +25,19 @@ export default function ForgotPasswordScreen() {
   const [confirm, setConfirm] = useState('');
   // null until the server answers; if it can't, try anyway and let the request report the problem.
   const [available, setAvailable] = useState<boolean | null>(null);
+  // How codes are delivered ('sms' | 'whatsapp'), as the server reports it; unknown from an older server or before it answers.
+  const [channel, setChannel] = useState<string | null>(null);
+  const [codeLength, setCodeLength] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const copy = otpCopy(channel, codeLength);
 
   useEffect(() => {
     loginOptionsRequest()
-      .then((o) => setAvailable(o.otpReset))
+      .then((o) => {
+        setChannel(o.otpChannel ?? null);
+        setCodeLength(o.codeLength ?? null);
+        setAvailable(o.otpReset);
+      })
       .catch(() => setAvailable(true));
   }, []);
 
@@ -43,8 +52,8 @@ export default function ForgotPasswordScreen() {
           <Text style={styles.backChipText}>Back to Login</Text>
         </TouchableOpacity>
         <View style={styles.pill}>
-          <MaterialCommunityIcons name="whatsapp" size={12} color="#5EEAD4" />
-          <Text style={styles.pillText}>RESET WITH WHATSAPP</Text>
+          <MaterialCommunityIcons name={copy.icon} size={12} color="#5EEAD4" />
+          <Text style={styles.pillText}>{copy.resetPill}</Text>
         </View>
       </View>
 
@@ -54,9 +63,7 @@ export default function ForgotPasswordScreen() {
       </View>
 
       <Text style={styles.headline}>Forgot your password?</Text>
-      <Text style={styles.headSub}>
-        Enter your employee code and we will WhatsApp you a code. Enter it here to choose a new password.
-      </Text>
+      <Text style={styles.headSub}>{copy.resetIntro}</Text>
     </View>
   );
 
@@ -67,10 +74,7 @@ export default function ForgotPasswordScreen() {
           <View>
             <View style={styles.noticeBox}>
               <MaterialCommunityIcons name="alert-outline" size={18} color={Colors.statusRed} />
-              <Text style={styles.noticeText}>
-                Resetting with WhatsApp is not available right now. Please ask HR to reset your password, or set
-                one up if you have never had one.
-              </Text>
+              <Text style={styles.noticeText}>{copy.resetUnavailable}</Text>
             </View>
             <TouchableOpacity onPress={() => router.push('/(auth)/set-password')} style={styles.linkRow}>
               <Text style={styles.linkAccent}>Set up my password</Text>
@@ -81,6 +85,8 @@ export default function ForgotPasswordScreen() {
           <OtpFlow
             purpose="reset"
             submitLabel="Set new password"
+            channel={channel}
+            codeLength={codeLength}
             extraValid={passwordsOk}
             extraFields={
               <View>

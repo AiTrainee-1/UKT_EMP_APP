@@ -100,7 +100,7 @@ export default function HodAssignmentScreen() {
   }
 
   const refresh = (
-    <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} tintColor={Colors.primary} colors={[Colors.primary]} />
+    <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
   );
 
   // ── nobody to show: not assigned yet, or the employee is a Department Head themselves ──

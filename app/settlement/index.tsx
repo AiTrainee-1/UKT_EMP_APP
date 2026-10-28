@@ -107,7 +107,7 @@ export default function SettlementScreen() {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={[styles.pad, !(data?.length) && styles.center]}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
+          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
         }
         ListHeaderComponent={
           !!data?.length ? (
@@ -126,7 +126,7 @@ export default function SettlementScreen() {
                 </Text>
               </View>
             </View>
-          ) : null
+          ) : undefined
         }
         ListEmptyComponent={
           isLoading ? (

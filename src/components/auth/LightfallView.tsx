@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, AppState, StyleSheet, View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { WebView, type WebViewHandle } from '../../lib/webview';
 import { useNavigation } from 'expo-router';
 
 import { lightfallHtml } from './lightfallHtml';
@@ -15,7 +15,7 @@ const HTML = lightfallHtml();
  * the background, so it costs no battery then.
  */
 export default function LightfallView() {
-  const ref = useRef<WebView>(null);
+  const ref = useRef<WebViewHandle>(null);
   const fade = useRef(new Animated.Value(0)).current;
   const [failed, setFailed] = useState(false);
   const navigation = useNavigation();

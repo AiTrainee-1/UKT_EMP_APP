@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Component, ReactNode, useRef } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, LogBox } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
@@ -14,8 +14,16 @@ import { registerPushToken } from '../src/hooks/usePushToken';
 import { useEmployee } from '../src/hooks/useEmployee';
 import type { ManagerProfile } from '../src/hooks/useManager';
 import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
+import { ensureTracking, stopTrackingForSignOut } from '../src/tracking/actions';
+import { useTrackingLifecycle, useTrackingState } from '../src/tracking/useTracking';
 import { useNotificationObserver } from '../src/hooks/useNotifications';
 import { PermissionGate } from '../src/components/PermissionGate';
+
+// Dev-only noise from a dependency (moti 0.29), not from this app: its SafeAreaView wrapper reads React Native's deprecated
+// `SafeAreaView` export, and it passes a dependency array to Reanimated's useAnimatedStyle. The app's own screens do neither.
+// (LogBox only hides these on the phone; Metro's terminal still prints them.)
+LogBox.ignoreLogs(['SafeAreaView has been deprecated', '[Reanimated] Dependencies should only be used on the web']);
+
 import { UpdatePrompt } from '../src/components/UpdatePrompt';
 import { ServerStatusBanner } from '../src/components/support/ServerStatusBanner';
 import { prefetchSupportContact } from '../src/hooks/useSupportContact';
@@ -136,7 +144,39 @@ function PushTokenRegistrar() {
 }
 
 // ---------------------------------------------------------------------------
-// Live Location Tracker — auto-RESUMES pinging (never auto-PROMPTS) while
+// On-Duty route tracking — the self-heal of the background collector (src/tracking).
+// The route of an On-Duty session is recorded by a background task + Android foreground
+// service, which starts when the On-Duty request is submitted and stops only when the SERVER says the track ended. This
+// component only mounts the lifecycle: it asks the server what should be running when the app starts and every time it
+// comes to the front, uploads what is queued, and watches the network while the app is open.
+// ---------------------------------------------------------------------------
+function TrackingBridge() {
+  const { user } = useAuth();
+  useTrackingLifecycle(user?.employeeId ?? null);
+
+  // The session changing under the phone (HR rejected it, the day-end job closed it, it was marked Done from another screen)
+  // ends the track on the server: look at once instead of waiting for the next tick. GET /attendance/geo-punch/status is
+  // already polled every 30 s for the rest of the app, so this costs nothing extra.
+  const { data: geoStatus } = useGeoPunchStatus(!!user?.employeeId);
+  const session = geoStatus?.onDutySession;
+  const sessionKey = session ? `${session.id}:${session.status}:${session.employeeEndedAt ?? ''}` : 'none';
+  const firstKey = useRef(true);
+  useEffect(() => {
+    if (firstKey.current) {
+      firstKey.current = false; // the app-start check in useTrackingLifecycle covers the first look
+      return;
+    }
+    if (user?.employeeId) void ensureTracking('manual');
+  }, [sessionKey, user?.employeeId]);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Live Location Tracker — the OLD foreground-only 45 s ping loop. It now serves ONLY HR's manual per-employee toggle
+// (locationTrackingEnabled); an On-Duty session is tracked by the new engine above. The one exception: a backend that does
+// not have /tracking yet (an older server), where On-Duty keeps using this loop as before.
+//
+// Auto-RESUMES pinging (never auto-PROMPTS) while
 // the employee's own profile has locationTrackingEnabled=true (an HR-only
 // toggle, off by default). The actual permission dialog only ever appears
 // from the dedicated Live Tracking screen (app/geo-tracking), tied to a
@@ -152,7 +192,9 @@ function LiveLocationTracker() {
   const { user } = useAuth();
   const { data: emp } = useEmployee(user?.employeeId ?? null);
   const { data: geoStatus } = useGeoPunchStatus(!!user?.employeeId);
-  const enabled = !!emp?.locationTrackingEnabled || geoStatus?.onDutySession?.status === 'active';
+  const { data: trackingState } = useTrackingState(!!user?.employeeId);
+  const legacyOnDuty = geoStatus?.onDutySession?.status === 'active' && trackingState?.supported === false;
+  const enabled = !!emp?.locationTrackingEnabled || legacyOnDuty;
 
   useEffect(() => {
     if (!enabled) {
@@ -240,7 +282,7 @@ export default function RootLayout() {
   const login = async (_id: string, _pw: string) => {};
 
   // Signing out, in this order, is what keeps the screen from glitching for seconds afterwards:
-  //  1. stop the background location pings and cancel every request still in flight;
+  //  1. stop the background location pings (and the On-Duty route recording on this phone) and cancel every request still in flight;
   //  2. LEAVE the signed-in screens (they are what poll the server every 15-60 s and re-fetch the moment their
   //     data or the user disappears);
   //  3. forget the token, and only then - once those screens are gone - the user and the cached data.
@@ -252,6 +294,7 @@ export default function RootLayout() {
     signingOut.current = true;
     try {
       stopLiveTracking();
+      await stopTrackingForSignOut();
       await queryClient.cancelQueries();
       router.replace(to);
       await clearAuth();
@@ -286,6 +329,7 @@ export default function RootLayout() {
           <UpdatePrompt />
           <ResignationGuard />
           <PushTokenRegistrar />
+          <TrackingBridge />
           <LiveLocationTracker />
           <NotificationTapHandler />
           {/* The server-status bar takes its own strip above the navigator, so it never covers a screen. */}
@@ -309,6 +353,8 @@ export default function RootLayout() {
             <Stack.Screen name="geo-punch" />
             <Stack.Screen name="geo-tracking" />
             <Stack.Screen name="on-duty" />
+            <Stack.Screen name="tracking-setup" />
+            <Stack.Screen name="my-journeys" />
             <Stack.Screen name="outpass" />
             <Stack.Screen name="help" />
             <Stack.Screen name="compensation" />

@@ -1,5 +1,5 @@
 import React, { forwardRef, useMemo, useState } from 'react';
-import { View, TextInput, Text, StyleSheet, TouchableOpacity, Platform, type TextInputProps, type ViewStyle } from 'react-native';
+import { View, TextInput, Text, StyleSheet, TouchableOpacity, Platform, type TextInputInstance, type TextInputProps, type ViewStyle } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { useTheme } from '../../theme/ThemeProvider';
@@ -19,7 +19,7 @@ interface AuthInputProps extends TextInputProps {
  * The sign-in screens' field: a soft filled box with an icon, and a small capitalised label above it. The same props as the
  * shared `Input` (so the screens only swap the name), restyled for the login pages; the shared `Input` is untouched.
  */
-export const AuthInput = forwardRef<TextInput, AuthInputProps>(
+export const AuthInput = forwardRef<TextInputInstance, AuthInputProps>(
   ({ label, error, containerStyle, rightIcon, isPassword, leftIconName, value, ...props }, ref) => {
     const { C: Colors, isDark } = useTheme();
     const styles = useMemo(() => makeStyles(Colors, isDark), [Colors, isDark]);

@@ -45,20 +45,36 @@ export async function loginRequest(identifier: string, password: string) {
   return saveSession(res.data);
 }
 
-/** Which sign-in methods HR has switched on (Settings → WhatsApp Control). */
+/** Which sign-in methods HR has switched on (Settings → WhatsApp Control / SMS Control). */
 export interface LoginOptions {
   otpLogin: boolean;
   otpReset: boolean;
-  /** A new employee must confirm a WhatsApp code before choosing a first password. */
+  /** A new employee must confirm a code (by SMS or WhatsApp) before choosing a first password. */
   otpActivate: boolean;
   passwordLogin: boolean;
+  /**
+   * How the one-time code is delivered: 'sms' or 'whatsapp'. Absent on a server from before the SMS channel existed;
+   * the screens then say "a code" instead of naming one (see src/lib/otp.ts).
+   */
+  otpChannel?: string;
+  /**
+   * How many digits the one-time code has: 4 when the channel is 'sms', 6 for 'whatsapp'. Absent on an older server; the
+   * screens then take the length from the channel (see otpLength in src/lib/otp.ts).
+   */
+  codeLength?: number;
 }
 
 export interface OtpRequestResult {
-  /** Last digits of the WhatsApp number the code went to, e.g. "••••••1234". */
+  /** Last digits of the mobile number the code went to, e.g. "••••••1234". */
   maskedPhone: string;
   expiresInSeconds: number;
   resendAfterSeconds: number;
+  /** 'sms' or 'whatsapp': where the code actually went. Absent on a server from before the SMS channel existed. */
+  channel?: string;
+  /** Digits in the code that was sent (4 by SMS, 6 on WhatsApp). Absent on an older server. */
+  codeLength?: number;
+  /** The server's own "We've sent a code by SMS to …" sentence. The screens compose their own wording instead. */
+  message?: string;
 }
 
 export type OtpPurpose = 'login' | 'reset' | 'activate';
@@ -68,7 +84,7 @@ export async function loginOptionsRequest(): Promise<LoginOptions> {
   return res.data;
 }
 
-/** Asks the server to WhatsApp a one-time code to the number registered for this employee.
+/** Asks the server to send a one-time code (by SMS or WhatsApp, as HR chose) to the number registered for this employee.
  * The body says `identifier` (not `employeeCode`) because `api` snake_cases request keys and
  * the server reads `identifier` as-is. */
 export async function requestOtp(identifier: string, purpose: OtpPurpose): Promise<OtpRequestResult> {
@@ -81,13 +97,13 @@ export async function otpLoginRequest(identifier: string, otp: string) {
   return saveSession(res.data);
 }
 
-/** Forgot password: the WhatsApp code proves who is asking, then sets the new password. */
+/** Forgot password: the one-time code proves who is asking, then sets the new password. */
 export async function otpResetPasswordRequest(identifier: string, otp: string, password: string) {
   const res = await api.post('/auth/otp/reset-password', { identifier, otp, password });
   return res.data;
 }
 
-/** First-time password for a new employee: the WhatsApp code proves the number HR registered is theirs. */
+/** First-time password for a new employee: the one-time code proves the number HR registered is theirs. */
 export async function otpActivateRequest(identifier: string, otp: string, password: string) {
   const res = await api.post('/auth/otp/activate', { identifier, otp, password });
   return res.data;

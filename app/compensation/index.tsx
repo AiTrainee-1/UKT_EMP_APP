@@ -140,7 +140,7 @@ export default function CompensationScreen() {
   const tomorrow = data.tomorrowAllowance;
 
   const refresh = (
-    <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} tintColor={Colors.primary} colors={[Colors.primary]} />
+    <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
   );
 
   const allowanceBanner = (notice: AllowanceNotice, which: 'today' | 'tomorrow') => {

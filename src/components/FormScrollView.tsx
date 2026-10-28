@@ -1,5 +1,5 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { ScrollView, TextInput, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewProps } from 'react-native';
+import { ScrollView, TextInput, type NativeScrollEvent, type NativeSyntheticEvent, type ScrollViewInstance, type ScrollViewProps } from 'react-native';
 import { scrollToReveal } from '../lib/keyboardGeometry';
 import { useKeyboardTop } from './KeyboardAvoider';
 
@@ -11,15 +11,15 @@ import { useKeyboardTop } from './KeyboardAvoider';
  * It only ever scrolls when the field really is covered, so it does nothing on top of the scrolling
  * Android already does when the window is resized. Taps on buttons keep working with the keyboard up.
  */
-export const FormScrollView = forwardRef<ScrollView, ScrollViewProps>(function FormScrollView(
+export const FormScrollView = forwardRef<ScrollViewInstance, ScrollViewProps>(function FormScrollView(
   { onScroll, scrollEventThrottle = 16, keyboardShouldPersistTaps = 'handled', ...props },
   forwardedRef,
 ) {
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const offset = useRef(0);
   const top = useKeyboardTop();
 
-  useImperativeHandle(forwardedRef, () => scroll.current as ScrollView);
+  useImperativeHandle(forwardedRef, () => scroll.current as ScrollViewInstance);
 
   useEffect(() => {
     if (top === null) return;

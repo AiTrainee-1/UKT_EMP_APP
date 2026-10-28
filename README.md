@@ -1,6 +1,6 @@
 # UKTextiles Employee App
 
-React Native mobile app for UKTextiles employees. Built with Expo SDK 54 and expo-router. Connects to the Django REST API running on your local network.
+React Native mobile app for UKTextiles employees. Built with Expo SDK 58 (React Native 0.88) and expo-router. Connects to the Django REST API running on your local network.
 
 ---
 
@@ -21,7 +21,7 @@ React Native mobile app for UKTextiles employees. Built with Expo SDK 54 and exp
 
 | Layer | Technology |
 |---|---|
-| Framework | React Native via Expo SDK 54 |
+| Framework | React Native 0.88 via Expo SDK 58 |
 | Navigation | expo-router v6 (file-based routing) |
 | Server State | @tanstack/react-query v5 |
 | Forms | react-hook-form v7 + Zod v4 validation |
@@ -334,8 +334,8 @@ EXPO_PUBLIC_APP_NAME=UKTextiles
 
 ### Prerequisites
 
-- Node.js 18 or later (`npm test` runs the shared request-window vectors on the `.ts` files directly, so it needs Node 22.18+ or 24)
-- [Expo Go](https://expo.dev/go) app installed on your phone (SDK 54)
+- Node.js 22.13+, 24.3+ or 26+ (Expo SDK 58 does not support odd releases such as 23 or 25; `npm test` runs the shared request-window vectors on the `.ts` files directly, so it needs 22.18+ or 24)
+- [Expo Go](https://expo.dev/go) app installed on your phone (must be the SDK 58 build: Expo Go only opens projects of its own SDK; see docs/SDK_58_UPGRADE.md)
 - Django server running at `http://192.168.0.56:8000`
 
 ### Steps
@@ -387,13 +387,27 @@ eas build --platform android --profile production
 |---|---|---|
 | `preview` | APK | Internal testing |
 | `production` | APK | Distribution to employees |
-| `development` | APK (dev client) | Debug builds |
+| `development` | APK (dev client) | Debug builds, and testing On-Duty route tracking on a phone (needs `expo-dev-client`, see below) |
+
+### Development build (On-Duty route tracking cannot run in Expo Go)
+
+Background location, the foreground-service notification and the Android permissions in `app.json` only exist in a real build.
+`expo-dev-client` is not a dependency yet, so install it once, then build:
+
+```powershell
+npx expo install expo-dev-client
+eas build --platform android --profile development
+npx expo start --dev-client
+```
+
+Details, and everything that changed with SDK 58, are in `docs/SDK_58_UPGRADE.md`.
 
 ---
 
 ## Known Notes
 
 - **Push notifications** are disabled in Expo Go (SDK 53+ restriction). They will work in a proper APK build.
+- **Expo Go** (SDK 58) opens the app, but On-Duty route tracking (background location + foreground service) is not supported there; use a development build (see above and `docs/GEO_TRACKING.md`).
 - **Leave types**: If the backend `/api/leave-types` returns an empty list, the app shows 6 built-in defaults (Annual, Sick, Casual, Emergency, Maternity, Paternity Leave). Add real leave types through the HR Portal admin.
 - **Manager tab**: The Approvals tab only appears if the logged-in employee is assigned as a manager in the HR Portal (User Management → Department Managers).
 - **`expo doctor` warning** about `usesCleartextTraffic`: this is a false-positive schema validation warning. The field works correctly and is required for HTTP connections to the local server.

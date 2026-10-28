@@ -52,7 +52,7 @@ export default function ResignationSuccessScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="light-content" backgroundColor="#047857" />
+      <StatusBar barStyle="light-content" />
 
       <LinearGradient colors={['#059669', '#047857']} style={styles.bg}>
         {/* Deco circles */}

@@ -97,7 +97,7 @@ export default function ResignationSurveyScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoider style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>
@@ -189,7 +189,7 @@ export default function ResignationSurveyScreen() {
             );
           })}
 
-          <TouchableOpacity style={styles.nextBtn} onPress={handleSubmit(onNext)} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.nextBtn} onPress={() => { void handleSubmit(onNext)(); }} activeOpacity={0.85}>
             <Text style={styles.nextBtnText}>Review & Confirm</Text>
             <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
           </TouchableOpacity>

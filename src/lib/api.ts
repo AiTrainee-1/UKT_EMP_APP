@@ -3,6 +3,7 @@ import { getToken, clearAuth } from './auth';
 import { router } from 'expo-router';
 import { markServerOffline, markServerOnline } from './serverStatus';
 import { isNetworkFailure } from './supportContact';
+import { camelizeKeys, decamelizeKeys } from './caseKeys';
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -34,35 +35,8 @@ function sentToken(config: any): string {
   return typeof header === 'string' ? header.replace(/^Bearer\s+/i, '') : '';
 }
 
-// Response: Django snake_case → frontend camelCase
-function snakeToCamel(s: string): string {
-  return s.replace(/_([a-z])/g, (_, l) => l.toUpperCase());
-}
-
-function camelizeKeys(obj: any): any {
-  if (Array.isArray(obj)) return obj.map(camelizeKeys);
-  if (obj !== null && typeof obj === 'object' && !(obj instanceof Date)) {
-    return Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [snakeToCamel(k), camelizeKeys(v)])
-    );
-  }
-  return obj;
-}
-
-// Request: frontend camelCase → Django snake_case (for POST/PUT/PATCH bodies)
-function camelToSnake(s: string): string {
-  return s.replace(/([A-Z])/g, (l) => `_${l.toLowerCase()}`);
-}
-
-function decamelizeKeys(obj: any): any {
-  if (Array.isArray(obj)) return obj.map(decamelizeKeys);
-  if (obj !== null && typeof obj === 'object' && !(obj instanceof Date)) {
-    return Object.fromEntries(
-      Object.entries(obj).map(([k, v]) => [camelToSnake(k), decamelizeKeys(v)])
-    );
-  }
-  return obj;
-}
+// Response: Django snake_case → frontend camelCase; request (POST/PUT/PATCH) bodies: camelCase → snake_case so Django can
+// read them. Both conversions live in src/lib/caseKeys.ts (pure, tested).
 
 const api = axios.create({
   baseURL: process.env.EXPO_PUBLIC_API_URL,

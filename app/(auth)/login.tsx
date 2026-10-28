@@ -30,6 +30,7 @@ import { BorderRadius } from '../../src/constants/theme';
 import { useAuth } from '../../src/hooks/useAuth';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
 import { isServerProblem } from '../../src/lib/supportContact';
+import { otpCopy } from '../../src/lib/otp';
 import { loginRequest, loginOptionsRequest, otpLoginRequest, type LoginOptions } from '../../src/hooks/useAuth';
 
 const schema = z.object({
@@ -72,6 +73,8 @@ export default function LoginScreen() {
   const [mode, setMode] = useState<'otp' | 'password'>('password');
   const showOtp = mode === 'otp' && options?.otpLogin === true;
   const canSwitch = options?.otpLogin === true && options.passwordLogin;
+  // Says "SMS" or "WhatsApp" as the server reports it (`otpChannel`), or just "a code" from an older server.
+  const copy = otpCopy(options?.otpChannel, options?.codeLength);
 
   const { control, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -102,7 +105,7 @@ export default function LoginScreen() {
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
   };
 
-  // Both the password and the WhatsApp-code sign-in end the same way.
+  // Both the password and the one-time-code (SMS or WhatsApp) sign-in end the same way.
   const finishSignIn = async (
     identifier: string,
     result: { employeeId: number; name: string; role: string },
@@ -196,6 +199,9 @@ export default function LoginScreen() {
           <OtpFlow
             purpose="login"
             submitLabel="Verify & Sign In"
+            channel={options?.otpChannel}
+            codeLength={options?.codeLength}
+            onUsePassword={canSwitch ? () => setMode('password') : undefined}
             initialIdentifier={rememberedCode}
             onSubmit={async (identifier, otp) => {
               const result = await otpLoginRequest(identifier, otp);
@@ -240,7 +246,7 @@ export default function LoginScreen() {
                   isPassword
                   error={errors.password?.message}
                   returnKeyType="done"
-                  onSubmitEditing={handleSubmit(onSubmit)}
+                  onSubmitEditing={() => { void handleSubmit(onSubmit)(); }}
                   leftIconName="lock-outline"
                   containerStyle={{ marginBottom: 12 }}
                 />
@@ -265,9 +271,9 @@ export default function LoginScreen() {
 
         {canSwitch && (
           <TouchableOpacity onPress={() => setMode(showOtp ? 'password' : 'otp')} style={styles.switchRow} activeOpacity={0.8}>
-            <MaterialCommunityIcons name={showOtp ? 'lock-outline' : 'whatsapp'} size={16} color={AuthColors.accentDark} />
+            <MaterialCommunityIcons name={showOtp ? 'lock-outline' : copy.icon} size={16} color={AuthColors.accentDark} />
             <Text style={styles.switchText}>
-              {showOtp ? 'Use my password instead' : 'Sign in with a WhatsApp code'}
+              {showOtp ? 'Use my password instead' : copy.loginSwitchLink}
             </Text>
           </TouchableOpacity>
         )}

@@ -2,7 +2,7 @@
 UKTEXTILES EMPLOYEE APP — MOBILE APP PAGE & COMPONENT REFERENCE
 ====================================================================
 Repo: D:\Projects\UK-textile-Mobi\uktextiles-employee-app
-Stack: Expo Router (React Native), SDK 57
+Stack: Expo Router (React Native), SDK 58
 Purpose of this document: a complete, page-by-page inventory of every
 screen, component, feature, and API call in the mobile app, for use as
 a source-of-truth reference when recreating the UI (e.g. in Google
@@ -27,6 +27,7 @@ app/
     _layout.tsx                  Auth stack shell
     login.tsx                    -> /(auth)/login
     set-password.tsx             -> /(auth)/set-password
+    forgot-password.tsx          -> /(auth)/forgot-password
   (tabs)/
     _layout.tsx                  Bottom tab bar shell
     home.tsx                     -> /(tabs)/home
@@ -137,15 +138,24 @@ UI:
   - Sign In button
   - "First time? Set your password" link
   - Toast
+  - When HR has switched on sign-in with a code: the form can be the
+    one-time-code flow instead (see "One-time code flow" below), with a
+    link to switch between "Sign in with an SMS code / a WhatsApp code /
+    a code" and "Use my password instead"
 
 Actions:
   - Submit login form
-  - Navigate to /(auth)/set-password
+  - Navigate to /(auth)/set-password, /(auth)/forgot-password
 
 API calls:
+  - loginOptionsRequest() -> GET /auth/login-options
   - loginRequest() -> POST /auth/employee-login
+  - requestOtp(identifier, 'login') -> POST /auth/otp/request
+  - otpLoginRequest() -> POST /auth/otp/login
 
-Conditional content: none (pre-auth screen).
+Conditional content: the code flow only when login-options says otpLogin;
+the switch link only when passwordLogin is also on (the password is never
+removed as a fallback). The wording follows login-options.otpChannel.
 
 
 --------------------------------------------------------------------
@@ -153,21 +163,102 @@ PAGE: Set Password
 --------------------------------------------------------------------
 Route:    /(auth)/set-password
 File:     app/(auth)/set-password.tsx
-Purpose:  First-time password setup.
+Purpose:  First-time password setup (activation).
 
 UI:
   - Form card: Employee Code, New Password, Confirm Password
   - Set Password button
   - Back to Login link
   - Toast
+  - When login-options says otpActivate: step 1 "Verify your mobile number"
+    ("... WhatsApp number" when the server says WhatsApp), then step 2
+    "Confirm code & set password" (one-time code flow, purpose 'activate')
 
 Actions:
   - Submit -> sets password, auto-redirects to login after 1.5s
 
 API calls:
-  - setPasswordRequest() -> POST /auth/set-password
+  - loginOptionsRequest() -> GET /auth/login-options
+  - setPasswordRequest() -> POST /auth/set-password  (code not required)
+  - requestOtp(identifier, 'activate') -> POST /auth/otp/request
+  - otpActivateRequest() -> POST /auth/otp/activate
 
-Conditional content: none.
+Conditional content: the code flow only when otpActivate is true; wording
+follows otpChannel (see below). HR contact card always shown.
+
+
+--------------------------------------------------------------------
+PAGE: Forgot Password
+--------------------------------------------------------------------
+Route:    /(auth)/forgot-password
+File:     app/(auth)/forgot-password.tsx
+Purpose:  Reset a forgotten password with a one-time code.
+
+UI:
+  - Header chip "RESET WITH SMS" / "RESET WITH WHATSAPP" / "RESET WITH A
+    CODE" and an intro line naming the same channel
+  - One-time code flow (purpose 'reset') + New password / Confirm fields
+  - "Remembered it? Sign In" link
+  - When resetting by code is switched off: a notice (also naming the
+    channel), "Set up my password" and the HR contact card
+
+API calls:
+  - loginOptionsRequest() -> GET /auth/login-options
+  - requestOtp(identifier, 'reset') -> POST /auth/otp/request
+  - otpResetPasswordRequest() -> POST /auth/otp/reset-password
+
+
+--------------------------------------------------------------------
+One-time code flow (Login, Set Password, Forgot Password)
+--------------------------------------------------------------------
+Component: src/components/auth/OtpFlow.tsx. Pure rules, wording and tests:
+src/lib/otp.ts + src/lib/otp.test.ts. The code is delivered by SMS (2Factor)
+or by WhatsApp - HR chooses in the HR portal (SMS Control) - and the server
+reports the choice: `otpChannel` on GET /auth/login-options and `channel`
+on POST /auth/otp/request. The code's LENGTH follows the channel: 4 digits
+by SMS (the approved template says XXXX), 6 on WhatsApp. The server says how
+many in `codeLength` (next to `otpChannel` on login-options and `channel` on
+otp/request); the field, its label, the "complete" check and the copy all use
+that number (src/lib/otp.ts `otpLength`). A server that sends no codeLength
+(older): sms 4, whatsapp 6, unknown 6. Endpoints and payloads are otherwise
+unchanged (the new key is additive). An app build from before this change only
+knows 6 digits, so it cannot sign in with an SMS code until it is updated.
+
+Wording (one table, src/lib/otp.ts `otpCopy`):
+  channel 'sms'      "Send code by SMS" / "Code sent by SMS to ••••••1234.
+                     It expires in 5 minutes." / "Sign in with an SMS code"
+  channel 'whatsapp' "Send code on WhatsApp" / "Code sent to WhatsApp number
+                     ••••••1234. It expires in 5 minutes." (as before)
+  key missing (an older server) or unknown: neutral - "Send code" /
+                     "Code sent to ••••••1234. ..." / "Sign in with a code"
+The channel the request answers with wins over the one login-options named.
+
+Step 1 - ask: Employee Code field, a hint line naming the channel and the
+  digits ("We will send a 4-digit code by SMS ..."), the send button. A refused request shows the server's own sentence:
+    429 + retryAfterSeconds  wait: the button reads "Send code again in 42s"
+                             and is disabled until it ends; an "I already
+                             have a code" link goes straight to step 2
+    429 (hour / number cap), 502 (could not send), 503 (SMS temporarily
+    unavailable), 403 (turned off), 400/404/409
+                             the sentence, then "Use my password instead"
+                             (sign-in only, when the password is on) and the
+                             HR contact card ("HR can reset your password
+                             for you" / "HR can help you activate your
+                             account" on those screens)
+    no answer / gateway 5xx  fixed sentence + the software-support card
+Step 2 - enter: the notice above (masked number from `maskedPhone`, expiry
+  from `expiresInSeconds`), the N-digit field ("4-digit code" by SMS, "6-digit code" on WhatsApp), the submit button, "Change
+  employee code", "Resend code in Ns" (countdown from `resendAfterSeconds`,
+  clock-based so time spent reading the SMS counts), and "Not getting the
+  code? Call HR ..." always visible. When the code's lifetime ends a notice
+  says "This code has expired. Please ask for a new one." (the server still
+  decides).
+Code field: digits only (paste "123 456" works), maxLength = codeLength (4 / 6), numeric
+  keypad, textContentType "oneTimeCode", autoComplete "sms-otp" (Android) /
+  "one-time-code" (web), importantForAutofill. No auto-submit: the employee
+  taps the button. The code is only ever in component state - never logged,
+  stored or put in a URL. No new native module is involved, so the keyboard
+  suggestion / autofill is the platform's own.
 
 
 --------------------------------------------------------------------
@@ -1372,6 +1463,16 @@ Non-"ui/" components (feature-level, cross-page):
     Company logo as an inline SVG (traced artwork), size-configurable.
     Used by: Splash, Login, Company, SideDrawer, ID Card.
 
+  auth/OtpFlow
+    The two-step one-time-code flow (ask for a code by Employee Code,
+    then enter it). Wording follows the channel the server reports
+    (SMS / WhatsApp / neutral); shows the masked number, expiry and a
+    resend countdown, the server's own error sentences, and always the
+    "use my password" / contact-HR way out. See "One-time code flow"
+    near the top. Props: purpose, submitLabel, channel, extraFields,
+    extraValid, onSubmit, onStepChange, onUsePassword.
+    Used by: Login, Set Password, Forgot Password.
+
   support/ContactBlockCard
     HR's contact details as tappable Call / WhatsApp / Email rows, for a screen
     whose own reply already carries the HR block (askHr.contact, hrContact).
@@ -1576,6 +1677,13 @@ useAuth.ts
   useAuth() (context)
   loginRequest()                             POST /auth/employee-login
   setPasswordRequest()                       POST /auth/set-password
+  loginOptionsRequest()                      GET  /auth/login-options   (otpLogin/otpReset/otpActivate/
+                                                                         passwordLogin + otpChannel 'sms'|'whatsapp' + codeLength 4|6)
+  requestOtp(identifier, purpose)            POST /auth/otp/request     (maskedPhone, expiresInSeconds,
+                                                                         resendAfterSeconds, channel, codeLength)
+  otpLoginRequest()                          POST /auth/otp/login
+  otpResetPasswordRequest()                  POST /auth/otp/reset-password
+  otpActivateRequest()                       POST /auth/otp/activate
   checkAuth()                                GET /auth/me
 
 useCompensation.ts

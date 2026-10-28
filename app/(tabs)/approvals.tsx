@@ -382,7 +382,7 @@ export default function ApprovalsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" backgroundColor={Colors.bgLight} />
+      <StatusBar barStyle="dark-content" />
 
       {/* Top bar */}
       <View style={styles.topBar}>
@@ -434,7 +434,7 @@ export default function ApprovalsScreen() {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={[styles.list, !activeList.length && styles.listCenter]}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} colors={[Colors.primary]} />
+          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
         ListEmptyComponent={
           isLoading ? (

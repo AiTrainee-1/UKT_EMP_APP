@@ -157,9 +157,22 @@ eas build --platform android --profile production
 
 | Profile | Output | Backend it calls | Use for |
 |---|---|---|---|
-| `development` | APK (dev client) | LAN dev server | Attaching a debugger |
+| `development` | APK (dev client) | LAN dev server | Attaching a debugger; testing On-Duty route tracking from Metro |
 | `preview` | APK | LAN dev server | Internal testing before a real release |
 | `production` | APK | `https://hrms.uktextiles.in/api` | Distributing to employees |
+
+**Expo SDK 58.** The project builds on the `sdk-58` EAS image (picked automatically; `eas.json` sets no `image`). The
+`development` profile needs the `expo-dev-client` package, which is not in `package.json` yet:
+
+```powershell
+npx expo install expo-dev-client
+eas build --platform android --profile development
+npx expo start --dev-client
+```
+
+SDK 58 turns R8 minification on for release builds (`android.enableMinifyInReleaseBuilds`). If a `preview`/`production` APK
+misbehaves where the development build did not, that is the first suspect (switch it off with `expo-build-properties` in
+`app.json`). See `docs/SDK_58_UPGRADE.md`.
 
 ---
 

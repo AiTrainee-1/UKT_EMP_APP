@@ -69,7 +69,7 @@ export default function DocumentsScreen() {
           keyExtractor={(item) => item.category}
           contentContainerStyle={[styles.pad, !groups.length && styles.center]}
           refreshControl={
-            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
+            <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
           }
           ListHeaderComponent={
             !!data?.length ? (
@@ -108,7 +108,7 @@ export default function DocumentsScreen() {
                   ))}
                 </View>
               </>
-            ) : null
+            ) : undefined
           }
           ListEmptyComponent={
             <EmptyState

@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { IS_EXPO_GO } from '../lib/expoGoRuntime';
 import api from '../lib/api';
 
 // It's not enough to call expo-notifications' functions conditionally —
@@ -9,7 +10,7 @@ import api from '../lib/api';
 // guarded at call-time — crashed the app before the guard ever ran. `require`
 // inside the function defers evaluation until after isExpoGo has already
 // returned, so Expo Go never touches the module at all.
-const isExpoGo = Constants.appOwnership === 'expo';
+const isExpoGo = IS_EXPO_GO;
 
 const EAS_PROJECT_ID = Constants.expoConfig?.extra?.eas?.projectId;
 

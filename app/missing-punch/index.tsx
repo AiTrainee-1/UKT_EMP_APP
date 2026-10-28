@@ -119,7 +119,7 @@ export default function MissingPunchScreen() {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={[styles.pad, !visibleItems.length && styles.center]}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor={Colors.primary} />
+          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
         }
         ListHeaderComponent={
           <>

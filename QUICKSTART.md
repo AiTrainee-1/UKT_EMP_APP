@@ -7,7 +7,11 @@ cd uktextiles-employee-app
 npx expo start
 ```
 
-Scan the QR code with **Expo Go** app on your Android phone.
+Scan the QR code with **Expo Go** app on your Android phone. The project is on **Expo SDK 58**, so the phone needs the SDK 58
+version of Expo Go (Expo Go only opens projects of its own SDK).
+
+> On-Duty route tracking (background location) does not run in Expo Go; it needs a development build:
+> `npx expo install expo-dev-client`, then `eas build --platform android --profile development` (see `docs/SDK_58_UPGRADE.md`).
 
 > **Phone must be on the same Wi-Fi network as the server (192.168.0.x)**
 

@@ -64,7 +64,8 @@ export function DockTabIcon({
           ],
         }}
       >
-        <MaterialCommunityIcons name={name as any} size={22} color={color} />
+        {/* RN 0.87+ types ColorValue as an opaque type that @expo/vector-icons' `color` does not accept; at runtime it is the tab tint string. */}
+        <MaterialCommunityIcons name={name as any} size={22} color={color as string} />
       </Animated.View>
 
       {/* The dock's running-app dot. */}

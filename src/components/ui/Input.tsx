@@ -5,6 +5,7 @@ import {
   Text,
   StyleSheet,
   TextInputProps,
+  type TextInputInstance,
   TouchableOpacity,
   ViewStyle,
   Platform,
@@ -24,7 +25,7 @@ interface InputProps extends TextInputProps {
   leftIconName?: string;
 }
 
-export const Input = forwardRef<TextInput, InputProps>(
+export const Input = forwardRef<TextInputInstance, InputProps>(
   ({ label, error, containerStyle, rightIcon, isPassword, leftIconName, value, ...props }, ref) => {
     // `Colors` shadows the module import for this component's body.
     const { C: Colors, isDark } = useTheme();

@@ -9,6 +9,9 @@
       ]
     }
   },
+  "files": [
+    "src/types/react-native-legacy-types.ts"
+  ],
   "include": [
     "**/*.ts",
     "**/*.tsx",

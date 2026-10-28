@@ -2,7 +2,7 @@
   "expo": {
     "name": "uktextiles",
     "slug": "ukt-team",
-    "version": "4.0.0",
+    "version": "5.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -25,12 +25,18 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 3,
+      "versionCode": 5,
       "predictiveBackGestureEnabled": false,
       "package": "net.uktex.employee",
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
       ]
     },
     "web": {
@@ -53,13 +59,17 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "UKTextiles uses your location to verify attendance punches at your branch, and — only if HR enables it for your account — to show your live location on the HR dashboard while you're on duty."
+          "locationAlwaysAndWhenInUsePermission": "UKTextiles records your route while you are On-Duty, even when the screen is off or the app is closed, so HR can verify your visit. Nothing is recorded when you are not On-Duty.",
+          "locationWhenInUsePermission": "UKTextiles uses your location to verify attendance punches at your branch and to record your route while you are On-Duty.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "androidForegroundServiceIcon": "./assets/android-icon-monochrome.png"
         }
       ],
       [
         "expo-image-picker",
         {
-          "cameraPermission": "UKTextiles needs camera access to take the two verification photos required when you punch attendance from outside your branch's location.",
+          "cameraPermission": "UKTextiles needs camera access to take the verification photos (one or two, as HR requires) when you punch attendance from outside your branch's location or while On-Duty.",
           "microphonePermission": false
         }
       ],
@@ -81,7 +91,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#F3F8FD"
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "extra": {
       "router": {},

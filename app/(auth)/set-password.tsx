@@ -29,6 +29,7 @@ import { BorderRadius } from '../../src/constants/theme';
 import { loginOptionsRequest, otpActivateRequest, setPasswordRequest } from '../../src/hooks/useAuth';
 import { isServerProblem } from '../../src/lib/supportContact';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
+import { otpCopy } from '../../src/lib/otp';
 
 const schema = z
   .object({
@@ -68,16 +69,24 @@ export default function SetPasswordScreen() {
   const [setupError, setSetupError] = useState<{ identifier: string; message: string } | null>(null);
   // The last attempt got no answer from the server (or a 5xx): show the software-support contact.
   const [serverDown, setServerDown] = useState(false);
-  // Whether a WhatsApp code must confirm the employee first. null until the server answers; if it
+  // Whether a one-time code (SMS or WhatsApp) must confirm the employee first. null until the server answers; if it
   // can't be reached we assume yes - the code request itself then reports the connection problem.
   const [otpActivate, setOtpActivate] = useState<boolean | null>(null);
+  // How codes are delivered ('sms' | 'whatsapp'), as the server reports it; unknown from an older server or before it answers.
+  const [channel, setChannel] = useState<string | null>(null);
+  const [codeLength, setCodeLength] = useState<number | null>(null);
   const [otpStep, setOtpStep] = useState<1 | 2>(1);
   const [otpPassword, setOtpPassword] = useState('');
   const [otpConfirm, setOtpConfirm] = useState('');
+  const copy = otpCopy(channel, codeLength);
 
   useEffect(() => {
     loginOptionsRequest()
-      .then((o) => setOtpActivate(o.otpActivate))
+      .then((o) => {
+        setChannel(o.otpChannel ?? null);
+        setCodeLength(o.codeLength ?? null);
+        setOtpActivate(o.otpActivate);
+      })
       .catch(() => setOtpActivate(true));
   }, []);
 
@@ -174,7 +183,7 @@ export default function SetPasswordScreen() {
       <Text style={styles.headSub}>
         {otpActivate === false
           ? 'First-time setup to activate your employee account.'
-          : 'Confirm your WhatsApp number, then choose your password.'}
+          : copy.activateIntro}
       </Text>
     </View>
   );
@@ -189,7 +198,7 @@ export default function SetPasswordScreen() {
               {otpActivate === false
                 ? 'Verification & Credentials'
                 : otpStep === 1
-                  ? 'Verify your WhatsApp number'
+                  ? copy.activateStepTitle
                   : 'Confirm code & set password'}
             </Text>
             <Text style={styles.stepSub}>
@@ -212,6 +221,8 @@ export default function SetPasswordScreen() {
             <OtpFlow
               purpose="activate"
               submitLabel="Set Password & Activate"
+              channel={channel}
+              codeLength={codeLength}
               extraValid={otpPasswordsOk}
               onStepChange={setOtpStep}
               extraFields={
@@ -250,9 +261,7 @@ export default function SetPasswordScreen() {
                 setTimeout(() => router.replace('/(auth)/login'), 1500);
               }}
             />
-            <Text style={styles.footnoteCentered}>
-              The code goes to the WhatsApp number HR has registered for you.
-            </Text>
+            <Text style={styles.footnoteCentered}>{copy.activateFootnote}</Text>
           </View>
         )}
 
@@ -313,7 +322,7 @@ export default function SetPasswordScreen() {
                   isPassword
                   error={errors.confirmPassword?.message}
                   returnKeyType="done"
-                  onSubmitEditing={handleSubmit(onSubmit)}
+                  onSubmitEditing={() => { void handleSubmit(onSubmit)(); }}
                   leftIconName="shield-check-outline"
                   rightIcon={
                     passwordsMatch ? (

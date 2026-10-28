@@ -102,7 +102,8 @@ function TabItem({
   );
 }
 
-export function GlassTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+// expo-router SDK 58 hands a custom tab bar `emitter` + `navigateToTab` (the old `navigation` prop is gone).
+export function GlassTabBar({ state, descriptors, emitter, navigateToTab }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { C, isDark } = useTheme();
 
@@ -133,11 +134,11 @@ export function GlassTabBar({ state, descriptors, navigation }: BottomTabBarProp
           const badge = typeof options.tabBarBadge === 'number' ? options.tabBarBadge : undefined;
 
           const onPress = () => {
-            const event = navigation.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-            if (!focused && !event.defaultPrevented) navigation.navigate(route.name as never);
+            const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+            if (!focused && !event.defaultPrevented) navigateToTab(route.key);
           };
           const onLongPress = () =>
-            navigation.emit({ type: 'tabLongPress', target: route.key });
+            emitter.emit({ type: 'tabLongPress', target: route.key });
 
           return (
             <TabItem

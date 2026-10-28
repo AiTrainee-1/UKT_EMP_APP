@@ -44,7 +44,7 @@ const ThemeContext = createContext<ThemeValue>({
   isDark: false,
 });
 
-function resolve(mode: ThemeMode, system: ColorSchemeName): 'light' | 'dark' {
+function resolve(mode: ThemeMode, system: ColorSchemeName | null): 'light' | 'dark' {
   if (mode === 'system') return system === 'dark' ? 'dark' : 'light';
   return mode;
 }
@@ -55,7 +55,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // in-app Dark Mode switch; dark stays fully available, just opt-in (same
   // convention as the Employee Web App's ThemeContext.DEFAULT_MODE).
   const [mode, setModeState] = useState<ThemeMode>('light');
-  const [system, setSystem] = useState<ColorSchemeName>(Appearance.getColorScheme() ?? 'unspecified');
+  const [system, setSystem] = useState<ColorSchemeName | null>(Appearance.getColorScheme());
 
   // Restore the saved preference (including an explicit 'system' choice, if
   // the user picked "Auto" before). Until it lands we render 'light' per the
