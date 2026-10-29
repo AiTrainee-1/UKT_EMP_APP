@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, Alert, Platform } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, type ScrollViewInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,28 +12,34 @@ import { FormScrollView } from '../../src/components/FormScrollView';
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
 import { TextArea } from '../../src/components/ui/TextArea';
-import { Badge } from '../../src/components/ui/Badge';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
-import { Colors } from '../../src/constants/colors';
+import { useNow } from '../../src/components/journey/useNow';
+import { JourneyStrip } from '../../src/components/onduty/JourneyStrip';
+import { OnDutyHero } from '../../src/components/onduty/OnDutyHero';
+import { OnDutyStepper } from '../../src/components/onduty/OnDutyStepper';
+import { PunchCapture } from '../../src/components/onduty/PunchCapture';
+import type { LocationState } from '../../src/components/onduty/PunchCapture';
+import { TrackingReadiness } from '../../src/components/onduty/TrackingReadiness';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing } from '../../src/constants/theme';
-import { FontFamily } from '../../src/constants/typography';
 import {
   useOnDutySessionStatus, useSubmitOnDutySessionRequest, useCompleteOnDutySession,
   useSubmitOnDutyPunch, OnDutyPunchVerification, PunchSlot,
 } from '../../src/hooks/useGeoAttendance';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { pipelineSentence, waitingPhrase, waitingText, workflowOff } from '../../src/lib/approval';
+import { buildFlow } from '../../src/lib/onDutyFlow';
+import type { FlowSlot, FlowStep } from '../../src/lib/onDutyFlow';
 import {
-  captureButtonLabel, describePunchError, isPhotoPlanComplete, newPhotoPlan, nextMissingPhoto, photoLabel,
-  requiredPhotoCount, withPhoto, withRequired,
+  describePunchError, isPhotoPlanComplete, newPhotoPlan, requiredPhotoCount, withPhoto, withRequired,
 } from '../../src/lib/onDutyPhotos';
 import type { PhotoPlan } from '../../src/lib/onDutyPhotos';
 import { TrackingIssueBanner } from '../../src/components/tracking/TrackingIssueBanner';
+import { formatClock } from '../../src/tracking/format';
 import { bannerIssues } from '../../src/tracking/onboarding';
 import { trackingRoutes } from '../../src/tracking/routes';
-import { useTrackingHealth } from '../../src/tracking/useTracking';
+import { useSessionJourney, useTrackingHealth } from '../../src/tracking/useTracking';
 import { ApprovalTrail } from '../../src/components/approval/ApprovalTrail';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 
@@ -47,18 +53,11 @@ const STAGE_LABEL: Record<string, string> = {
   rejected: 'Rejected',
 };
 
-function statusBadgeVariant(status: string): 'pending' | 'approved' | 'rejected' {
-  if (status === 'approved') return 'approved';
-  if (status === 'rejected') return 'rejected';
-  return 'pending';
-}
-
 export default function OnDutyScreen() {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
+  const { C } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const queryClient = useQueryClient();
+  const now = useNow();
 
   // HR decides whether a punch needs one photo or two (the server says so in `requiredPhotos` and in /tracking/state's
   // `punchPhotos`). `forceTwo` is set when the server answered PHOTO2_REQUIRED to a one-photo punch (HR switched mid-capture).
@@ -74,7 +73,7 @@ export default function OnDutyScreen() {
   const onDutyFlow = approvalSummary?.onDuty;
   // Geo-tracking: the notice the employee must accept before the first request, the photo policy, and whatever is wrong with
   // the recording right now (the red banner).
-  const { state: trackingState, issues: trackingIssueList } = useTrackingHealth();
+  const { state: trackingState, snapshot: trackingSnapshot, issues: trackingIssueList } = useTrackingHealth();
   const trackingOn = !!trackingState && trackingState.supported && trackingState.enabled;
   const consentMissing = trackingOn && trackingState.consentRequired;
   const redIssues = bannerIssues(trackingIssueList);
@@ -83,11 +82,10 @@ export default function OnDutyScreen() {
   const [destination, setDestination] = useState('');
   const [showNewRequestForm, setShowNewRequestForm] = useState(false);
   const [punchBusy, setPunchBusy] = useState(false);
-  const [punchStage, setPunchStage] = useState<'idle' | 'review'>('idle');
-  // Which of the day's four slots this capture is for. The employee picks it;
-  // it is never inferred from what came before.
+  // The slot being recorded (the employee picks it; it is never inferred from what came before), null when none is.
   const [punchSlot, setPunchSlot] = useState<PunchSlot | null>(null);
   const [punchLocation, setPunchLocation] = useState<{ latitude: number; longitude: number; accuracy?: number; isMocked: boolean } | null>(null);
+  const [locationState, setLocationState] = useState<LocationState>({ status: 'loading' });
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
     message: '', type: 'success', visible: false,
@@ -106,10 +104,9 @@ export default function OnDutyScreen() {
     if (!existing || v.id > existing.id) latestByNumber.set(v.punchNumber, v);
   }
 
-  // Slot state is the server's answer, not a local guess -it also accounts
-  // for punches that arrived from the biometric device or Office Geo Punch,
-  // which this screen can't see. Falls back to a plain 1-4 layout only if
-  // the status call hasn't landed yet.
+  // Slot state is the server's answer, not a local guess - it also accounts for punches that arrived from the biometric
+  // device or Office Geo Punch, which this screen can't see. Falls back to a plain 1-4 layout only if the status call
+  // hasn't landed yet.
   const serverSlots: PunchSlot[] = status?.punchSlots?.length
     ? status.punchSlots
     : ([1, 2, 3, 4] as const).map((n) => ({
@@ -122,7 +119,51 @@ export default function OnDutyScreen() {
     ...slot,
     verification: latestByNumber.get(slot.punchNumber) ?? null,
   }));
-  const openSlots = slots.filter((slot) => slot.available);
+
+  const pending = !!session && !showNewRequestForm && (session.status === 'pending_hod' || session.status === 'pending_hr');
+  const showRequestForm = !session || showNewRequestForm;
+  const ended = !!session && !showNewRequestForm && (session.status === 'completed' || session.status === 'rejected');
+  const active = !!session && !showNewRequestForm && session.status === 'active';
+
+  // The whole day as seven steps (src/lib/onDutyFlow.ts).
+  const flowSlots: FlowSlot[] = slots.map((s) => ({
+    punchNumber: s.punchNumber,
+    punchType: s.punchType,
+    status: s.status,
+    available: s.available,
+    verification: s.verification
+      ? {
+          punchDate: s.verification.punchDate,
+          punchTime: s.verification.punchTime,
+          status: s.verification.status,
+          latitude: s.verification.latitude,
+          longitude: s.verification.longitude,
+          accuracyM: s.verification.accuracyM,
+        }
+      : null,
+  }));
+  const flow = buildFlow({
+    session: session
+      ? {
+          status: session.status,
+          destination: session.destination,
+          isProvisional: session.isProvisional,
+          createdAt: session.createdAt,
+          startedAt: session.startedAt,
+          completedAt: session.completedAt,
+          completionReason: session.completionReason,
+        }
+      : null,
+    slots: flowSlots,
+    composing: showNewRequestForm,
+    approvalWaiting: pending ? (waitingText(session?.approval) ?? STAGE_LABEL[session!.status]) : waitingText(session?.approval),
+    photos: requiredPhotos,
+    trackingOn,
+    trackingProblem: redIssues.length > 0,
+  });
+
+  // The route of this session, for the live strip and the "On-Duty Journey" button.
+  const { journey } = useSessionJourney(session?.id ?? null, !statusLoading && trackingOn && !!session && !showNewRequestForm);
 
   const submitRequest = async () => {
     if (!destination.trim()) return;
@@ -159,21 +200,18 @@ export default function OnDutyScreen() {
     return true;
   };
 
-  const startPunchCapture = async (slot: PunchSlot) => {
-    setPunchSlot(slot);
-    setPunchBusy(true);
+  /** Finds where the employee is (asking for the permission if needed). The punch cannot be confirmed without it. */
+  const acquireLocation = async () => {
+    setLocationState({ status: 'loading' });
     try {
-      // A new capture starts with the photos the server wants right now; the first one is taken at once.
-      setPhotoPlan(newPhotoPlan(requiredPhotos));
-      if (!(await capturePhoto(0))) return;
-
       let locPerm = await Location.getForegroundPermissionsAsync();
       if (!locPerm.granted) locPerm = await Location.requestForegroundPermissionsAsync();
       if (!locPerm.granted) {
-        showToast('Location access is required to record this punch.', 'error');
+        const message = 'Location access is required to record this punch.';
+        setLocationState({ status: 'error', message });
+        showToast(message, 'error');
         return;
       }
-
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       setPunchLocation({
         latitude: pos.coords.latitude,
@@ -181,7 +219,25 @@ export default function OnDutyScreen() {
         accuracy: pos.coords.accuracy ?? undefined,
         isMocked: (pos as { mocked?: boolean }).mocked ?? false,
       });
-      setPunchStage('review');
+      setLocationState({ status: 'ready', accuracy: pos.coords.accuracy ?? undefined });
+    } catch (err: any) {
+      const message = err?.message ?? 'Could not find your location';
+      setLocationState({ status: 'error', message });
+      showToast(message, 'error');
+    }
+  };
+
+  const startPunchCapture = async (slot: PunchSlot) => {
+    setPunchSlot(slot);
+    setPunchLocation(null);
+    setLocationState({ status: 'loading' });
+    setPunchBusy(true);
+    try {
+      // A new capture starts with the photos the server wants right now; the first one is taken at once, then the location
+      // (one permission dialog at a time).
+      setPhotoPlan(newPhotoPlan(requiredPhotos));
+      await capturePhoto(0);
+      await acquireLocation();
     } catch (err: any) {
       showToast(err?.message ?? 'Failed to capture photo/location', 'error');
     } finally {
@@ -189,7 +245,7 @@ export default function OnDutyScreen() {
     }
   };
 
-  /** Take or retake one photo of the review screen ("Photo 1 of 2" / "Photo 2 of 2"). */
+  /** Take or retake one photo ("Photo 1 of 2" / "Photo 2 of 2"). */
   const retakePhoto = async (index: number) => {
     setPunchBusy(true);
     try {
@@ -202,10 +258,10 @@ export default function OnDutyScreen() {
   };
 
   const cancelPunch = () => {
-    setPunchStage('idle');
     setPunchSlot(null);
     setPhotoPlan(newPhotoPlan(requiredPhotos));
     setPunchLocation(null);
+    setLocationState({ status: 'loading' });
   };
 
   const submitPunch = async () => {
@@ -266,53 +322,59 @@ export default function OnDutyScreen() {
     );
   };
 
-  const showRequestForm = !session || showNewRequestForm;
+  // The page opens on the step to work on: when the current step changes (and on the first load) it scrolls to it, so the one
+  // primary action is on screen even on a short phone with four steps above it.
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const place = useRef({ stepper: 0, current: 0 });
+  const scrolledFor = useRef<string | null>(null);
+  const onCurrentLayout = (y: number) => {
+    place.current.current = y;
+    const key = flow.current ?? 'none';
+    if (scrolledFor.current === key) return;
+    scrolledFor.current = key;
+    setTimeout(() => scrollRef.current?.scrollTo({ y: Math.max(0, place.current.stepper + place.current.current - 12), animated: true }), 150);
+  };
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <KeyboardAvoider style={{ flex: 1 }}>
-      <FormScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+  const slotOf = (n: number) => slots.find((s) => s.punchNumber === n) as (typeof slots)[number];
+  const typeLabel = (type: 'IN' | 'OUT') => (type === 'IN' ? 'Check-In' : 'Check-Out');
+  const anyBusy = punchBusy || punchSlot != null || submitPunchMutation.isPending;
 
-        {statusLoading ? (
-          <View style={{ gap: Spacing.base }}>
-            <SkeletonCard lines={3} />
-            <SkeletonCard lines={4} />
-          </View>
-        ) : showRequestForm ? (
-          <View style={[styles.card, { gap: Spacing.sm }]}>
-            <View style={styles.introRow}>
-              <MaterialCommunityIcons name="briefcase-outline" size={22} color={Colors.tertiary} />
-              <Text style={styles.introTitle}>Request On-Duty</Text>
+  // ── what the current step shows under its title ────────────────────────────────────────────────────────────────────
+  const renderBody = (step: FlowStep): React.ReactNode => {
+    if (step.key === 'request' && step.state === 'current') {
+      return (
+        <>
+          <Text style={styles.bodyText}>
+            Enter where you're going. Your session starts as soon as you submit — you can begin punching right
+            away, no waiting for approval. Each punch needs {requiredPhotos === 2 ? 'two photos' : 'a selfie'} and your location.{' '}
+            {pipelineSentence(onDutyFlow, 'The whole day is confirmed afterwards.')}
+          </Text>
+          {trackingOn && (
+            <View style={styles.trackingNote}>
+              <MaterialCommunityIcons name="map-marker-path" size={16} color={C.badgeBlueText} />
+              <Text style={styles.trackingNoteText}>
+                Your route is recorded from the moment you submit until you mark On-Duty Done, record all 4 punches, or the day ends.
+              </Text>
             </View>
-            <Text style={styles.introBody}>
-              Enter where you're going. Your session starts as soon as you submit — you can begin punching right
-              away, no waiting for approval. Each punch needs {requiredPhotos === 2 ? 'two photos' : 'a selfie'} and your location.{' '}
-              {pipelineSentence(onDutyFlow, 'The whole day is confirmed afterwards.')}
-            </Text>
-            {trackingOn && (
-              <View style={styles.trackingNote}>
-                <MaterialCommunityIcons name="map-marker-path" size={16} color={Colors.badgeBlueText} />
-                <Text style={styles.trackingNoteText}>
-                  Your route is recorded from the moment you submit until you mark On-Duty Done, record all 4 punches, or the day ends.
-                </Text>
+          )}
+          {consentMissing && (
+            <TouchableOpacity
+              style={styles.consentGate}
+              onPress={() => router.push(trackingRoutes.setup('consent'))}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+            >
+              <MaterialCommunityIcons name="shield-check-outline" size={20} color={C.statusRed} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.consentGateTitle}>Read and accept the tracking notice first</Text>
+                <Text style={styles.consentGateBody}>You need to accept it once before you can start On-Duty.</Text>
               </View>
-            )}
-            {consentMissing && (
-              <TouchableOpacity
-                style={styles.consentGate}
-                onPress={() => router.push(trackingRoutes.setup('consent'))}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-              >
-                <MaterialCommunityIcons name="shield-check-outline" size={20} color={Colors.statusRed} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.consentGateTitle}>Read and accept the tracking notice first</Text>
-                  <Text style={styles.consentGateBody}>You need to accept it once before you can start On-Duty.</Text>
-                </View>
-                <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.statusRed} />
-              </TouchableOpacity>
-            )}
-            <Text style={styles.reviewLabel}>DESTINATION / PLACE</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={C.statusRed} />
+            </TouchableOpacity>
+          )}
+          {trackingOn && !consentMissing && <TrackingReadiness permission={trackingSnapshot?.health.permission ?? 'unknown'} />}
+          <View style={{ gap: 6 }}>
+            <Text style={styles.fieldLabel}>DESTINATION / PLACE</Text>
             <TextArea
               placeholder="e.g. ABC Textiles — machine inspection"
               value={destination}
@@ -320,275 +382,209 @@ export default function OnDutyScreen() {
               minLength={3}
               maxLength={300}
             />
-            <WorkflowOffNote workflow={onDutyFlow} />
-            <Button
-              title="Submit for Approval"
-              onPress={submitRequest}
-              loading={submitRequestMutation.isPending}
-              disabled={!destination.trim() || workflowOff(onDutyFlow) || consentMissing}
-              style={{ marginTop: Spacing.sm }}
-            />
-            {showNewRequestForm && (
-              <Button title="Cancel" variant="outline" onPress={() => setShowNewRequestForm(false)} />
-            )}
           </View>
-        ) : session && (session.status === 'pending_hod' || session.status === 'pending_hr') ? (
+          <WorkflowOffNote workflow={onDutyFlow} />
+          <Button
+            title="Submit for Approval"
+            onPress={submitRequest}
+            loading={submitRequestMutation.isPending}
+            disabled={!destination.trim() || workflowOff(onDutyFlow) || consentMissing}
+          />
+          {showNewRequestForm && <Button title="Cancel" variant="outline" onPress={() => setShowNewRequestForm(false)} />}
+        </>
+      );
+    }
+
+    if (step.key === 'approval' && session && !showNewRequestForm) {
+      if (pending) {
+        return (
           <>
-          <TrackingIssueBanner issues={redIssues} />
-          <View style={[styles.card, { gap: Spacing.md }]}>
-            <View style={[styles.statusBanner, { backgroundColor: Colors.badgePendingBg }]}>
-              <MaterialCommunityIcons name="clock-outline" size={18} color={Colors.badgePendingText} />
-              <Text style={[styles.statusBannerText, { color: Colors.badgePendingText }]}>
-                {waitingText(session.approval) ?? STAGE_LABEL[session.status]}
-              </Text>
-            </View>
-            <View style={styles.reviewCell}>
-              <Text style={styles.reviewLabel}>Destination</Text>
-              <Text style={styles.reviewValue}>{session.destination}</Text>
-            </View>
             {session.approval ? (
               <ApprovalTrail approval={session.approval} />
-            ) : session.status === 'pending_hr' && session.hodReviewedBy && (
-              <View style={styles.reviewCell}>
-                <Text style={styles.reviewLabel}>Department Head</Text>
-                <Text style={styles.reviewValue}>Approved by {session.hodReviewedBy}</Text>
-              </View>
-            )}
-            <Text style={styles.hintText}>
-              Your On-Duty session will start automatically once this request is approved.
-            </Text>
-            <Button title="Refresh Status" variant="outline" onPress={() => refetchStatus()} />
-          </View>
-          </>
-        ) : session && session.status === 'active' ? (
-          <>
-            <TrackingIssueBanner issues={redIssues} />
-            <View style={[styles.card, { gap: Spacing.sm }]}>
-              <View style={[styles.statusBanner, { backgroundColor: Colors.badgeGreenBg }]}>
-                <MaterialCommunityIcons name="check-circle-outline" size={18} color={Colors.statusGreen} />
-                <Text style={[styles.statusBannerText, { color: Colors.statusGreen }]}>On-Duty session active</Text>
-              </View>
-              {session.isProvisional && (
-                <Text style={styles.hintText}>
-                  {waitingPhrase(session.approval)
-                    ? `Your request is still with ${waitingPhrase(session.approval)}.`
-                    : 'Your request has not been fully approved yet.'}
-                  {' '}That does not hold you up — keep punching as normal; the day is confirmed afterwards.
-                </Text>
-              )}
-              <View style={styles.reviewCell}>
-                <Text style={styles.reviewLabel}>Destination</Text>
-                <Text style={styles.reviewValue}>{session.destination}</Text>
-              </View>
-              {session.startedAt && (
-                <View style={styles.reviewCell}>
-                  <Text style={styles.reviewLabel}>Started</Text>
-                  <Text style={styles.reviewValue}>
-                    {new Date(session.startedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                  </Text>
-                </View>
-              )}
-              <ApprovalTrail approval={session.approval} />
-            </View>
-
-            {punchStage === 'review' && punchSlot ? (
-              <View style={[styles.card, { gap: Spacing.md }]}>
-                <View style={styles.photoHeaderRow}>
-                  <Text style={styles.reviewLabel}>CAMERA & GEO VERIFICATION</Text>
-                  {punchLocation?.accuracy != null && (
-                    <View style={styles.accuracyPill}>
-                      <View style={styles.accuracyDot} />
-                      <Text style={styles.accuracyText}>Accuracy ±{Math.round(punchLocation.accuracy)}m</Text>
-                    </View>
-                  )}
-                </View>
-                {photoPlan.required === 2 && (
-                  <Text style={styles.hintText}>
-                    This punch needs two photos. Take both, check them, retake any that is not clear, then submit.
-                  </Text>
-                )}
-                {photoPlan.uris.map((uri, index) => (
-                  <View key={index} style={{ gap: Spacing.xs }}>
-                    {photoPlan.required === 2 && <Text style={styles.reviewLabel}>{photoLabel(index, 2)}</Text>}
-                    {uri ? (
-                      <>
-                        <View style={styles.photoFrame}>
-                          <Image source={{ uri }} style={styles.photoPreview} accessibilityLabel={photoLabel(index, photoPlan.required)} />
-                          <View style={[styles.photoCorner, styles.photoCornerTL]} />
-                          <View style={[styles.photoCorner, styles.photoCornerTR]} />
-                          <View style={[styles.photoCorner, styles.photoCornerBL]} />
-                          <View style={[styles.photoCorner, styles.photoCornerBR]} />
-                        </View>
-                        <Button
-                          title={photoPlan.required === 2 ? `Retake ${photoLabel(index, 2)}` : 'Retake'}
-                          variant="outline"
-                          onPress={() => retakePhoto(index)}
-                          loading={punchBusy}
-                        />
-                      </>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.photoEmpty}
-                        onPress={() => retakePhoto(index)}
-                        disabled={punchBusy}
-                        activeOpacity={0.8}
-                        accessibilityRole="button"
-                        accessibilityLabel={captureButtonLabel(photoPlan)}
-                      >
-                        <MaterialCommunityIcons name="camera-plus-outline" size={28} color={Colors.primary} />
-                        <Text style={styles.photoEmptyText}>{index === nextMissingPhoto(photoPlan) ? captureButtonLabel(photoPlan) : `Take ${photoLabel(index, photoPlan.required)}`}</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ))}
-                <View style={styles.reviewGrid}>
-                  <View style={styles.reviewCell}>
-                    <Text style={styles.reviewLabel}>Punch</Text>
-                    <Text style={styles.reviewValue}>
-                      #{punchSlot.punchNumber} · {punchSlot.punchType === 'IN' ? 'Check-In' : 'Check-Out'}
-                    </Text>
-                  </View>
-                  <View style={styles.reviewCell}>
-                    <Text style={styles.reviewLabel}>Time</Text>
-                    <Text style={styles.reviewValue}>
-                      {new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.hintText}>
-                  This punch is held until your On-Duty request is confirmed. You don't have to wait for it —
-                  your next punch can go in straight away.
-                </Text>
-                <Button
-                  title="Submit Punch"
-                  onPress={submitPunch}
-                  loading={punchBusy}
-                  disabled={!isPhotoPlanComplete(photoPlan)}
-                />
-                <Button title="Cancel" variant="ghost" onPress={cancelPunch} disabled={punchBusy} />
-              </View>
-            ) : openSlots.length === 0 ? (
-              <View style={[styles.doneBanner]}>
-                <MaterialCommunityIcons name="check-circle-outline" size={16} color={Colors.statusGreen} />
-                <Text style={styles.doneBannerText}>
-                  All 4 punches for today are in. Your session has ended — HR will confirm your punches.
-                </Text>
-              </View>
+            ) : session.status === 'pending_hr' && session.hodReviewedBy ? (
+              <Text style={styles.bodyText}>Department Head: approved by {session.hodReviewedBy}</Text>
             ) : null}
+            <Text style={styles.hintText}>Your On-Duty session will start automatically once this request is approved.</Text>
+            <Button title="Refresh Status" variant="outline" onPress={() => refetchStatus()} />
+          </>
+        );
+      }
+      if (active && session.isProvisional) {
+        return (
+          <Text style={styles.hintText}>
+            {waitingPhrase(session.approval)
+              ? `Your request is still with ${waitingPhrase(session.approval)}.`
+              : 'Your request has not been fully approved yet.'}
+            {' '}That does not hold you up — keep punching as normal; the day is confirmed afterwards.
+          </Text>
+        );
+      }
+      return null;
+    }
 
-            {/* Today's punches -each empty slot is its own entry point, so a
-                missed punch never blocks a later one, and nothing here waits
-                on HR reviewing the punch before it. */}
-            <View style={[styles.card, { gap: Spacing.sm }]}>
-              <Text style={styles.reviewLabel}>TODAY'S PUNCHES</Text>
-              <Text style={styles.hintText}>
-                Tap any open slot to record it. You can submit them in any order.
-              </Text>
-              {slots.map((slot) => {
-                const v = slot.verification;
-                const isRecordedElsewhere = slot.status === 'recorded' && !v;
-                return (
-                  <View key={slot.punchNumber} style={styles.slotRow}>
-                    <View style={styles.slotLeft}>
-                      <Text style={styles.slotNum}>#{slot.punchNumber}</Text>
-                      <Text style={styles.slotType}>
-                        {slot.punchType === 'IN' ? 'Check-In' : 'Check-Out'}
-                      </Text>
-                    </View>
-                    {v ? (
-                      <View style={styles.slotRight}>
-                        <Text style={styles.slotTime}>{v.punchTime.slice(0, 5)}</Text>
-                        <Badge label={v.status} variant={statusBadgeVariant(v.status)} />
-                      </View>
-                    ) : isRecordedElsewhere ? (
-                      <Text style={styles.slotPending}>Already recorded</Text>
-                    ) : (
-                      <TouchableOpacity
-                        style={styles.addPunchBtn}
-                        onPress={() => startPunchCapture(slot)}
-                        disabled={punchBusy || punchStage === 'review'}
-                        activeOpacity={0.75}
-                      >
-                        <MaterialCommunityIcons name="plus-circle-outline" size={16} color={Colors.primary} />
-                        <Text style={styles.addPunchText}>Add my punch</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              })}
+    if (step.punchNumber != null) {
+      const slot = slotOf(step.punchNumber);
+      if (punchSlot && punchSlot.punchNumber === step.punchNumber) {
+        return (
+          <PunchCapture
+            punchNumber={step.punchNumber}
+            punchTypeLabel={typeLabel(slot.punchType)}
+            plan={photoPlan}
+            location={locationState}
+            busy={punchBusy}
+            submitting={submitPunchMutation.isPending}
+            onTakePhoto={retakePhoto}
+            onRefreshLocation={acquireLocation}
+            onConfirm={submitPunch}
+            onCancel={cancelPunch}
+          />
+        );
+      }
+      if (step.state === 'current' && step.recordable) {
+        return (
+          <>
+            <Text style={styles.hintText}>
+              Takes {requiredPhotos === 2 ? 'two photos' : 'a selfie'} and your location. You can record the open punches in any order.
+            </Text>
+            <Button
+              title={`Record Punch ${step.punchNumber} · ${typeLabel(slot.punchType)}`}
+              onPress={() => startPunchCapture(slot)}
+              disabled={anyBusy}
+              icon={<MaterialCommunityIcons name="camera-outline" size={18} color="#fff" />}
+            />
+          </>
+        );
+      }
+    }
+    return null;
+  };
+
+  // ── after the session: how it ended ────────────────────────────────────────────────────────────────────────────────
+  const endCard = ended && session ? (
+    <View style={[styles.card, { gap: Spacing.sm }]}>
+      <View style={styles.endRow}>
+        <MaterialCommunityIcons
+          name={session.status === 'completed' ? 'check-circle' : 'close-circle'}
+          size={26}
+          color={session.status === 'completed' ? C.statusGreen : C.statusRed}
+        />
+        <Text style={styles.endTitle}>
+          On-Duty {session.status === 'completed' ? 'session completed' : 'request rejected'}
+        </Text>
+      </View>
+      {/* How a finished session ended and that the route stopped are the "Done" and "Approval & route tracking" steps above. */}
+      {session.status === 'rejected' && trackingOn && (
+        <Text style={styles.hintText}>Route recording stopped when the request was rejected. What was recorded is kept.</Text>
+      )}
+      {session.approval ? (
+        <ApprovalTrail approval={session.approval} />
+      ) : (
+        <>
+          {session.status === 'rejected' && session.hrReviewComment && (
+            <Text style={styles.hintText}>HR: {session.hrReviewComment}</Text>
+          )}
+          {session.status === 'rejected' && session.hodReviewComment && !session.hrReviewComment && (
+            <Text style={styles.hintText}>Department Head: {session.hodReviewComment}</Text>
+          )}
+        </>
+      )}
+      {trackingOn && !!journey && (
+        <Button
+          title="View On-Duty Journey"
+          onPress={() => router.push(trackingRoutes.journey(journey.id))}
+          icon={<MaterialCommunityIcons name="map-marker-path" size={18} color="#fff" />}
+        />
+      )}
+      <Button title="Submit New On-Duty Request" variant="outline" onPress={() => setShowNewRequestForm(true)} />
+      <Button title="Back to Attendance" variant="ghost" onPress={() => router.back()} />
+    </View>
+  ) : null;
+
+  const subtitle = useMemo(() => {
+    if (!session || showNewRequestForm) return 'Your route is recorded and you can start punching straight away.';
+    const parts: string[] = [];
+    if (session.startedAt) parts.push(`Started ${formatClock(session.startedAt)}`);
+    parts.push(`${flow.punchesDone} of 4 geo-punches`);
+    return parts.join(' · ');
+  }, [session, showNewRequestForm, flow.punchesDone]);
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['bottom']}>
+      <KeyboardAvoider style={{ flex: 1 }}>
+      <FormScrollView ref={scrollRef} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+
+        {statusLoading ? (
+          <View style={{ gap: Spacing.base }}>
+            <SkeletonCard lines={3} />
+            <SkeletonCard lines={4} />
+          </View>
+        ) : (
+          <>
+            <OnDutyHero
+              flow={flow}
+              destination={showRequestForm || !session ? null : session.destination}
+              subtitle={subtitle}
+              outcome={ended && session?.status === 'rejected' ? 'rejected' : ended ? 'completed' : 'running'}
+            />
+
+            {(pending || active) && <TrackingIssueBanner issues={redIssues} />}
+
+            {trackingOn && !showRequestForm && !!session && (
+              <JourneyStrip
+                journey={journey}
+                now={now}
+                problem={redIssues.length ? redIssues[0].title : null}
+                finished={ended}
+                onPress={() => (journey ? router.push(trackingRoutes.journey(journey.id)) : router.push(trackingRoutes.journeys))}
+              />
+            )}
+
+            <View onLayout={(e) => { place.current.stepper = e.nativeEvent.layout.y; }}>
+              <OnDutyStepper
+                steps={flow.steps}
+                renderBody={renderBody}
+                onRecordSlot={(n) => startPunchCapture(slotOf(n))}
+                disabled={anyBusy}
+                onCurrentLayout={onCurrentLayout}
+              />
             </View>
 
-            <Button title="Mark On-Duty as Done" variant="outline" onPress={handleMarkDone} loading={completeMutation.isPending} />
-          </>
-        ) : session ? (
-          <View style={[styles.card, styles.doneCard]}>
-            <MaterialCommunityIcons
-              name={session.status === 'completed' ? 'check-circle' : 'close-circle'}
-              size={40}
-              color={session.status === 'completed' ? Colors.statusGreen : Colors.statusRed}
-            />
-            <Text style={styles.doneTitle}>
-              On-Duty {session.status === 'completed' ? 'session completed' : 'request rejected'}
-            </Text>
-            <Text style={styles.gateBody}>{session.destination}</Text>
-            {session.status === 'completed' && session.completionReason && (
-              <Text style={styles.hintText}>
-                {session.completionReason === 'auto_4th_punch'
-                  ? 'Ended automatically once all 4 punches were recorded.'
-                  : session.completionReason === 'auto_day_end'
-                  ? 'Ended automatically at the end of the day.'
-                  : 'Ended manually.'}
-                {trackingOn ? ' Route recording has stopped.' : ''}
-              </Text>
-            )}
-            {session.status === 'rejected' && trackingOn && (
-              <Text style={styles.hintText}>Route recording stopped when the request was rejected. What was recorded is kept.</Text>
-            )}
-            {session.approval ? (
-              <ApprovalTrail approval={session.approval} style={styles.doneTrail} />
-            ) : (
-              <>
-                {session.status === 'rejected' && session.hrReviewComment && (
-                  <Text style={styles.hintText}>HR: {session.hrReviewComment}</Text>
-                )}
-                {session.status === 'rejected' && session.hodReviewComment && !session.hrReviewComment && (
-                  <Text style={styles.hintText}>Department Head: {session.hodReviewComment}</Text>
-                )}
-              </>
-            )}
-            <Button title="Submit New On-Duty Request" variant="outline" onPress={() => setShowNewRequestForm(true)} style={{ marginTop: Spacing.base }} />
-            <Button title="Back to Attendance" variant="ghost" onPress={() => router.back()} />
-          </View>
-        ) : null}
+            {endCard}
 
-        {/* Where the route went, and whether it is being recorded properly. */}
-        {!statusLoading && trackingState?.supported && (
-          <View style={styles.shortcuts}>
-            <TouchableOpacity
-              style={styles.shortcut}
-              onPress={() => router.push(trackingRoutes.journeys)}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="My journey"
-            >
-              <MaterialCommunityIcons name="map-marker-path" size={20} color={Colors.primary} />
-              <Text style={styles.shortcutText}>My journey</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.shortcut}
-              onPress={() => router.push(trackingRoutes.health)}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel="Tracking health"
-            >
-              <MaterialCommunityIcons
-                name={redIssues.length ? 'alert-circle' : 'shield-check-outline'}
-                size={20}
-                color={redIssues.length ? Colors.statusRed : Colors.primary}
-              />
-              <Text style={styles.shortcutText}>Tracking health</Text>
-            </TouchableOpacity>
-          </View>
+            {active && (
+              <Button title="Mark On-Duty as Done" variant="outline" onPress={handleMarkDone} loading={completeMutation.isPending} />
+            )}
+
+            {/* Where the route went, and whether it is being recorded properly. */}
+            {trackingState?.supported && (
+              <View style={styles.shortcuts}>
+                <TouchableOpacity
+                  style={styles.shortcut}
+                  onPress={() => router.push(trackingRoutes.journeys)}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="On-Duty Journey"
+                >
+                  <MaterialCommunityIcons name="map-marker-path" size={20} color={C.primary} />
+                  <Text style={styles.shortcutText}>On-Duty Journey</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.shortcut}
+                  onPress={() => router.push(trackingRoutes.health)}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Tracking health"
+                >
+                  <MaterialCommunityIcons
+                    name={redIssues.length ? 'alert-circle' : 'shield-check-outline'}
+                    size={20}
+                    color={redIssues.length ? C.statusRed : C.primary}
+                  />
+                  <Text style={styles.shortcutText}>Tracking health</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
         )}
       </FormScrollView>
       </KeyboardAvoider>
@@ -598,98 +594,38 @@ export default function OnDutyScreen() {
   );
 }
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgLight },
-  content: { padding: 16, gap: 16, paddingBottom: 32 },
+const makeStyles = (C: Palette) => StyleSheet.create({
+  safe: { flex: 1, backgroundColor: C.bgLight },
+  content: { padding: 16, gap: 14, paddingBottom: 32 },
 
   card: {
-    backgroundColor: Colors.bgCard,
+    backgroundColor: C.bgCard,
     borderRadius: BorderRadius.xl,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: C.border,
     padding: Spacing.base,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
   },
 
-  introRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  introTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 15, color: Colors.textPrimary },
-  introBody: { fontSize: 12.5, color: Colors.textSecondary, lineHeight: 18 },
+  bodyText: { fontSize: 12.5, color: C.textSecondary, lineHeight: 18 },
+  hintText: { fontSize: 11.5, color: C.textMuted, lineHeight: 16 },
+  fieldLabel: { fontSize: 10, fontWeight: '700', color: C.textMuted, letterSpacing: 0.4 },
 
-  gateCard: { alignItems: 'center' },
-  gateIcon: { marginBottom: Spacing.sm },
-  gateTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 14, color: Colors.textPrimary, textAlign: 'center', marginBottom: 4 },
-  gateBody: { fontSize: 12.5, color: Colors.textSecondary, textAlign: 'center', lineHeight: 18 },
+  endRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  endTitle: { flex: 1, fontSize: 15, fontWeight: '800', color: C.textPrimary },
 
-  doneCard: { alignItems: 'center', paddingVertical: Spacing.xl, gap: Spacing.sm },
-  doneTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 15, color: Colors.textPrimary },
-  doneTrail: { alignSelf: 'stretch', marginTop: Spacing.sm },
-
-  doneBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
-    backgroundColor: Colors.badgeGreenBg, borderRadius: BorderRadius.md, padding: Spacing.base,
-  },
-  doneBannerText: { fontSize: 12, color: Colors.statusGreen, fontWeight: '600', flex: 1, lineHeight: 17 },
-
-  statusBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, borderRadius: BorderRadius.md, padding: Spacing.base },
-  statusBannerText: { fontSize: 12.5, fontWeight: '700', flex: 1 },
-
-  reviewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  reviewCell: { flexBasis: '47%', flexGrow: 1, backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.sm, padding: Spacing.sm },
-  reviewLabel: { fontSize: 10, fontWeight: '700', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 },
-  reviewValue: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary, marginTop: 2 },
-
-  hintText: { fontSize: 11.5, color: Colors.textMuted, lineHeight: 16 },
-
-  trackingNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: Colors.badgeBlueBg, borderRadius: BorderRadius.md, padding: 10 },
-  trackingNoteText: { flex: 1, fontSize: 11.5, color: Colors.badgeBlueText, lineHeight: 16 },
+  trackingNote: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: C.badgeBlueBg, borderRadius: BorderRadius.md, padding: 10 },
+  trackingNoteText: { flex: 1, fontSize: 11.5, color: C.badgeBlueText, lineHeight: 16 },
   consentGate: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    backgroundColor: Colors.badgeRedBg, borderWidth: 1, borderColor: Colors.statusRed, borderRadius: BorderRadius.md, padding: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 44,
+    backgroundColor: C.badgeRedBg, borderWidth: 1, borderColor: C.statusRed, borderRadius: BorderRadius.md, padding: 12,
   },
-  consentGateTitle: { fontSize: 13, fontWeight: '800', color: Colors.badgeRedText },
-  consentGateBody: { fontSize: 11.5, color: Colors.badgeRedText, marginTop: 1 },
+  consentGateTitle: { fontSize: 13, fontWeight: '800', color: C.badgeRedText },
+  consentGateBody: { fontSize: 11.5, color: C.badgeRedText, marginTop: 1 },
+
   shortcuts: { flexDirection: 'row', gap: 10 },
   shortcut: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: Colors.bgCard, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: Colors.border, paddingVertical: 12,
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 48,
+    backgroundColor: C.bgCard, borderRadius: BorderRadius.lg, borderWidth: 1, borderColor: C.border, paddingVertical: 12,
   },
-  shortcutText: { fontSize: 12.5, fontWeight: '700', color: Colors.textPrimary },
-  photoEmpty: {
-    alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 28,
-    borderRadius: BorderRadius.md, borderWidth: 1.5, borderStyle: 'dashed', borderColor: Colors.primary, backgroundColor: Colors.bgSurfaceLow,
-  },
-  photoEmptyText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
-
-  addPunchBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.sm,
-    paddingVertical: 6, paddingHorizontal: 10,
-  },
-  addPunchText: { fontSize: 12, fontWeight: '700', color: Colors.primary },
-
-  photoHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  accuracyPill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.badgeGreenBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
-  accuracyDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: Colors.statusGreen },
-  accuracyText: { fontSize: 10, fontWeight: '800', color: Colors.statusGreen },
-  photoFrame: { position: 'relative' },
-  photoPreview: { width: '100%', aspectRatio: 1.2, borderRadius: BorderRadius.md },
-  photoCorner: { position: 'absolute', width: 22, height: 22, borderColor: Colors.tertiary },
-  photoCornerTL: { top: 8, left: 8, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 6 },
-  photoCornerTR: { top: 8, right: 8, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 6 },
-  photoCornerBL: { bottom: 8, left: 8, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 6 },
-  photoCornerBR: { bottom: 8, right: 8, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 6 },
-
-  slotRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: Spacing.sm, borderBottomWidth: 1, borderBottomColor: Colors.outlineVariant,
-  },
-  slotLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  slotNum: { fontSize: 13, fontWeight: '800', color: Colors.textPrimary },
-  slotType: { fontSize: 12.5, color: Colors.textSecondary, fontWeight: '600' },
-  slotRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  slotTime: { fontSize: 12, color: Colors.textMuted, fontWeight: '600' },
-  slotPending: { fontSize: 12, color: Colors.textMuted, fontWeight: '600' },
+  shortcutText: { fontSize: 12.5, fontWeight: '700', color: C.textPrimary },
 });

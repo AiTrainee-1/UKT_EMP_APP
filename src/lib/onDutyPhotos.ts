@@ -61,6 +61,39 @@ export function captureButtonLabel(plan: PhotoPlan): string {
   return plan.required === 2 ? `Take ${photoLabel(i, 2)}` : 'Take photo';
 }
 
+export interface PhotoSlotView {
+  index: number;
+  /** "Photo 1 of 2" / "Photo 2 of 2", or "Photo" for a one-photo punch. */
+  label: string;
+  uri: string | null;
+  /** The slot to fill next (the first empty one). */
+  isNext: boolean;
+}
+
+/** One view per slot, for the "Photo 1 of 2" / "Photo 2 of 2" tiles. A one-photo punch is the same component with one tile. */
+export function photoSlotViews(plan: PhotoPlan): PhotoSlotView[] {
+  const next = nextMissingPhoto(plan);
+  return plan.uris.map((uri, index) => ({ index, label: photoLabel(index, plan.required), uri, isNext: index === next }));
+}
+
+/** "0 of 2 photos taken" / "1 of 2 photos taken" / "2 of 2 photos taken"; "Photo taken" / "No photo yet" for a one-photo punch. */
+export function photoProgressText(plan: PhotoPlan): string {
+  const taken = plan.uris.filter(Boolean).length;
+  if (plan.required === 1) return taken ? 'Photo taken' : 'No photo yet';
+  return `${taken} of ${plan.required} photos taken`;
+}
+
+/**
+ * Why the confirm button is still disabled, in words ("Take Photo 2 of 2 to continue"), or null when the punch can be sent:
+ * every required photo is taken AND the location is known.
+ */
+export function confirmBlocker(plan: PhotoPlan, hasLocation: boolean): string | null {
+  const i = nextMissingPhoto(plan);
+  if (i != null) return plan.required === 2 ? `Take ${photoLabel(i, 2)} to continue` : 'Take the photo to continue';
+  if (!hasLocation) return 'Waiting for your location';
+  return null;
+}
+
 export interface PunchFormInput {
   latitude: number;
   longitude: number;

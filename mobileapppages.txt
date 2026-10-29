@@ -67,6 +67,10 @@ app/
   missing-punch/
     _layout.tsx
     index.tsx                    -> /missing-punch
+  my-journeys/
+    _layout.tsx
+    index.tsx                    -> /my-journeys               ("On-Duty Journey": the list)
+    [id].tsx                     -> /my-journeys/[id]          (one journey: map, activity, geo-punches)
   on-duty/
     _layout.tsx
     index.tsx                    -> /on-duty
@@ -1038,33 +1042,43 @@ PAGE: On-Duty
 --------------------------------------------------------------------
 Route:    /on-duty
 File:     app/on-duty/index.tsx
-Purpose:  Off-site work session — request a destination, then
-          capture selfie+GPS punches for up to 4 slots over the day.
+Purpose:  Off-site work session as ONE seven-step process: request a
+          destination, approval + route tracking, four geo-punches
+          (selfie(s) + GPS each), done.
 
-UI (branches entirely on session state):
-  - No session / new request: destination TextArea, "Submit for
-    Approval" button
-  - Pending (HOD or HR): status banner, destination (read-only),
-    HOD-approved note if applicable, "Refresh Status" button
-  - Active:
-      * status banner (+ provisional note if still pending approval
-        upstream)
-      * destination/start-time cells
-      * punch-review card (photo preview, punch#/time, Retake/
-        Submit/Cancel) shown mid-capture
-      * "All 4 punches in" done banner
-      * "Today's Punches" list — 4 slots, tap an open slot to
-        capture via camera + GPS
-      * "Mark On-Duty as Done" button
-  - Completed / Rejected: done card with icon, destination,
-    completion/rejection reason, "Submit New On-Duty Request" +
-    "Back to Attendance" buttons
-  - Toast throughout
+UI (one vertical stepper; src/lib/onDutyFlow.ts decides every step):
+  - Hero: destination, "Step N of 7" and a 7-segment progress bar
+    (blue while it runs, green when completed, red when rejected)
+  - Red TrackingIssueBanner (pending/active) + a compact live journey
+    strip (moving / still / offline / location off, last position,
+    running time, breaks, distance; tap = the journey)
+  - Stepper: 1 Request  2 Approval & route tracking  3-6 Geo-punch
+    1..4  7 Done. Finished steps show a check, time, place (and the
+    punch's Approved/Pending/Rejected chip); the CURRENT step is a
+    highlighted card holding the one primary action; the rest are
+    muted. The page scrolls to the current step on open.
+      * 1 current (no session / new request): intro + approval
+        pipeline sentence, tracking note, consent gate, location
+        permission line, destination TextArea, "Submit for Approval"
+      * 2 current (older backend, pending_hod/pending_hr): waiting
+        text, approval trail / HOD-approved note, "Refresh Status"
+      * punch current: "Record Punch N" -> capture panel: "Photo 1 of 2"
+        / "Photo 2 of 2" tiles (one tile when HR asks for one photo),
+        retake per tile, location pill (accuracy, tap to retry), ONE
+        "Confirm Punch N" button disabled until every photo and the
+        location are there. Any other open punch offers "Record now"
+        (any order). A punch HR rejected is open again.
+      * 7 current: all 4 punches in
+  - Active: "Mark On-Duty as Done" button
+  - Completed / Rejected: how it ended, approval trail / HR and HOD
+    comments, "View On-Duty Journey", "Submit New On-Duty Request",
+    "Back to Attendance"
+  - Shortcuts: On-Duty Journey, Tracking health. Toast throughout.
 
 Actions:
   - Submit a destination request
-  - Capture a punch (camera photo + GPS) per open slot
-  - Retake / submit / cancel a captured punch
+  - Capture a punch (camera photo(s) + GPS) per open slot
+  - Retake any photo / confirm / cancel a punch
   - Mark the session done early
   - Start a new request after completion/rejection
   - Refresh status
@@ -1074,11 +1088,43 @@ API calls:
   - useSubmitOnDutySessionRequest() -> POST /on-duty-sessions/request
   - useCompleteOnDutySession() -> POST /on-duty-sessions/complete
   - useSubmitOnDutyPunch() -> POST /on-duty-sessions/punch
-    (multipart form, includes the captured photo)
+    (multipart form: photo, and photo2 when HR requires two)
+  - useSessionJourney() -> GET /tracking/my-journeys (the live strip)
 
 Conditional content:
-  - The whole UI branches on session.status: none / pending_hod /
-    pending_hr / active / completed / rejected
+  - Steps branch on session.status: none / pending_hod / pending_hr /
+    active / completed / rejected, and on the server's requiredPhotos
+
+
+--------------------------------------------------------------------
+PAGE: On-Duty Journey
+--------------------------------------------------------------------
+Route:    /my-journeys   and   /my-journeys/[id]
+Files:    app/my-journeys/index.tsx, app/my-journeys/[id].tsx
+Entry:    Home quick-action tile "On-Duty Journey" (right after
+          On-Duty), side drawer "On-Duty Journey", On-Duty page.
+
+List (/my-journeys): filter pills (All / 7 / 30 / 90 days); the
+  journey in progress as a highlighted card (live status, running
+  time, last position); history grouped Today / Yesterday / date, each
+  card: date tile, destination, start - end, status chip (In progress /
+  Completed / Ended by day-end / Rejected / Closed by HR), total time,
+  distance, breaks + total, geo-punches (n/4). Pull to refresh,
+  skeleton, empty and error (retry) states.
+
+Detail (/my-journeys/[id]): summary tiles (total time, travelling,
+  break time, breaks, distance, no signal), the route map (Leaflet in a
+  WebView: numbered break pins amber < 15 min / purple >= 15 min, one
+  green for start and end, blue route, grey dashed no-location),
+  ACTIVITY timeline (Journey started -> Break taken -> Journey resumed
+  -> ... -> On-duty completed; rows open for details, "Show on map",
+  "Open in Google Maps"), GEO-PUNCH records (number, time, status,
+  place, the photos, HR note).
+
+API calls:
+  - useMyJourneys() -> GET /tracking/my-journeys (punchCount per item)
+  - useJourney() -> GET /tracking/journeys/{id} (punches[])
+  - punch photos: GET /on-duty-punch-verifications/{id}/photo?n=1|2
 
 
 --------------------------------------------------------------------
@@ -1591,6 +1637,8 @@ Group: Home & Attendance
   - Attendance Request       -> /geo-punch
   - On-Duty                  -> /on-duty
     (badge if a session is pending_hod/pending_hr/active)
+  - On-Duty Journey           -> /my-journeys
+  - Tracking Health           -> /tracking-setup/health
   - Outpass                  -> /outpass
   - Live Tracking             -> /geo-tracking
   - My Shift                  -> /shift
@@ -1629,33 +1677,34 @@ Footer:
 --------------------------------------------------------------------
 4c. Home Screen "Quick Actions" grid (app/(tabs)/home.tsx)
 --------------------------------------------------------------------
-21 tiles total (20 for a production employee: Compensation is staff only).
+22 tiles total (21 for a production employee: Compensation is staff only).
 First 6 shown by default; a "Show all N / Show less" toggle reveals the rest.
 
 TOP SIX (shown by default):
   1. On-Duty              briefcase-outline               -> /on-duty              #815600
-  2. Missing Punch        fingerprint                      -> /missing-punch        #5e35b1
-  3. Leave                umbrella-outline                 -> /(tabs)/leave         #8e44ad
-  4. Permission           hand-pointing-right               -> /requests             #2980b9
-  5. Outpass              door-open                         -> /outpass              #009688
-  6. Salary Slips         cash-multiple                     -> /salary               #27ae60
+  2. On-Duty Journey      map-marker-path                  -> /my-journeys          #0e7490
+  3. Missing Punch        fingerprint                      -> /missing-punch        #5e35b1
+  4. Leave                umbrella-outline                 -> /(tabs)/leave         #8e44ad
+  5. Permission           hand-pointing-right               -> /requests             #2980b9
+  6. Outpass              door-open                         -> /outpass              #009688
 
 BEHIND "Show all":
-  7.  Attendance           calendar-check-outline            -> /(tabs)/attendance    theme primary
-  8.  Attendance Request   map-marker-radius-outline          -> /geo-punch            #0891b2
-  9.  My Shift             clock-outline                      -> /shift                #e67e22
-  10. Live Tracking        crosshairs-gps                     -> /geo-tracking         #0369a1
-  11. Advances             bank-transfer                      -> /settlement           #7f8c8d
-  12. Digital ID Card      card-account-details-outline        -> /idcard               #2c3e50
-  13. My Documents         folder-outline                      -> /documents            #00897b
-  14. Holidays             flag-outline                        -> /holidays             #c0392b
-  15. Compensation         briefcase-clock-outline (staff only) -> /compensation        #047857
-  16. HOD Assignment       shield-account-outline               -> /hod-assignment      #6D28D9
-  17. Notifications        bell-outline                        -> /(tabs)/notifications #735c00
-  18. Chat                 chat-outline                        -> /chat                 #0984e3
-  19. My Profile           account-circle-outline               -> /(tabs)/profile      #2c3e50
-  20. About Company        office-building-outline               -> /company            theme primary
-  21. Resignation          file-sign                             -> /resignation/warning #c62828
+  7.  Salary Slips         cash-multiple                     -> /salary               #27ae60
+  8.  Attendance           calendar-check-outline            -> /(tabs)/attendance    theme primary
+  9.  Attendance Request   map-marker-radius-outline          -> /geo-punch            #0891b2
+  10. My Shift             clock-outline                      -> /shift                #e67e22
+  11. Live Tracking        crosshairs-gps                     -> /geo-tracking         #0369a1
+  12. Advances             bank-transfer                      -> /settlement           #7f8c8d
+  13. Digital ID Card      card-account-details-outline        -> /idcard               #2c3e50
+  14. My Documents         folder-outline                      -> /documents            #00897b
+  15. Holidays             flag-outline                        -> /holidays             #c0392b
+  16. Compensation         briefcase-clock-outline (staff only) -> /compensation        #047857
+  17. HOD Assignment       shield-account-outline               -> /hod-assignment      #6D28D9
+  18. Notifications        bell-outline                        -> /(tabs)/notifications #735c00
+  19. Chat                 chat-outline                        -> /chat                 #0984e3
+  20. My Profile           account-circle-outline               -> /(tabs)/profile      #2c3e50
+  21. About Company        office-building-outline               -> /company            theme primary
+  22. Resignation          file-sign                             -> /resignation/warning #c62828
 
 
 ====================================================================

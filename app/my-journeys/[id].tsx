@@ -1,127 +1,157 @@
 import React, { useMemo, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, type LayoutChangeEvent, type ScrollViewInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+import { ActivityTimeline } from '../../src/components/journey/ActivityTimeline';
+import { PunchRecords } from '../../src/components/journey/PunchRecords';
+import { StatusChip } from '../../src/components/journey/StatusChip';
+import { useNow } from '../../src/components/journey/useNow';
+import { toneStyle } from '../../src/components/journey/tone';
 import { JourneyMap } from '../../src/components/tracking/JourneyMap';
 import type { JourneyMapHandle } from '../../src/components/tracking/JourneyMap';
 import { TrackingHeader } from '../../src/components/tracking/TrackingHeader';
+import { Button } from '../../src/components/ui/Button';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
-import { BorderRadius, Spacing } from '../../src/constants/theme';
+import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
-import { endReasonLabel, formatClock, formatDateTime, formatDistance, formatDuration, formatSpeedKmh } from '../../src/tracking/format';
-import { buildMapPayload, buildTimeline, summaryCardInputs } from '../../src/tracking/journeyModel';
-import type { TimelineItem } from '../../src/tracking/journeyModel';
+import { buildActivity, journeyTiles, TONE_COLOR } from '../../src/tracking/activity';
+import type { Tone } from '../../src/tracking/activity';
+import { formatDateTime } from '../../src/tracking/format';
+import { endNote, journeyChip, lastUpdateText, liveStatus } from '../../src/tracking/journeyList';
+import { buildMapPayload } from '../../src/tracking/journeyModel';
 import { useJourney } from '../../src/tracking/useTracking';
 import { trackingRoutes } from '../../src/tracking/routes';
 
+const MAP_HEIGHT = 300;
+
 export default function JourneyDetailScreen() {
-  const { C: Colors } = useTheme();
+  const { C } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { id } = useLocalSearchParams<{ id: string }>();
   const journeyId = Number(id);
+  const scroll = useRef<ScrollViewInstance>(null);
   const mapRef = useRef<JourneyMapHandle>(null);
+  const mapY = useRef(0);
+  const now = useNow();
 
   const { data: journey, isLoading, isError, refetch, isRefetching } = useJourney(Number.isFinite(journeyId) ? journeyId : null);
 
   const payload = useMemo(() => (journey ? buildMapPayload(journey) : null), [journey]);
-  const timeline = useMemo(() => (journey ? buildTimeline(journey) : []), [journey]);
+  const rows = useMemo(() => (journey ? buildActivity(journey, now) : []), [journey, now]);
+  const tiles = useMemo(() => (journey ? journeyTiles(journey) : []), [journey]);
   const hasMap = !!payload && (payload.route.length > 1 || payload.stops.length > 0 || payload.events.length > 0);
 
-  const cards = journey
-    ? summaryCardInputs(journey.track).map((c) => ({
-        key: c.key,
-        label: c.label,
-        value: 'seconds' in c ? formatDuration(c.seconds) : 'meters' in c ? formatDistance(c.meters) : String(c.count),
-      }))
-    : [];
-
-  const onItem = (item: TimelineItem) => {
-    if (item.type === 'segment') {
-      const s = item.seg;
-      const lat = s.centerLat ?? s.startLat ?? s.polyline[0]?.[0] ?? null;
-      const lng = s.centerLng ?? s.startLng ?? s.polyline[0]?.[1] ?? null;
-      if (lat != null && lng != null) mapRef.current?.focus(lat, lng);
-    } else if (item.event.latitude != null && item.event.longitude != null) {
-      mapRef.current?.focus(item.event.latitude, item.event.longitude);
-    }
+  /** Scrolls up to the map and flies it to a place (a timeline row or a geo-punch). */
+  const showOnMap = (lat: number, lng: number) => {
+    scroll.current?.scrollTo({ y: Math.max(0, mapY.current - 8), animated: true });
+    mapRef.current?.focus(lat, lng);
   };
+
+  const track = journey?.track;
+  const chip = track ? journeyChip(track) : null;
+  const live = track?.status === 'active' ? liveStatus(track.state) : null;
+  const note = track ? endNote(track) : '';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <TrackingHeader
-        title={journey?.track.destination || 'Journey'}
-        subtitle={journey ? `${formatDateTime(journey.track.startedAt)}${journey.track.status === 'active' ? ' · recording' : ''}` : undefined}
+        title={track?.destination || 'On-Duty Journey'}
+        subtitle={track ? formatDateTime(track.startedAt) : undefined}
         onBack={() => (router.canGoBack() ? router.back() : router.replace(trackingRoutes.journeys))}
       />
       <ScrollView
+        ref={scroll}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} colors={[C.primary]} tintColor={C.primary} />}
       >
         {isLoading ? (
           <>
-            <SkeletonCard lines={3} />
+            <SkeletonCard lines={2} />
             <SkeletonCard lines={5} />
+            <SkeletonCard lines={4} />
           </>
-        ) : isError || !journey || !payload ? (
-          <EmptyState icon="map-marker-off-outline" title="Journey not found" subtitle="It may still be uploading from the phone. Pull down to try again." />
+        ) : isError || !journey || !payload || !track ? (
+          <View style={styles.stateBox}>
+            <View style={styles.stateArt}>
+              <EmptyState icon="map-marker-off-outline" title="Journey not found" subtitle="It may still be uploading from the phone. Pull down to try again." />
+            </View>
+            <Button title="Try again" variant="outline" onPress={() => { void refetch(); }} loading={isRefetching} style={styles.retry} />
+          </View>
         ) : (
           <>
-            <View style={styles.grid}>
-              {cards.map((c) => (
-                <View key={c.key} style={styles.cardSmall}>
-                  <Text style={[styles.cardValue, TabularNums]}>{c.value}</Text>
-                  <Text style={styles.cardLabel}>{c.label}</Text>
-                </View>
-              ))}
+            <View style={styles.statusRow}>
+              {chip && <StatusChip label={chip.label} tone={chip.tone} dot />}
+              {live && (
+                <StatusChip label={live.label} tone={live.tone} />
+              )}
+              {!!note && <Text style={styles.statusNote} numberOfLines={2}>{note}</Text>}
             </View>
-
-            {journey.track.status === 'ended' && !!endReasonLabel(journey.track.endReason) && (
-              <View style={styles.note}>
-                <MaterialCommunityIcons name="flag-checkered" size={16} color={Colors.textMuted} />
-                <Text style={styles.noteText}>{endReasonLabel(journey.track.endReason)}</Text>
-              </View>
-            )}
-            {journey.track.hasMock && (
-              <View style={[styles.note, { backgroundColor: Colors.badgeRedBg }]}>
-                <MaterialCommunityIcons name="alert-outline" size={16} color={Colors.statusRed} />
-                <Text style={[styles.noteText, { color: Colors.badgeRedText }]}>A fake location was detected during this journey.</Text>
-              </View>
-            )}
-
-            {hasMap ? (
-              <JourneyMap ref={mapRef} payload={payload} height={320} />
-            ) : (
-              <View style={styles.empty}>
-                <MaterialCommunityIcons name="map-marker-question-outline" size={28} color={Colors.textMuted} />
-                <Text style={styles.noteText}>
-                  No locations have reached the office for this journey yet. They upload when your phone has internet.
+            {live && (
+              <View style={styles.liveBox}>
+                <MaterialCommunityIcons name="crosshairs-gps" size={16} color={C.textMuted} />
+                <Text style={styles.liveText}>
+                  {lastUpdateText(track, now)}
+                  {live.hint ? `. ${live.hint}` : ''}
                 </Text>
               </View>
             )}
-
-            <View style={styles.legend}>
-              <Legend color="#059669" label="Start" styles={styles} />
-              <Legend color="#DC2626" label="End / last place" styles={styles} />
-              <Legend color="#1E3A8A" label="Stop (numbered)" styles={styles} />
-              <Legend color="#EA580C" label="No location" styles={styles} dashed />
-            </View>
-
-            <Text style={styles.section}>TIMELINE</Text>
-            {timeline.length === 0 ? (
-              <Text style={styles.noteText}>The timeline fills in as locations are processed.</Text>
-            ) : (
-              <View style={styles.timeline}>
-                {timeline.map((item, i) => (
-                  <TimelineRow key={`${item.type}-${i}`} item={item} onPress={() => onItem(item)} styles={styles} Colors={Colors} />
-                ))}
+            {track.hasMock && (
+              <View style={[styles.banner, { backgroundColor: C.badgeRedBg }]}>
+                <MaterialCommunityIcons name="alert-outline" size={16} color={C.statusRed} />
+                <Text style={[styles.bannerText, { color: C.badgeRedText }]}>A fake location was detected during this journey.</Text>
               </View>
             )}
+
+            <View style={styles.tiles}>
+              {tiles.map((t) => {
+                const accent = t.tone === 'neutral' ? C.primary : toneStyle(t.tone as Tone, C).solid;
+                return (
+                  <View key={t.key} style={styles.tile}>
+                    <View style={[styles.tileBar, { backgroundColor: accent }]} />
+                    <Text style={[styles.tileValue, TabularNums]} numberOfLines={1} adjustsFontSizeToFit>{t.value}</Text>
+                    <Text style={styles.tileLabel} numberOfLines={1}>{t.label}</Text>
+                    {!!t.hint && <Text style={styles.tileHint} numberOfLines={2}>{t.hint}</Text>}
+                  </View>
+                );
+              })}
+            </View>
+
+            <View onLayout={(e: LayoutChangeEvent) => { mapY.current = e.nativeEvent.layout.y; }} style={{ gap: 10 }}>
+              {hasMap ? (
+                <JourneyMap ref={mapRef} payload={payload} height={MAP_HEIGHT} />
+              ) : (
+                <View style={styles.noMap}>
+                  <MaterialCommunityIcons name="map-marker-question-outline" size={28} color={C.textMuted} />
+                  <Text style={styles.noMapText}>No locations have reached the office for this journey yet. They upload when your phone has internet.</Text>
+                </View>
+              )}
+              <View style={styles.legend}>
+                <Legend color={TONE_COLOR.green} label="Start / end" styles={styles} />
+                <Legend color={TONE_COLOR.amber} label="Break under 15 min" styles={styles} />
+                <Legend color={TONE_COLOR.purple} label="Break 15 min or more" styles={styles} />
+                <Legend color={TONE_COLOR.blue} label="Travelling" styles={styles} line />
+                <Legend color={TONE_COLOR.grey} label="No location" styles={styles} dashed />
+                {track.hasMock && <Legend color={TONE_COLOR.red} label="Fake location" styles={styles} />}
+              </View>
+            </View>
+
+            <View style={styles.sectionRow}>
+              <Text style={styles.section}>Activity</Text>
+              <Text style={styles.sectionHint}>Tap a row for details</Text>
+            </View>
+            <ActivityTimeline rows={rows} onShowOnMap={showOnMap} />
+
+            <View style={styles.sectionRow}>
+              <Text style={styles.section}>Geo-punch records</Text>
+              <Text style={styles.sectionHint}>{journey.punches.length ? `${journey.punches.length} ${journey.punches.length === 1 ? 'record' : 'records'}` : ''}</Text>
+            </View>
+            <PunchRecords punches={journey.punches} onShowOnMap={showOnMap} />
 
             {journey.device && (
               <Text style={styles.deviceText}>
@@ -137,94 +167,62 @@ export default function JourneyDetailScreen() {
   );
 }
 
-function Legend({ color, label, styles, dashed }: { color: string; label: string; styles: ReturnType<typeof makeStyles>; dashed?: boolean }) {
+function Legend({ color, label, styles, dashed, line }: { color: string; label: string; styles: ReturnType<typeof makeStyles>; dashed?: boolean; line?: boolean }) {
   return (
     <View style={styles.legendItem}>
-      <View style={[dashed ? styles.legendDash : styles.legendDot, dashed ? { borderColor: color } : { backgroundColor: color }]} />
+      {dashed ? (
+        <View style={[styles.legendDash, { borderColor: color }]} />
+      ) : line ? (
+        <View style={[styles.legendLine, { backgroundColor: color }]} />
+      ) : (
+        <View style={[styles.legendDot, { backgroundColor: color }]} />
+      )}
       <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 }
 
-function TimelineRow({
-  item,
-  onPress,
-  styles,
-  Colors,
-}: {
-  item: TimelineItem;
-  onPress: () => void;
-  styles: ReturnType<typeof makeStyles>;
-  Colors: Palette;
-}) {
-  let icon = 'circle-small';
-  let tone = Colors.textMuted;
-  let meta = '';
-  if (item.type === 'segment') {
-    const s = item.seg;
-    if (s.kind === 'stop') {
-      icon = 'pause-circle';
-      tone = Colors.primary;
-      meta = `${formatClock(s.startedAt)} - ${formatClock(s.endedAt)} · ${formatDuration(s.durationS)}`;
-    } else if (s.kind === 'gap') {
-      icon = 'signal-off';
-      tone = Colors.statusOrange;
-      meta = `${formatClock(s.startedAt)} - ${formatClock(s.endedAt)} · ${formatDuration(s.durationS)}`;
-    } else {
-      icon = 'walk';
-      tone = Colors.statusGreen;
-      meta = `${formatClock(s.startedAt)} - ${formatClock(s.endedAt)} · ${formatDistance(s.distanceM)}${s.avgSpeedKmh != null ? ` · avg ${formatSpeedKmh(s.avgSpeedKmh)}` : ''}`;
-    }
-  } else {
-    icon = item.problem ? 'alert-circle-outline' : 'information-outline';
-    tone = item.problem ? Colors.statusRed : Colors.textMuted;
-    meta = formatClock(item.event.startedAt) + (item.event.endedAt ? ` - ${formatClock(item.event.endedAt)}` : '');
-  }
-  const detail = item.type === 'segment' ? item.detail : '';
-  return (
-    <TouchableOpacity style={styles.row} onPress={onPress} activeOpacity={0.7} accessibilityRole="button">
-      <View style={[styles.rowIcon, { backgroundColor: `${tone}1A` }]}>
-        <MaterialCommunityIcons name={icon as any} size={18} color={tone} />
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.rowTitle}>{item.title}</Text>
-        {!!meta && <Text style={styles.rowMeta}>{meta}</Text>}
-        {!!detail && <Text style={styles.rowMeta}>{detail}</Text>}
-      </View>
-    </TouchableOpacity>
-  );
-}
-
-const makeStyles = (Colors: Palette) =>
+const makeStyles = (C: Palette) =>
   StyleSheet.create({
-    safe: { flex: 1, backgroundColor: Colors.bgLight },
-    content: { padding: 16, gap: 12, paddingBottom: 32 },
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    cardSmall: {
-      flexBasis: '23%',
+    safe: { flex: 1, backgroundColor: C.bgLight },
+    content: { padding: 16, gap: 14, paddingBottom: 40, flexGrow: 1 },
+    stateBox: { gap: 8, paddingTop: 16 },
+    stateArt: { height: 250 }, // EmptyState fills its parent (flex: 1), so it is given a height inside the scrolling page
+    retry: { alignSelf: 'center', minWidth: 200 },
+    statusRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+    statusNote: { fontSize: 12, color: C.textMuted, flexShrink: 1 },
+    liveBox: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: C.bgSurfaceLow, borderRadius: BorderRadius.md, padding: 10 },
+    liveText: { flex: 1, fontSize: 12, lineHeight: 17, color: C.textSecondary },
+    banner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: BorderRadius.md, padding: 10 },
+    bannerText: { flex: 1, fontSize: 12, lineHeight: 17 },
+    tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    tile: {
+      flexBasis: '31%',
       flexGrow: 1,
-      minWidth: 72,
-      backgroundColor: Colors.bgCard,
+      minWidth: 96,
+      backgroundColor: C.bgCard,
       borderRadius: BorderRadius.lg,
       borderWidth: 1,
-      borderColor: Colors.border,
-      padding: 10,
+      borderColor: C.border,
+      paddingHorizontal: 11,
+      paddingTop: 12,
+      paddingBottom: 10,
+      overflow: 'hidden',
     },
-    cardValue: { fontFamily: FontFamily.displayBold, fontSize: 15, color: Colors.textPrimary },
-    cardLabel: { fontSize: 10.5, color: Colors.textMuted, marginTop: 2 },
-    note: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.md, padding: 10 },
-    noteText: { flex: 1, fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
-    empty: { alignItems: 'center', gap: 8, backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.border, padding: 24 },
-    legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    tileBar: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4 },
+    tileValue: { fontFamily: FontFamily.displayBold, fontSize: 17, color: C.textPrimary },
+    tileLabel: { fontSize: 11, color: C.textMuted, marginTop: 2 },
+    tileHint: { fontSize: 10, color: C.textMuted, marginTop: 2 },
+    noMap: { alignItems: 'center', gap: 8, backgroundColor: C.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: C.border, padding: 24 },
+    noMapText: { fontSize: 12, color: C.textSecondary, lineHeight: 17, textAlign: 'center' },
+    legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 6 },
     legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    legendDot: { width: 10, height: 10, borderRadius: 5 },
+    legendDot: { width: 11, height: 11, borderRadius: 6 },
+    legendLine: { width: 16, height: 4, borderRadius: 2 },
     legendDash: { width: 16, height: 0, borderTopWidth: 2, borderStyle: 'dashed' },
-    legendText: { fontSize: 11, color: Colors.textMuted },
-    section: { color: Colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginTop: 4 },
-    timeline: { backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: Spacing.base },
-    row: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: Colors.outlineVariant },
-    rowIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-    rowTitle: { fontSize: 13, fontWeight: '800', color: Colors.textPrimary },
-    rowMeta: { fontSize: 11.5, color: Colors.textMuted, marginTop: 1, lineHeight: 16 },
-    deviceText: { fontSize: 11, color: Colors.textMuted, textAlign: 'center', marginTop: 4 },
+    legendText: { fontSize: 11.5, color: C.textMuted },
+    sectionRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 6 },
+    section: { fontFamily: FontFamily.headlineSemibold, fontSize: 16, color: C.textPrimary },
+    sectionHint: { fontSize: 11.5, color: C.textMuted },
+    deviceText: { fontSize: 11, color: C.textMuted, textAlign: 'center', marginTop: 4 },
   });

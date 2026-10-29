@@ -205,6 +205,7 @@ export function useSubmitOnDutySessionRequest() {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
       queryClient.invalidateQueries({ queryKey: ['tracking-state'] });
+      queryClient.invalidateQueries({ queryKey: ['my-journeys'] }); // the new journey appears in "On-Duty Journey"
     },
   });
 }
@@ -222,6 +223,7 @@ export function useCompleteOnDutySession() {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
       queryClient.invalidateQueries({ queryKey: ['tracking-state'] });
+      queryClient.invalidateQueries({ queryKey: ['my-journeys'] });
       // The server ended the track with the session. Make the phone follow now instead of at the next background tick:
       // the collector flushes what is queued and stops (the "recording" notification goes away).
       void ensureTracking('manual');
@@ -269,6 +271,7 @@ export function useSubmitOnDutyPunch() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
       queryClient.invalidateQueries({ queryKey: ['geo-punch-status'] });
+      queryClient.invalidateQueries({ queryKey: ['my-journeys'] }); // the journey's punch count
       // The 4th punch closes the session on the server, which ends the track there: look again soon.
       if (result?.sessionEnded) {
         queryClient.invalidateQueries({ queryKey: ['tracking-state'] });

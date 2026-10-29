@@ -6,11 +6,14 @@ import assert from 'node:assert/strict';
 
 import {
   captureButtonLabel,
+  confirmBlocker,
   describePunchError,
   isPhotoPlanComplete,
   newPhotoPlan,
   nextMissingPhoto,
   photoLabel,
+  photoProgressText,
+  photoSlotViews,
   punchFormEntries,
   requiredPhotoCount,
   withPhoto,
@@ -106,6 +109,48 @@ test('other punch errors show the server\'s own message, else the local one, els
   assert.equal(describePunchError({ message: 'Network Error' }).message, 'Network Error');
   assert.equal(describePunchError({}).message, 'Failed to submit punch');
   assert.equal(describePunchError(undefined).needsSecondPhoto, false);
+});
+
+// ------------------------------------------------------------------------------------------------ the capture slots
+
+test('two photos: the tiles are "Photo 1 of 2" and "Photo 2 of 2", the first empty one is next, progress counts what is taken', () => {
+  let plan = newPhotoPlan(2);
+  assert.deepEqual(photoSlotViews(plan).map((s) => [s.label, s.uri, s.isNext]), [['Photo 1 of 2', null, true], ['Photo 2 of 2', null, false]]);
+  assert.equal(photoProgressText(plan), '0 of 2 photos taken');
+  plan = withPhoto(plan, 1, 'file:///two.jpg');
+  assert.deepEqual(photoSlotViews(plan).map((s) => s.isNext), [true, false], 'the next one is the first EMPTY slot, even if a later one is filled');
+  assert.equal(photoProgressText(plan), '1 of 2 photos taken');
+  plan = withPhoto(plan, 0, 'file:///one.jpg');
+  assert.equal(photoSlotViews(plan).some((s) => s.isNext), false);
+  assert.equal(photoProgressText(plan), '2 of 2 photos taken');
+  // retaking one keeps the other
+  plan = withPhoto(plan, 0, 'file:///one-again.jpg');
+  assert.deepEqual(plan.uris, ['file:///one-again.jpg', 'file:///two.jpg']);
+});
+
+test('one photo: the same component with a single plain "Photo" tile', () => {
+  let plan = newPhotoPlan(1);
+  assert.deepEqual(photoSlotViews(plan).map((s) => [s.label, s.isNext]), [['Photo', true]]);
+  assert.equal(photoProgressText(plan), 'No photo yet');
+  plan = withPhoto(plan, 0, 'file:///a.jpg');
+  assert.equal(photoProgressText(plan), 'Photo taken');
+});
+
+test('the confirm button stays disabled until every slot is filled and the location is known, and says what is missing', () => {
+  let plan = newPhotoPlan(2);
+  assert.equal(confirmBlocker(plan, true), 'Take Photo 1 of 2 to continue');
+  plan = withPhoto(plan, 0, 'file:///one.jpg');
+  assert.equal(confirmBlocker(plan, true), 'Take Photo 2 of 2 to continue');
+  plan = withPhoto(plan, 1, 'file:///two.jpg');
+  assert.equal(confirmBlocker(plan, false), 'Waiting for your location');
+  assert.equal(confirmBlocker(plan, true), null);
+  assert.equal(confirmBlocker(newPhotoPlan(1), true), 'Take the photo to continue');
+  // HR switches to two photos mid-capture: the photo already taken stays, the second slot appears and blocks again
+  let one = withPhoto(newPhotoPlan(1), 0, 'file:///one.jpg');
+  assert.equal(confirmBlocker(one, true), null);
+  one = withRequired(one, 2);
+  assert.deepEqual(one.uris, ['file:///one.jpg', null]);
+  assert.equal(confirmBlocker(one, true), 'Take Photo 2 of 2 to continue');
 });
 
 // ------------------------------------------------------------------------------------------------ key case

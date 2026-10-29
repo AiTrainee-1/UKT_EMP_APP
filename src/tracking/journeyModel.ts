@@ -2,7 +2,7 @@
 // a list item, the detail (summary, segments, events, simplified path) and what the map and the timeline draw from it.
 // The server shapes are camelCase after src/lib/api.ts; every field may be missing on an older or newer backend.
 import { eventLabel, gapCauseLabel, isProblemEvent } from './format.ts';
-import { parseTime } from './geo.ts';
+import { istWallClockMs, parseTime } from './geo.ts';
 
 export type LatLng = [number, number];
 
@@ -27,6 +27,8 @@ export interface JourneyListItem {
   hasMock: boolean;
   approvalStatus: string;
   lastPointAt: string | null;
+  /** Geo-punches (of the 4) recorded under this journey; null when the server does not say (an older backend). */
+  punchCount: number | null;
 }
 
 export interface JourneySegment {
@@ -61,6 +63,27 @@ export interface JourneyEvent {
   longitude: number | null;
 }
 
+/** One geo-punch of the journey's On-Duty session (`punches` of the journey detail). Several rows can share a punchNumber: a
+ *  rejected punch that was recorded again. */
+export interface JourneyPunch {
+  id: number;
+  punchNumber: number;
+  punchType: 'IN' | 'OUT';
+  /** The factory's wall clock, as the server stores it: "2026-10-28" / "09:07:00". */
+  punchDate: string;
+  punchTime: string;
+  /** The same instant as epoch milliseconds (null if the date or time was unreadable). */
+  at: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  accuracyM: number | null;
+  isMocked: boolean;
+  hasPhoto: boolean;
+  hasPhoto2: boolean;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewComment: string | null;
+}
+
 export interface JourneyDetail {
   track: JourneyListItem & {
     lastLatitude: number | null;
@@ -70,6 +93,8 @@ export interface JourneyDetail {
   };
   segments: JourneySegment[];
   events: JourneyEvent[];
+  /** Geo-punches under the journey's session, in slot order. Empty on a backend that does not send them. */
+  punches: JourneyPunch[];
   /** [lat, lng, epochMs?] simplified by the server. */
   path: LatLng[];
   device: { model: string; osVersion: string; appVersion: string; permissionLevel: string } | null;
@@ -115,6 +140,7 @@ export function normalizeListItem(raw: unknown): JourneyListItem | null {
     hasMock: r.hasMock === true,
     approvalStatus: str(r.approvalStatus),
     lastPointAt: strOrNull(r.lastPointAt),
+    punchCount: numOrNull(r.punchCount) == null ? null : Math.round(num(r.punchCount)),
   };
 }
 
@@ -176,6 +202,29 @@ function normalizeEvent(raw: unknown): JourneyEvent | null {
   };
 }
 
+function normalizePunch(raw: unknown): JourneyPunch | null {
+  const r = obj(raw);
+  const id = numOrNull(r.id);
+  const punchNumber = numOrNull(r.punchNumber);
+  if (id == null || punchNumber == null) return null;
+  return {
+    id,
+    punchNumber: Math.round(punchNumber),
+    punchType: r.punchType === 'OUT' ? 'OUT' : 'IN',
+    punchDate: str(r.punchDate),
+    punchTime: str(r.punchTime),
+    at: istWallClockMs(r.punchDate, r.punchTime),
+    latitude: numOrNull(r.latitude),
+    longitude: numOrNull(r.longitude),
+    accuracyM: numOrNull(r.accuracyM),
+    isMocked: r.isMocked === true,
+    hasPhoto: r.hasPhoto === true,
+    hasPhoto2: r.hasPhoto2 === true,
+    status: r.status === 'approved' || r.status === 'rejected' ? r.status : 'pending',
+    reviewComment: strOrNull(r.hrReviewComment),
+  };
+}
+
 export function normalizeJourneyDetail(raw: unknown): JourneyDetail | null {
   const r = obj(raw);
   const trackRaw = obj(r.track);
@@ -207,6 +256,10 @@ export function normalizeJourneyDetail(raw: unknown): JourneyDetail | null {
       .filter((x): x is JourneySegment => x != null)
       .sort((a, b) => (parseTime(a.startedAt) ?? 0) - (parseTime(b.startedAt) ?? 0) || a.seqNo - b.seqNo),
     events: (Array.isArray(r.events) ? r.events : []).map(normalizeEvent).filter((x): x is JourneyEvent => x != null),
+    punches: (Array.isArray(r.punches) ? r.punches : [])
+      .map(normalizePunch)
+      .filter((x): x is JourneyPunch => x != null)
+      .sort((a, b) => a.punchNumber - b.punchNumber || (a.at ?? 0) - (b.at ?? 0) || a.id - b.id),
     path: normalizePolyline(r.path),
     device: Object.keys(device).length
       ? {
@@ -245,6 +298,10 @@ export type TimelineItem =
   | { type: 'segment'; at: number; seg: JourneySegment; stopNumber: number | null; title: string; detail: string }
   | { type: 'event'; at: number; event: JourneyEvent; title: string; problem: boolean };
 
+/** A stop of this long or longer is a "long break" (purple on the map and in the timeline, amber below it). The HR portal's rule. */
+export const LONG_BREAK_S = 15 * 60;
+export const isLongBreak = (durationS: number): boolean => durationS >= LONG_BREAK_S;
+
 /** Stop segments, numbered 1..n in time order (the numbers on the map). */
 export function numberedStops(segments: JourneySegment[]): (JourneySegment & { n: number })[] {
   return segments.filter((s) => s.kind === 'stop').map((s, i) => ({ ...s, n: i + 1 }));
@@ -282,11 +339,25 @@ export function buildTimeline(detail: Pick<JourneyDetail, 'segments' | 'events'>
 
 export interface MapPayload {
   route: LatLng[];
-  stops: { n: number; lat: number; lng: number; from: string | null; to: string | null; durationS: number; address: string }[];
+  stops: {
+    n: number;
+    lat: number;
+    lng: number;
+    from: string | null;
+    to: string | null;
+    durationS: number;
+    address: string;
+    /** A break of LONG_BREAK_S or more: drawn purple, a shorter one amber. */
+    long: boolean;
+  }[];
   gaps: { from: LatLng; to: LatLng; cause: string; durationS: number; startedAt: string | null }[];
-  events: { kind: string; label: string; lat: number; lng: number; at: string | null; problem: boolean }[];
+  events: { kind: string; label: string; lat: number; lng: number; at: string | null; problem: boolean; mock: boolean }[];
   start: LatLng | null;
   end: LatLng | null;
+  /** The start pin's time, the end pin's time (the last position while it still runs), and whether it still runs. */
+  startedAt: string | null;
+  endedAt: string | null;
+  active: boolean;
 }
 
 /** Everything the Leaflet page draws. The route is the server's simplified path, else the travel segments' polylines. */
@@ -305,6 +376,7 @@ export function buildMapPayload(detail: Pick<JourneyDetail, 'segments' | 'events
       to: s.endedAt,
       durationS: s.durationS,
       address: s.address,
+      long: isLongBreak(s.durationS),
     }));
   const gaps = detail.segments
     .filter((s) => s.kind === 'gap' && s.startLat != null && s.startLng != null && s.endLat != null && s.endLng != null)
@@ -324,10 +396,22 @@ export function buildMapPayload(detail: Pick<JourneyDetail, 'segments' | 'events
       lng: e.longitude as number,
       at: e.startedAt,
       problem: isProblemEvent(e.kind),
+      mock: e.kind.toUpperCase() === 'MOCK_LOCATION',
     }));
   const first = route[0] ?? null;
   const last = route.length ? route[route.length - 1] : null;
   const end: LatLng | null =
     last ?? (detail.track.lastLatitude != null && detail.track.lastLongitude != null ? [detail.track.lastLatitude, detail.track.lastLongitude] : null);
-  return { route, stops, gaps, events, start: first, end };
+  const active = detail.track.status === 'active';
+  return {
+    route,
+    stops,
+    gaps,
+    events,
+    start: first,
+    end,
+    startedAt: detail.track.startedAt,
+    endedAt: detail.track.endedAt ?? detail.track.lastPointAt,
+    active,
+  };
 }

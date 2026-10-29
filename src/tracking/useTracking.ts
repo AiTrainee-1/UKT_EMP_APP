@@ -214,13 +214,33 @@ export function useTrackingLifecycle(employeeId: number | null | undefined) {
 
 // ---------------------------------------------------------------------------------------------------- my journeys
 
-/** The employee's own journeys, newest first (GET /tracking/my-journeys). */
-export function useMyJourneys(params: JourneyListParams = {}) {
+/** The employee's own journeys, newest first (GET /tracking/my-journeys); looked at again every 30 s while one is in progress. */
+export function useMyJourneys(params: JourneyListParams = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: ['my-journeys', params.from ?? null, params.to ?? null],
+    queryKey: ['my-journeys', params.from ?? null, params.to ?? null, params.pageSize ?? null],
     queryFn: () => fetchMyJourneys(params),
+    enabled: options.enabled ?? true,
     staleTime: 30_000,
+    refetchInterval: (query) => (query.state.data?.results.some((j) => j.status === 'active') ? 30_000 : false),
   });
+}
+
+const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * The journey of the On-Duty session the employee is on (or just finished), for the page's live strip and its "view journey"
+ * button: the newest of the last two days' journeys that belongs to the session, else the one still recording.
+ */
+export function useSessionJourney(sessionId: number | null | undefined, enabled = true) {
+  const from = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return isoDay(d);
+  }, []);
+  const query = useMyJourneys({ from, pageSize: 10 }, { enabled });
+  const list = query.data?.results ?? [];
+  const journey = (sessionId != null ? list.find((j) => j.sessionId === sessionId) : undefined) ?? list.find((j) => j.status === 'active') ?? null;
+  return { ...query, journey };
 }
 
 /** One journey with its segments, events and simplified path (GET /tracking/journeys/<id>); refreshed while it is still active. */

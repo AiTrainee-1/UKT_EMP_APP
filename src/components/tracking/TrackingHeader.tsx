@@ -24,6 +24,7 @@ export function TrackingHeader({ title, subtitle, onBack, right }: Props) {
       <TouchableOpacity
         onPress={onBack ?? (() => (router.canGoBack() ? router.back() : router.replace('/on-duty')))}
         style={styles.backBtn}
+        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         activeOpacity={0.75}
         accessibilityRole="button"
         accessibilityLabel="Go back"

@@ -54,7 +54,7 @@ const NAV_GROUPS: NavGroup[] = [
       { icon: 'calendar-check-outline', label: 'Attendance', route: '/(tabs)/attendance', color: '#059669' },
       { icon: 'map-marker-radius-outline', label: 'Attendance Request', route: '/geo-punch', color: '#0369A1' },
       { icon: 'briefcase-outline', label: 'On-Duty', route: '/on-duty', color: '#815600' },
-      { icon: 'map-marker-path', label: 'My Journey', route: '/my-journeys', color: '#1E3A8A' },
+      { icon: 'map-marker-path', label: 'On-Duty Journey', route: '/my-journeys', color: '#1E3A8A' },
       { icon: 'shield-check-outline', label: 'Tracking Health', route: '/tracking-setup/health', color: '#047857' },
       { icon: 'exit-run', label: 'Outpass', route: '/outpass', color: '#009688' },
       { icon: 'crosshairs-gps', label: 'Live Tracking', route: '/geo-tracking', color: '#0369A1' },

@@ -1,4 +1,4 @@
-// Run with `npm test`. "My journey": the server's list / detail shapes read defensively, the merged timeline, the map payload
+// Run with `npm test`. "On-Duty Journey": the server's list / detail shapes read defensively, the merged timeline, the map payload
 // (route, numbered stops, gaps, events), the page that draws it, and the wording helpers.
 /// <reference types="node" />
 import test from 'node:test';

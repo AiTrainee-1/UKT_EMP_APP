@@ -66,3 +66,14 @@ export function parseTime(v: unknown): number | null {
   }
   return null;
 }
+
+/**
+ * The instant of a punch's `punchDate` ("2026-10-28") + `punchTime` ("09:07:00"). The server stores a punch as the factory's
+ * wall clock (IST, UTC+05:30, no daylight saving), so that is the zone it is read in, whatever zone the phone is in.
+ */
+export function istWallClockMs(date: unknown, time: unknown): number | null {
+  if (typeof date !== 'string' || typeof time !== 'string') return null;
+  const t = time.length === 5 ? `${time}:00` : time;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}:\d{2}$/.test(t)) return null;
+  return parseTime(`${date}T${t}+05:30`);
+}

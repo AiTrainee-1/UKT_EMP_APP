@@ -53,6 +53,7 @@ const TOUR_STEPS = [
 // small system (soft fill + saturated icon) rather than reusing badge tones.
 const makeQuickActions = (Colors: Palette) => ([
   { label: 'On-Duty', icon: 'briefcase-outline', route: '/on-duty' as const, iconColor: '#B7791F', bg: '#FDF3E3' },
+  { label: 'On-Duty Journey', icon: 'map-marker-path', route: '/my-journeys' as const, iconColor: '#0E7490', bg: '#E1F3F7' },
   { label: 'Missing Punch', icon: 'hand-pointing-right', route: '/missing-punch' as const, iconColor: '#6D4AFF', bg: '#EFEBFF' },
   { label: 'Apply Leave', icon: 'leaf', route: '/(tabs)/leave' as const, iconColor: '#D6408C', bg: '#FCE9F3' },
   { label: 'Permission', icon: 'hand-back-left-outline', route: '/requests' as const, iconColor: '#2980B9', bg: '#E7F3FB' },

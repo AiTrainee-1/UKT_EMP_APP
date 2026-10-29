@@ -8,6 +8,7 @@ export {
   useAcceptConsent,
   useJourney,
   useMyJourneys,
+  useSessionJourney,
   useTrackingHealth,
   useTrackingLifecycle,
   useTrackingSetup,

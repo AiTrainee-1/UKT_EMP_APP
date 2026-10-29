@@ -38,6 +38,8 @@ export async function postBatch(body: BatchBody): Promise<SendResult> {
 export interface JourneyListParams {
   from?: string;
   to?: string;
+  /** The server caps a page at 200 (default 25). */
+  pageSize?: number;
 }
 
 export async function fetchMyJourneys(params: JourneyListParams = {}): Promise<{ results: JourneyListItem[]; total: number }> {

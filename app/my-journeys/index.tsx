@@ -5,19 +5,24 @@ import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { TrackingHeader } from '../../src/components/tracking/TrackingHeader';
-import { Badge } from '../../src/components/ui/Badge';
+import { CurrentJourneyCard, JourneyCard } from '../../src/components/journey/JourneyCard';
+import { useNow } from '../../src/components/journey/useNow';
+import { Button } from '../../src/components/ui/Button';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing } from '../../src/constants/theme';
-import { FontFamily, TabularNums } from '../../src/constants/typography';
-import { endReasonLabel, formatDateTime, formatDistance, formatDuration } from '../../src/tracking/format';
+import { FontFamily } from '../../src/constants/typography';
+import { splitJourneys } from '../../src/tracking/journeyList';
 import type { JourneyListItem } from '../../src/tracking/journeyModel';
 import { useMyJourneys } from '../../src/tracking/useTracking';
 import { trackingRoutes } from '../../src/tracking/routes';
 
+const PAGE_SIZE = 200; // the server's maximum per page
+
 const RANGES = [
+  { key: 'all', label: 'All', days: 0 },
   { key: '7', label: 'Last 7 days', days: 7 },
   { key: '30', label: 'Last 30 days', days: 30 },
   { key: '90', label: 'Last 90 days', days: 90 },
@@ -25,152 +30,148 @@ const RANGES = [
 
 const isoDay = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-function approvalBadge(status: string): { label: string; variant: 'pending' | 'approved' | 'rejected' } | null {
-  const s = status.toLowerCase();
-  if (s === 'rejected') return { label: 'Rejected', variant: 'rejected' };
-  if (s === 'active' || s === 'completed' || s === 'approved') return { label: 'Approved', variant: 'approved' };
-  if (s.startsWith('pending')) return { label: 'Awaiting approval', variant: 'pending' };
-  return null;
-}
-
-export default function MyJourneysScreen() {
-  const { C: Colors } = useTheme();
+/** "On-Duty Journey": the journey in progress as a highlighted card, then every earlier one grouped by day. */
+export default function OnDutyJourneyListScreen() {
+  const { C } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const [range, setRange] = useState<(typeof RANGES)[number]['key']>('30');
+  const [range, setRange] = useState<(typeof RANGES)[number]['key']>('all');
+  const now = useNow();
 
   const params = useMemo(() => {
-    const days = RANGES.find((r) => r.key === range)?.days ?? 30;
+    const days = RANGES.find((r) => r.key === range)?.days ?? 0;
+    if (!days) return { pageSize: PAGE_SIZE };
     const from = new Date();
     from.setDate(from.getDate() - days);
-    return { from: isoDay(from), to: isoDay(new Date()) };
+    return { from: isoDay(from), to: isoDay(new Date()), pageSize: PAGE_SIZE };
   }, [range]);
 
   const { data, isLoading, isError, refetch, isRefetching } = useMyJourneys(params);
   const journeys = data?.results ?? [];
+  const { current, days } = useMemo(() => splitJourneys(journeys, now), [journeys, now]);
 
   const open = (j: JourneyListItem) => router.push(trackingRoutes.journey(j.id));
+  const onRefresh = () => {
+    void refetch();
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <TrackingHeader title="My journey" subtitle="Where you went while On-Duty" />
-      <View style={styles.filters}>
-        {RANGES.map((r) => (
-          <TouchableOpacity
-            key={r.key}
-            onPress={() => setRange(r.key)}
-            style={[styles.pill, range === r.key && styles.pillActive]}
-            accessibilityRole="button"
-            accessibilityState={{ selected: range === r.key }}
-          >
-            <Text style={[styles.pillText, range === r.key && { color: Colors.primary }]}>{r.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
+      <TrackingHeader
+        title="On-Duty Journey"
+        subtitle="Where you went, your breaks and your geo-punches"
+        onBack={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)/home'))}
+      />
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} />}
+        refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} colors={[C.primary]} tintColor={C.primary} />}
       >
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filters}>
+          {RANGES.map((r) => (
+            <TouchableOpacity
+              key={r.key}
+              onPress={() => setRange(r.key)}
+              style={[styles.pill, range === r.key && styles.pillActive]}
+              hitSlop={{ top: 4, bottom: 4 }}
+              accessibilityRole="button"
+              accessibilityState={{ selected: range === r.key }}
+            >
+              <Text style={[styles.pillText, range === r.key && { color: C.onPrimaryContainer }]}>{r.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
         {isLoading ? (
-          <>
+          <View style={{ gap: Spacing.base }}>
+            <SkeletonCard lines={4} />
             <SkeletonCard lines={3} />
             <SkeletonCard lines={3} />
-          </>
+          </View>
         ) : isError ? (
-          <EmptyState icon="cloud-off-outline" title="Could not load your journeys" subtitle="Check your connection and pull down to try again." />
+          <View style={styles.stateBox}>
+            <View style={styles.stateArt}>
+              <EmptyState icon="cloud-off-outline" title="Could not load your journeys" subtitle="Check your connection, then try again." />
+            </View>
+            <Button title="Try again" variant="outline" onPress={onRefresh} loading={isRefetching} style={styles.retry} />
+          </View>
         ) : journeys.length === 0 ? (
-          <EmptyState
-            icon="map-marker-path"
-            title="No journeys yet"
-            subtitle="When you submit an On-Duty request your route is recorded, and it appears here."
-          />
+          <View style={styles.stateBox}>
+            <View style={styles.stateArt}>
+              <EmptyState
+                icon="map-marker-path"
+                title={range === 'all' ? 'No journeys yet' : 'No journeys in this period'}
+                subtitle="When you submit an On-Duty request your route is recorded, and the journey appears here."
+              />
+            </View>
+            {range !== 'all' ? (
+              <Button title="Show all journeys" variant="outline" onPress={() => setRange('all')} style={styles.retry} />
+            ) : (
+              <Button title="Start On-Duty" onPress={() => router.push('/on-duty')} style={styles.retry} />
+            )}
+          </View>
         ) : (
-          journeys.map((j) => {
-            const badge = approvalBadge(j.approvalStatus);
-            return (
-              <TouchableOpacity key={j.id} style={styles.card} onPress={() => open(j)} activeOpacity={0.8} accessibilityRole="button">
-                <View style={styles.cardTop}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.dest} numberOfLines={2}>{j.destination || `On-Duty #${j.sessionId ?? j.id}`}</Text>
-                    <Text style={styles.when}>{formatDateTime(j.startedAt)}</Text>
-                  </View>
-                  {j.status === 'active' ? (
-                    <View style={styles.livePill}>
-                      <View style={styles.liveDot} />
-                      <Text style={styles.liveText}>Recording</Text>
-                    </View>
-                  ) : badge ? (
-                    <Badge label={badge.label} variant={badge.variant} />
-                  ) : null}
+          <>
+            {current.length > 0 && (
+              <View style={{ gap: 10 }}>
+                {current.map((j) => (
+                  <CurrentJourneyCard key={j.id} journey={j} now={now} onPress={() => open(j)} />
+                ))}
+              </View>
+            )}
+
+            {days.map((g) => (
+              <View key={g.key} style={{ gap: 10 }}>
+                <View style={styles.dayRow}>
+                  <Text style={styles.dayLabel}>{g.label}</Text>
+                  <View style={styles.dayLine} />
+                  <Text style={styles.dayCount}>
+                    {g.items.length} {g.items.length === 1 ? 'journey' : 'journeys'}
+                  </Text>
                 </View>
-                <View style={styles.stats}>
-                  <Stat icon="clock-outline" value={formatDuration(j.durationS)} label="Time" styles={styles} color={Colors.textMuted} />
-                  <Stat icon="map-marker-distance" value={formatDistance(j.distanceM)} label="Distance" styles={styles} color={Colors.textMuted} />
-                  <Stat icon="pause-circle-outline" value={String(j.stopCount)} label="Stops" styles={styles} color={Colors.textMuted} />
-                </View>
-                {j.status === 'ended' && !!endReasonLabel(j.endReason) && <Text style={styles.reason}>{endReasonLabel(j.endReason)}</Text>}
-                {j.hasMock && (
-                  <View style={styles.warn}>
-                    <MaterialCommunityIcons name="alert-outline" size={13} color={Colors.statusRed} />
-                    <Text style={styles.warnText}>A fake location was detected on this journey</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            );
-          })
+                {g.items.map((j) => (
+                  <JourneyCard key={j.id} journey={j} now={now} onPress={() => open(j)} />
+                ))}
+              </View>
+            ))}
+
+            {(data?.total ?? 0) > journeys.length && (
+              <View style={styles.more}>
+                <MaterialCommunityIcons name="information-outline" size={14} color={C.textMuted} />
+                <Text style={styles.moreText}>Showing your latest {journeys.length} journeys. Pick a shorter period to see fewer.</Text>
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function Stat({ icon, value, label, styles, color }: { icon: string; value: string; label: string; styles: ReturnType<typeof makeStyles>; color: string }) {
-  return (
-    <View style={styles.stat}>
-      <MaterialCommunityIcons name={icon as any} size={16} color={color} />
-      <View>
-        <Text style={[styles.statValue, TabularNums]}>{value}</Text>
-        <Text style={styles.statLabel}>{label}</Text>
-      </View>
-    </View>
-  );
-}
-
-const makeStyles = (Colors: Palette) =>
+const makeStyles = (C: Palette) =>
   StyleSheet.create({
-    safe: { flex: 1, backgroundColor: Colors.bgLight },
-    filters: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingTop: 12 },
+    safe: { flex: 1, backgroundColor: C.bgLight },
+    content: { padding: 16, gap: 16, paddingBottom: 40, flexGrow: 1 },
+    // A horizontal ScrollView grows to fill spare height inside the page's (flexGrow) content: keep it one pill tall.
+    filterScroll: { flexGrow: 0, flexShrink: 0 },
+    filters: { flexDirection: 'row', gap: 8, paddingRight: 8 },
     pill: {
-      paddingHorizontal: 12,
-      paddingVertical: 7,
+      minHeight: 36,
+      justifyContent: 'center',
+      paddingHorizontal: 14,
       borderRadius: BorderRadius.full,
-      backgroundColor: Colors.bgCard,
+      backgroundColor: C.bgCard,
       borderWidth: 1,
-      borderColor: Colors.border,
+      borderColor: C.border,
     },
-    pillActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
-    pillText: { fontSize: 12, fontWeight: '700', color: Colors.textSecondary },
-    content: { padding: 16, gap: 12, paddingBottom: 32, flexGrow: 1 },
-    card: {
-      backgroundColor: Colors.bgCard,
-      borderRadius: BorderRadius.xl,
-      borderWidth: 1,
-      borderColor: Colors.border,
-      padding: Spacing.base,
-      gap: 10,
-    },
-    cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-    dest: { fontFamily: FontFamily.headlineSemibold, fontSize: 14, color: Colors.textPrimary },
-    when: { fontSize: 11.5, color: Colors.textMuted, marginTop: 2 },
-    stats: { flexDirection: 'row', gap: 8 },
-    stat: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.md, padding: 8 },
-    statValue: { fontSize: 13, fontWeight: '800', color: Colors.textPrimary },
-    statLabel: { fontSize: 10, color: Colors.textMuted },
-    reason: { fontSize: 11.5, color: Colors.textMuted },
-    livePill: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.badgeGreenBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
-    liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: Colors.statusGreen },
-    liveText: { color: Colors.statusGreen, fontSize: 10.5, fontWeight: '800' },
-    warn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-    warnText: { color: Colors.statusRed, fontSize: 11 },
+    pillActive: { borderColor: C.primary, backgroundColor: C.primaryFixed },
+    pillText: { fontSize: 12.5, fontWeight: '700', color: C.textSecondary },
+    stateBox: { gap: 8, paddingTop: 16 },
+    stateArt: { height: 250 }, // EmptyState fills its parent (flex: 1), so it is given a height inside the scrolling page
+    retry: { alignSelf: 'center', minWidth: 200 },
+    dayRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 },
+    dayLabel: { fontFamily: FontFamily.headlineSemibold, fontSize: 13, color: C.textPrimary },
+    dayLine: { flex: 1, height: 1, backgroundColor: C.border },
+    dayCount: { fontSize: 11.5, color: C.textMuted },
+    more: { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' },
+    moreText: { fontSize: 11.5, color: C.textMuted, flexShrink: 1, textAlign: 'center' },
   });

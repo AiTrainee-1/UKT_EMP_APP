@@ -63,6 +63,7 @@ everything that must be shared (the queue, the heartbeat, the last signal states
 | `sync.ts` | batch body, triggers, back-off, ack rules, trackActive:false, CONSENT_REQUIRED, 401, offline | yes |
 | `controller.ts` | `decide()` (pure) and the self-heal: start on request submit, stop only when the server says so | yes |
 | `onboarding.ts`, `oem.ts`, `format.ts`, `journeyModel.ts`, `journeyHtml.ts`, `deviceId.ts` | set-up state machine, brand guides, wording, journeys, the map page | yes |
+| `activity.ts`, `journeyList.ts` | the "On-Duty Journey" screens as pure functions: activity timeline, break summary, tiles, shared colours; list chips, live status, day groups | yes |
 | `collector.ts` | **the only file that touches expo-location / expo-task-manager**: `defineTask`, start/stop, mode switch | no (needs a device) |
 | `runtime.ts`, `platform/*`, `api.ts`, `actions.ts`, `useTracking.ts`, `permissions.ts` | wiring to the phone, axios, React hooks | no |
 
@@ -75,10 +76,32 @@ modules out of the browser bundle.
 | --- | --- |
 | `/tracking-setup` | consent (notice text from `GET /tracking/state`) then: location, "Allow all the time" (with an explanation first), notifications, battery optimisation (system dialog + brand-specific steps and deep links). Required: consent + foreground location. The rest can be skipped. |
 | `/tracking-setup/health` | Tracking health: active track, permission level, location services, battery optimisation, battery saver, internet, notifications, service state, queue size, last point, last upload (+ error), with a fix button per problem |
-| `/my-journeys`, `/my-journeys/[id]` | own journeys (7/30/90 days); detail: 8 summary cards, Leaflet + OpenStreetMap map in a WebView (route, numbered stops, dashed gaps, event markers; plain SVG route if the map cannot load), merged timeline, device line |
-| On-Duty page | tracking notice + consent gate on the request form, **red banner** when the route is not being recorded, shortcuts to My journey / Tracking health, 1 or 2 punch photos |
+| `/my-journeys`, `/my-journeys/[id]` | **On-Duty Journey.** List: the journey in progress as a highlighted card (live status, running time, last position), then every earlier one grouped Today / Yesterday / date, each card with date, destination, start - end, status chip (In progress / Completed / Ended by day-end / Rejected / Closed by HR), total time, distance, breaks (+ total), geo-punches n/4; All / 7 / 30 / 90 day filter, pull to refresh, skeleton, empty and error states. Detail: summary tiles (total time, travelling, break time, breaks, distance, no signal), Leaflet + OpenStreetMap map in a WebView (numbered break pins, start/end, route, no-location gaps; plain SVG route if the map cannot load), the **activity timeline** (Journey started -> Break taken -> Journey resumed -> ... -> On-duty completed; rows open for details, "Show on map" and "Open in Google Maps"), the **geo-punch records** (number, time, status, place, accuracy, the photos), device line |
+| On-Duty page | one seven-step process (Request -> Approval & route tracking -> Geo-punch 1..4 -> Done), see below |
 
-Entries also in the side drawer ("My Journey", "Tracking Health").
+Entries also in the side drawer ("On-Duty Journey", "Tracking Health") and a Home quick-action tile ("On-Duty Journey", right after "On-Duty").
+
+#### Journey colours (shared with the HR portal, `src/tracking/activity.ts` `TONE_COLOR`)
+
+Journey start and end **#16a34a** (green, one colour for both); a break **#d97706** (amber, under 15 min) or **#7c3aed** (purple, 15 min or
+more); travelling / resumed **#006496** (blue); no location **#6b7280** (grey, dashed on the map); a fake / simulated location **#dc2626**
+(red). A break is one of the server's `stop` segments; "Journey resumed" is the moment travel starts again after a break. Breaks
+within 15 m of each other share one pin ("1 · 3") on the map.
+
+#### The On-Duty page as a process (`src/lib/onDutyFlow.ts`, `src/components/onduty/`)
+
+`buildFlow()` reads the session, the four punch slots and the form state into seven steps, each `done`, `current`, `upcoming`,
+`problem` (a rejected request / punch) or `skipped`. The page shows them as a vertical stepper under a hero ("Step 3 of 7" and a
+seven-segment bar): finished steps are compact (check, time, place, the punch's Approved / Pending / Rejected chip), the current step is a
+highlighted card with the one primary action (the request form; the waiting note on an older backend; "Record Punch N"), the rest are
+muted. Punches can still be recorded in **any order**: the current step is the lowest open slot and every other open slot offers
+"Record now". A live strip under the hero shows the journey (moving / still / offline / location off, last position, running time,
+breaks, distance) and opens the journey.
+
+Recording a punch (`PunchCapture`): "Photo 1 of 2" / "Photo 2 of 2" thumbnails (one tile when `requiredPhotos` is 1), retake per tile,
+the location pill (accuracy, tap to retry), and one "Confirm Punch N" button that stays disabled, with the reason written under it,
+until every photo is taken and the location is known. The server stays in charge of the count: `requiredPhotos`, `punchPhotos`,
+the PHOTO2_REQUIRED answer and `src/lib/onDutyPhotos.ts` are unchanged in behaviour.
 
 ## Packet format
 
@@ -123,7 +146,11 @@ spellings. `src/tracking/sync.test.ts` asserts both forms.
 - `GET /api/tracking/state` -> `{enabled, active, consentRequired, noticeVersion, noticeText, serverTime, track, config,
   punchPhotos}`; a 404 means "this server has no tracking" (the old 45 s ping loop then keeps serving On-Duty).
   `POST /api/tracking/consent {deviceId, noticeVersion}`.
-- `GET /api/tracking/my-journeys?from=YYYY-MM-DD&to=YYYY-MM-DD`, `GET /api/tracking/journeys/<id>`.
+- `GET /api/tracking/my-journeys?from=YYYY-MM-DD&to=YYYY-MM-DD&pageSize=200`, `GET /api/tracking/journeys/<id>`. Two additive keys
+  feed the On-Duty Journey screens (an older server simply lacks them and the screens hide what depends on them): each list item
+  has `punchCount` (how many of the day's four geo-punch slots hold a punch that was not rejected) and the detail has `punches`
+  (every geo-punch of the journey's session: number, type, IST date and time, place, accuracy, `hasPhoto` / `hasPhoto2`, status,
+  HR comment). The photos are served by `GET /api/on-duty-punch-verifications/<id>/photo?n=1|2` with the bearer token.
 
 ### Events
 
@@ -229,7 +256,7 @@ natively, call `registerEngine(engine)` (`engineRegistry.ts`) at app start inste
 
 ## Tests
 
-`npm test` (Node's built-in runner, TypeScript type-stripping): 155 tests added for this feature, 368 in total.
+`npm test` (Node's built-in runner, TypeScript type-stripping): 155 tests added for this feature, 415 in total (the On-Duty step machine, the activity timeline and the journey list are among them).
 `src/tracking/testing/nodeSqlite.ts` runs the queue's real SQL over `node:sqlite`, including "the process died and the file was
 re-opened". Covered: queue (sequence, contiguous windows, ack, crash recovery, overflow, CAS), collector decisions, events and the
 heartbeat inference, sync (body shape + axios decamelize, batching, back-off, ack rules, trackActive:false, consent, 401, offline,
