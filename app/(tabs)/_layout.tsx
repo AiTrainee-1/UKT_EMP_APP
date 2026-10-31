@@ -10,6 +10,9 @@ import { DockTabIcon } from '../../src/components/DockTabIcon';
 
 export const TAB_BAR_CONTENT_HEIGHT = Platform.OS === 'ios' ? 58 : 62;
 
+/** A screen of the tab group that is reached by a link (Quick Actions, the bell), not by a button of the bar. */
+const HIDDEN_FROM_BAR = { tabBarButton: () => null, tabBarItemStyle: { display: 'none' as const } };
+
 /**
  * Four primary destinations -Home, Attendance, My Shift, Profile -plus
  * Approvals for department heads only.
@@ -137,9 +140,11 @@ export default function TabsLayout() {
         }}
       />
 
-      {/* Routable, never a tab. */}
-      <Tabs.Screen name="leave" options={{ href: null }} />
-      <Tabs.Screen name="notifications" options={{ href: null }} />
+      {/* Routable, never a tab. Only the BUTTON is hidden: since expo-router 58 `href: null` makes a tab "hidden", and a hidden
+          tab cannot be navigated to (React Navigation sends the visitor to the first tab, Home), which is how Apply Leave and
+          the Alerts bell ended up on the home page. */}
+      <Tabs.Screen name="leave" options={HIDDEN_FROM_BAR} />
+      <Tabs.Screen name="notifications" options={HIDDEN_FROM_BAR} />
     </Tabs>
   );
 }

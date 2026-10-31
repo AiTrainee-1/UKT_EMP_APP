@@ -74,7 +74,7 @@ export async function showNotification(title: string, body: string) {
   }
 }
 
-export function useNotificationObserver(onTap?: (notification: unknown) => void) {
+export function useNotificationObserver(onTap?: (notification: unknown) => void, onReceive?: (notification: unknown) => void) {
   const receivedRef = useRef<{ remove: () => void } | null>(null);
   const responseRef = useRef<{ remove: () => void } | null>(null);
 
@@ -82,7 +82,10 @@ export function useNotificationObserver(onTap?: (notification: unknown) => void)
     if (isExpoGo) return;
     const Notifications = getNotifications();
     if (!Notifications) return;
-    receivedRef.current = Notifications.addNotificationReceivedListener(() => {});
+    // a push that arrives while the app is open: the caller refreshes the notification list at once
+    receivedRef.current = Notifications.addNotificationReceivedListener((notification) => {
+      onReceive?.(notification);
+    });
     responseRef.current = Notifications.addNotificationResponseReceivedListener((response) => {
       onTap?.(response.notification);
     });

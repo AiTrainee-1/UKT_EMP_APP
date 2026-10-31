@@ -3,6 +3,8 @@ import api from '../lib/api';
 
 export interface AppNotification {
   id: number;
+  /** The headline of a notification made from a WhatsApp message ("Request Approved"); empty on the older one-liners. */
+  title?: string;
   message: string;
   isRead: boolean;
   createdAt: string;

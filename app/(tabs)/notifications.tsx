@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   StatusBar,
   Alert,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -27,6 +28,8 @@ import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Colors } from '../../src/constants/colors';
 import { UKTLogo } from '../../src/components/UKTLogo';
 import { notificationHint, notificationRoute } from '../../src/lib/compensation';
+import { describePushSetup, getPushSetup, subscribePushSetup } from '../../src/lib/pushStatus';
+import { registerPushToken } from '../../src/hooks/usePushToken';
 import { useManagerProfile } from '../../src/hooks/useManager';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
@@ -41,10 +44,8 @@ function timeAgo(dateStr: string) {
   }
 }
 
-// The backend Notification model has no "title" field at all (only
-// type + free-text message) — every notification card previously rendered
-// a blank headline because it read a `title` the API never sends. Titles
-// are derived here from the real `type` values the backend actually
+// A notification made from a WhatsApp message carries its own `title` (shown first). The older one-liners have none, so
+// their headline is derived here from the real `type` values the backend actually
 // creates (grep-confirmed against every Notification.objects.create() call
 // site): leave, casual_leave, permission, on_duty, missing_punch,
 // attendance, employee_request, resignation, compensation, holiday_work, general (default).
@@ -61,6 +62,17 @@ const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: stri
   compensation: { icon: 'briefcase-clock-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Compensation Update' },
   // ... and to the Department Head: a claim is waiting for their decision (type "holiday_work"); a tap opens Approvals.
   holiday_work: { icon: 'clipboard-clock-outline', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Compensation Approval' },
+  // The messages WhatsApp also sends (backend/api/push_messages.py): the headline comes from the notification itself.
+  advance: { icon: 'cash-fast', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Advance Update' },
+  approval: { icon: 'check-decagram-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
+  outpass: { icon: 'exit-run', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Outpass' },
+  visitors: { icon: 'account-group-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Visitor' },
+  salary_slip: { icon: 'cash-multiple', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Salary Slip' },
+  id_card: { icon: 'card-account-details-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'ID Card' },
+  offer_letter: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Offer Letter' },
+  experience_letter: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Experience Letter' },
+  resignation_letter: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Letter' },
+  other: { icon: 'paperclip', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Document' },
   general: { icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' },
 });
 const makeDefaultNotifMeta = (Colors: Palette) => ({ icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' });
@@ -105,6 +117,22 @@ export default function NotificationsScreen() {
   const { data: manager } = useManagerProfile(!!user);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  // Whether this phone can get notifications outside the app, and what is missing when it cannot (src/lib/pushStatus.ts).
+  const pushSetup = useSyncExternalStore(subscribePushSetup, getPushSetup);
+  const pushBanner = describePushSetup(pushSetup);
+  const [pushChecking, setPushChecking] = useState(false);
+  const onPushAction = async () => {
+    if (pushBanner?.action === 'settings') {
+      void Linking.openSettings();
+      return;
+    }
+    setPushChecking(true);
+    try {
+      await registerPushToken();
+    } finally {
+      setPushChecking(false);
+    }
+  };
 
   const unreadCount = data?.filter(n => !n.isRead).length ?? 0;
   const visible = (data ?? []).filter((n) => filter === 'all' || !n.isRead);
@@ -180,6 +208,26 @@ export default function NotificationsScreen() {
         ))}
       </View>
 
+      {pushBanner && (
+        <View style={styles.pushBanner} accessibilityRole="alert" testID="push-setup-banner">
+          <MaterialCommunityIcons name="bell-off-outline" size={20} color={Colors.statusYellow} />
+          <View style={styles.pushBannerBody}>
+            <Text style={styles.pushBannerTitle}>{pushBanner.title}</Text>
+            <Text style={styles.pushBannerText}>{pushBanner.body}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.pushBannerBtn}
+            onPress={() => { void onPushAction(); }}
+            disabled={pushChecking}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={pushBanner.actionLabel}
+          >
+            <Text style={styles.pushBannerBtnText}>{pushChecking ? 'Checking…' : pushBanner.actionLabel}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <FlatList
         data={visible}
         keyExtractor={n => String(n.id)}
@@ -217,15 +265,15 @@ export default function NotificationsScreen() {
               }}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel={`${notifMeta(Colors, item.type).title}. ${item.message}`}
+              accessibilityLabel={`${item.title || notifMeta(Colors, item.type).title}. ${item.message}`}
               accessibilityHint={notificationHint(item.type, manager)}
             >
               <NotifIcon type={item.type} />
               <View style={styles.cardBody}>
                 <Text style={[styles.cardTitle, item.isRead && styles.cardTitleRead]}>
-                  {notifMeta(Colors, item.type).title}
+                  {item.title || notifMeta(Colors, item.type).title}
                 </Text>
-                <Text style={styles.cardMsg} numberOfLines={2}>{item.message}</Text>
+                <Text style={styles.cardMsg} numberOfLines={item.title ? 6 : 2}>{item.message}</Text>
                 <Text style={styles.cardTime}>{timeAgo(item.createdAt)}</Text>
               </View>
               {!item.isRead && <View style={styles.unreadDot} />}
@@ -273,6 +321,17 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   filterChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
   filterChipTextActive: { color: '#fff' },
+
+  pushBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginHorizontal: 16, marginBottom: 10, padding: 12,
+    backgroundColor: Colors.badgeYellowBg, borderRadius: BorderRadius.lg,
+  },
+  pushBannerBody: { flex: 1, gap: 2 },
+  pushBannerTitle: { color: Colors.textPrimary, fontSize: 13, fontWeight: '800' },
+  pushBannerText: { color: Colors.textSecondary, fontSize: 12, lineHeight: 17 },
+  pushBannerBtn: { backgroundColor: Colors.primary, borderRadius: BorderRadius.full, paddingHorizontal: 12, paddingVertical: 8 },
+  pushBannerBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
   list: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32, gap: 8 },
   listCenter: { flex: 1 },

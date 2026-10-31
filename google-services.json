@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "160955665134",
+    "project_id": "uktextiles",
+    "storage_bucket": "uktextiles.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:160955665134:android:d84b7e292a35c1635741ff",
+        "android_client_info": {
+          "package_name": "net.uktex.employee"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCNN5mIf0YJTdOCONt5HSeRvfHtyXO_QW4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

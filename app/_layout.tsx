@@ -1,5 +1,5 @@
 import React, { useState, useEffect, Component, ReactNode, useRef } from 'react';
-import { View, Text, ScrollView, StyleSheet, LogBox } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, LogBox, AppState } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
@@ -10,7 +10,7 @@ import { setUnauthorizedHandler } from '../src/lib/api';
 import { router, type Href } from 'expo-router';
 import { Colors } from '../src/constants/colors';
 import { useMyResignation } from '../src/hooks/useResignation';
-import { registerPushToken } from '../src/hooks/usePushToken';
+import { registerPushToken, retryPushRegistrationIfNeeded } from '../src/hooks/usePushToken';
 import { useEmployee } from '../src/hooks/useEmployee';
 import type { ManagerProfile } from '../src/hooks/useManager';
 import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
@@ -140,6 +140,15 @@ function PushTokenRegistrar() {
     }
   }, [user?.employeeId]);
 
+  // Back from the phone's settings (notifications just allowed) or from being offline: try again unless it already worked.
+  useEffect(() => {
+    if (!user?.employeeId) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void retryPushRegistrationIfNeeded();
+    });
+    return () => subscription.remove();
+  }, [user?.employeeId]);
+
   return null;
 }
 
@@ -223,15 +232,21 @@ function LiveLocationTracker() {
 // ---------------------------------------------------------------------------
 function NotificationTapHandler() {
   const client = useQueryClient();
-  useNotificationObserver((notification) => {
-    // A compensation push (`data.type`, see backend/api/signals.py) opens the Compensation screen, a "holiday_work" one (a
-    // claim waits for the Department Head) opens the Approvals tab; every other one opens the Notifications list, as before.
-    // Whether this person is still a head is read from the profile if the tab bar has already fetched it (cold start: unknown,
-    // and only a head is ever sent a "holiday_work" push).
-    const manager = client.getQueryData<ManagerProfile>(['manager-profile']);
-    const target = notificationRoute(pushNotificationType(notification), manager) ?? '/(tabs)/notifications';
-    router.push(target as Href);
-  });
+  useNotificationObserver(
+    (notification) => {
+      // A compensation push (`data.type`, see backend/api/signals.py) opens the Compensation screen, a "holiday_work" one (a
+      // claim waits for the Department Head) opens the Approvals tab; every other one opens the Notifications list, as before.
+      // Whether this person is still a head is read from the profile if the tab bar has already fetched it (cold start: unknown,
+      // and only a head is ever sent a "holiday_work" push).
+      const manager = client.getQueryData<ManagerProfile>(['manager-profile']);
+      const target = notificationRoute(pushNotificationType(notification), manager) ?? '/(tabs)/notifications';
+      router.push(target as Href);
+    },
+    // a push that arrives while the app is open also lands in the Notifications list (and the unread count) straight away
+    () => {
+      void client.invalidateQueries({ queryKey: ['app-notifications'] });
+    },
+  );
   return null;
 }
 
