@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,27 +11,27 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
-import { format } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useMissingPunch, PUNCH_SLOT_LABEL, type MissingPunchItem } from '../../src/hooks/useRequests';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { hasProgressed, pipelineSentence, workflowOff } from '../../src/lib/approval';
+import { defaultView, rowsForView, viewCounts, type RequestView } from '../../src/lib/requestViews';
+import { emptyViewText, istDateOf, missingPunchViewOptions, monthSections } from '../../src/lib/myRequests';
+import { parseClock, to12hLabel } from '../../src/lib/punchTimePicker';
 import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
+import { deciderFromStamps } from '../../src/lib/approvalsDecider';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
+import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
+import { ListSkeleton, LoadError, MonthHeading, StaleNote } from '../../src/components/myrequests/ListStates';
+import { Reveal } from '../../src/components/Reveal';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { SkeletonCard } from '../../src/components/ui/Skeleton';
-import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
-import { FontFamily, TabularNums } from '../../src/constants/typography';
-
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+import { FontFamily } from '../../src/constants/typography';
 
 const STAGE_LABEL: Record<string, string> = {
   pending_hod: 'Pending HOD Review',
@@ -54,7 +54,7 @@ function stageBadge(item: MissingPunchItem): { label: string; variant: ReturnTyp
   if (item.approval && (item.status === 'pending_hod' || item.status === 'pending_hr')) {
     return { label: 'Pending', variant: hasProgressed(item.approval) ? 'onleave' : 'pending' };
   }
-  return { label: STAGE_LABEL[item.status], variant: badgeVariant(item.status) };
+  return { label: STAGE_LABEL[item.status] ?? item.status, variant: badgeVariant(item.status) };
 }
 
 const SLOT_ICON: Record<string, string> = {
@@ -64,48 +64,151 @@ const SLOT_ICON: Record<string, string> = {
   evening_out: 'logout',
 };
 
+type Row = { kind: 'heading'; key: string; title: string; count: number } | { kind: 'item'; key: string; item: MissingPunchItem; index: number };
+
+/** "Wed, 29 Oct 2026" from "2026-10-29" without a time-zone shift. */
+function dayLabel(date: string): string {
+  try {
+    return format(parseISO(date), 'EEE, dd MMM yyyy');
+  } catch {
+    return date;
+  }
+}
+
+/** "9:05 AM" from "09:05" / "09:05:00". */
+function timeLabel(t: string): string {
+  const m = parseClock(t);
+  return m == null ? t : to12hLabel(m);
+}
+
 export default function MissingPunchScreen() {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   const { user } = useAuth();
-  // "Now" is read when the screen renders, never once at module load: the app process lives for days.
-  const now = new Date();
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
-  const [tab, setTab] = useState<'active' | 'history'>('active');
-  const { data, isLoading, refetch, isRefetching } = useMissingPunch(user?.employeeId ?? null, month, year);
+  // Every request (the latest 300, newest first): the four views need more than one month.
+  const { data, isLoading, isError, refetch, isRefetching } = useMissingPunch(user?.employeeId ?? null);
   // Who approves a missing punch, and whether HR has switched new ones off (Approval Workflow Control).
   const { data: approvalSummary } = useApprovalSummary();
   const missingPunchOff = workflowOff(approvalSummary?.missingPunch);
 
-  const prevMonth = () => {
-    if (month === 1) { setMonth(12); setYear((y) => y - 1); }
-    else setMonth((m) => m - 1);
-  };
-  const nextMonth = () => {
-    const atCurrent = year === now.getFullYear() && month === now.getMonth() + 1;
-    if (atCurrent) return;
-    if (month === 12) { setMonth(1); setYear((y) => y + 1); }
-    else setMonth((m) => m + 1);
-  };
-  const atCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1;
-
   const items = data ?? [];
-  const totalCount = items.length;
-  const activeItems = items.filter((i) => i.status === 'pending_hod' || i.status === 'pending_hr');
-  const historyItems = items.filter((i) => i.status === 'approved' || i.status === 'rejected');
-  const pendingCount = activeItems.length;
-  const approvedCount = items.filter((i) => i.status === 'approved').length;
-  const rejectedCount = items.filter((i) => i.status === 'rejected').length;
-  const visibleItems = tab === 'active' ? activeItems : historyItems;
+  // "Now" is read when the screen renders, never once at module load: the app process lives for days.
+  const opts = missingPunchViewOptions<MissingPunchItem>(new Date());
+  const counts = viewCounts(items, opts);
+
+  // Opens on Waiting when something is waiting, else on "Sent this month" - decided once, when the list first arrives.
+  const [view, setView] = useState<RequestView>('waiting');
+  const chosen = useRef(false);
+  useEffect(() => {
+    if (!chosen.current && data) {
+      chosen.current = true;
+      setView(defaultView(counts));
+    }
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visible = rowsForView(items, view, opts);
+  // Long histories (Approved / Rejected) read best under month headings, by the day of the missed punch.
+  const rows: Row[] = [];
+  if (view === 'approved' || view === 'rejected') {
+    let i = 0;
+    for (const s of monthSections(visible, (r) => r.date)) {
+      rows.push({ kind: 'heading', key: `h-${s.key}`, title: s.title, count: s.rows.length });
+      for (const item of s.rows) rows.push({ kind: 'item', key: String(item.id), item, index: i++ });
+    }
+  } else {
+    visible.forEach((item, index) => rows.push({ kind: 'item', key: String(item.id), item, index }));
+  }
+
+  const empty = emptyViewText(view, 'missing punch requests', 'sent this month');
+  const failedFirstLoad = isError && !data;
+
+  const renderCard = (item: MissingPunchItem, index: number) => {
+    const badge = stageBadge(item);
+    const sent = istDateOf(item.createdAt);
+    return (
+      <Reveal index={index}>
+        <View style={styles.card}>
+          <View style={styles.cardTop}>
+            <View style={styles.cardTopLeft}>
+              <View style={styles.slotIconWrap}>
+                <MaterialCommunityIcons name={(item.punchSlot ? SLOT_ICON[item.punchSlot] : 'fingerprint') as any} size={16} color={Colors.categoryPunch} />
+              </View>
+              <View style={{ flexShrink: 1 }}>
+                <Text style={styles.type}>
+                  {item.punchSlot ? PUNCH_SLOT_LABEL[item.punchSlot] : (item.punchType === 'IN' ? 'Check-In' : 'Check-Out')}
+                </Text>
+                <Text style={styles.dateTime}>{dayLabel(item.date)} · {timeLabel(item.punchTime)}</Text>
+              </View>
+            </View>
+            <Badge label={badge.label} variant={badge.variant} />
+          </View>
+
+          {!!item.reason && (
+            <View style={styles.reasonBox}>
+              <Text style={styles.reasonQuote}>"</Text>
+              <Text style={styles.reason}>{item.reason}</Text>
+            </View>
+          )}
+
+          <WaitingChip
+            approval={item.approval}
+            fallback={deciderFromStamps({
+              status: item.status,
+              hodBy: item.hodReviewedBy,
+              hodAt: (item as any).hodReviewedAt,
+              hrBy: item.hrReviewedBy,
+              hrAt: (item as any).hrReviewedAt,
+            })}
+          />
+
+          {item.approval ? (
+            <ApprovalTrail approval={item.approval} title="APPROVAL WORKFLOW" />
+          ) : (item.hodReviewedBy || item.hrReviewedBy) ? (
+            <View style={styles.workflow}>
+              <Text style={styles.workflowLabel}>APPROVAL WORKFLOW</Text>
+              {item.hodReviewedBy && (
+                <View style={styles.workflowRow}>
+                  <MaterialCommunityIcons
+                    name={item.status === 'rejected' && !item.hrReviewedBy ? 'close-circle' : 'check-circle'}
+                    size={15}
+                    color={item.status === 'rejected' && !item.hrReviewedBy ? Colors.statusRed : Colors.statusGreen}
+                  />
+                  <Text style={styles.workflowText}>Department Head: {item.hodReviewedBy}</Text>
+                </View>
+              )}
+              {item.hrReviewedBy && (
+                <View style={styles.workflowRow}>
+                  <MaterialCommunityIcons
+                    name={item.status === 'rejected' ? 'close-circle' : 'check-circle'}
+                    size={15}
+                    color={item.status === 'rejected' ? Colors.statusRed : Colors.statusGreen}
+                  />
+                  <Text style={styles.workflowText}>HR: {item.hrReviewedBy}</Text>
+                </View>
+              )}
+            </View>
+          ) : null}
+
+          <View style={styles.cardFooter}>
+            <Text style={styles.refText}>#MP-{item.id}{sent ? ` · Sent ${dayLabel(sent)}` : ''}</Text>
+            {item.status === 'approved' && <Text style={styles.approvedHint}>Added to your attendance</Text>}
+          </View>
+        </View>
+      </Reveal>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.75}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+        >
           <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -115,163 +218,66 @@ export default function MissingPunchScreen() {
       </View>
 
       <FlatList
-        data={visibleItems}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={[styles.pad, !visibleItems.length && styles.center]}
+        data={failedFirstLoad || isLoading ? [] : rows}
+        keyExtractor={(r) => r.key}
+        contentContainerStyle={[styles.pad, !rows.length && styles.grow]}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
         }
         ListHeaderComponent={
           <>
-            <View style={styles.introCard}>
-              <View style={styles.introIconWrap}>
-                <MaterialCommunityIcons name="fingerprint" size={20} color="#fff" />
+            <Reveal index={0}>
+              <View style={styles.introCard}>
+                <View style={styles.introIconWrap}>
+                  <MaterialCommunityIcons name="fingerprint" size={20} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.introTitle}>Missing Punch Regularization</Text>
+                  <Text style={styles.introBody}>
+                    Forgot to punch in or out? Tell us the day, the time and why. {pipelineSentence(approvalSummary?.missingPunch)}
+                  </Text>
+                </View>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.introTitle}>Missing Punch Regularization</Text>
-                <Text style={styles.introBody}>
-                  Forgot to punch in or out? Submit the date, time and reason. {pipelineSentence(approvalSummary?.missingPunch)}
-                </Text>
-              </View>
-            </View>
+            </Reveal>
 
             <WorkflowOffNote workflow={approvalSummary?.missingPunch} style={styles.offNote} />
 
-            <View style={styles.monthRow}>
-              <TouchableOpacity onPress={prevMonth} style={styles.monthNavBtn}>
-                <MaterialCommunityIcons name="chevron-left" size={20} color={Colors.primary} />
-              </TouchableOpacity>
-              <View style={styles.monthLabelWrap}>
-                <MaterialCommunityIcons name="calendar-month-outline" size={14} color={Colors.textMuted} />
-                <Text style={styles.monthLabel}>{MONTHS[month - 1]} {year}</Text>
+            {!failedFirstLoad && (
+              <View style={styles.switcher}>
+                <RequestViewSwitcher
+                  value={view}
+                  counts={counts}
+                  onChange={setView}
+                  labels={{ month: 'Sent this month' }}
+                  testID="missing-punch-views"
+                />
               </View>
-              <TouchableOpacity onPress={nextMonth} style={styles.monthNavBtn} disabled={atCurrentMonth}>
-                <MaterialCommunityIcons name="chevron-right" size={20} color={atCurrentMonth ? Colors.outlineVariant : Colors.primary} />
-              </TouchableOpacity>
-              {atCurrentMonth && (
-                <View style={styles.activePeriodPill}>
-                  <Text style={styles.activePeriodText}>Active Period</Text>
-                </View>
-              )}
-            </View>
-
-            <View style={styles.summaryGrid}>
-              {[
-                { label: 'Total', value: totalCount, color: Colors.textPrimary },
-                { label: 'Pending', value: pendingCount, color: Colors.statusYellow },
-                { label: 'Approved', value: approvedCount, color: Colors.statusGreen },
-                { label: 'Rejected', value: rejectedCount, color: Colors.statusRed },
-              ].map(({ label, value, color }) => (
-                <View key={label} style={styles.summaryBox}>
-                  <Text style={[styles.summaryNum, { color }, TabularNums]}>{value}</Text>
-                  <Text style={styles.summaryLabel}>{label}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.tabRow}>
-              <TouchableOpacity
-                style={[styles.tabBtn, tab === 'active' && styles.tabBtnActive]}
-                onPress={() => setTab('active')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.tabBtnText, tab === 'active' && styles.tabBtnTextActive]}>Active Requests</Text>
-                <View style={[styles.tabCountPill, tab === 'active' && styles.tabCountPillActive]}>
-                  <Text style={[styles.tabCountText, tab === 'active' && styles.tabCountTextActive]}>{activeItems.length}</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.tabBtn, tab === 'history' && styles.tabBtnActive]}
-                onPress={() => setTab('history')}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.tabBtnText, tab === 'history' && styles.tabBtnTextActive]}>History & Resolved</Text>
-                <View style={[styles.tabCountPill, tab === 'history' && styles.tabCountPillActive]}>
-                  <Text style={[styles.tabCountText, tab === 'history' && styles.tabCountTextActive]}>{historyItems.length}</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
+            )}
+            {isError && !!data && <StaleNote onRetry={() => { void refetch(); }} />}
           </>
         }
         ListEmptyComponent={
           isLoading ? (
-            <View>{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</View>
+            <ListSkeleton />
+          ) : failedFirstLoad ? (
+            <LoadError what="your missing punch requests" onRetry={() => { void refetch(); }} retrying={isRefetching} />
           ) : (
-            <EmptyState
-              icon="fingerprint"
-              title={tab === 'active' ? 'No active requests' : 'No resolved requests'}
-              subtitle={tab === 'active' ? 'Requests awaiting review will appear here' : 'Approved and rejected requests will appear here'}
-            />
+            <EmptyState icon="fingerprint" title={empty.title} subtitle={empty.subtitle} />
           )
         }
-        renderItem={({ item }: { item: MissingPunchItem }) => (
-          <View style={styles.card}>
-            <View style={styles.cardTop}>
-              <View style={styles.cardTopLeft}>
-                <View style={styles.slotIconWrap}>
-                  <MaterialCommunityIcons name={(item.punchSlot ? SLOT_ICON[item.punchSlot] : 'fingerprint') as any} size={16} color={Colors.categoryPunch} />
-                </View>
-                <View>
-                  <Text style={styles.type}>
-                    {item.punchSlot ? PUNCH_SLOT_LABEL[item.punchSlot] : (item.punchType === 'IN' ? 'Check-In' : 'Check-Out')}
-                  </Text>
-                  <Text style={styles.dateTime}>{format(new Date(item.date), 'EEE, dd MMM yyyy')} · {item.punchTime}</Text>
-                </View>
-              </View>
-              <Badge label={stageBadge(item).label} variant={stageBadge(item).variant} />
-            </View>
-
-            {item.reason && (
-              <View style={styles.reasonBox}>
-                <Text style={styles.reasonQuote}>"</Text>
-                <Text style={styles.reason}>{item.reason}</Text>
-              </View>
-            )}
-
-            <WaitingChip approval={item.approval} />
-
-            {item.approval ? (
-              <ApprovalTrail approval={item.approval} title="APPROVAL WORKFLOW" />
-            ) : (item.hodReviewedBy || item.hrReviewedBy) && (
-              <View style={styles.workflow}>
-                <Text style={styles.workflowLabel}>APPROVAL WORKFLOW</Text>
-                {item.hodReviewedBy && (
-                  <View style={styles.workflowRow}>
-                    <MaterialCommunityIcons
-                      name={item.status === 'rejected' && !item.hrReviewedBy ? 'close-circle' : 'check-circle'}
-                      size={15}
-                      color={item.status === 'rejected' && !item.hrReviewedBy ? Colors.statusRed : Colors.statusGreen}
-                    />
-                    <Text style={styles.workflowText}>Department Head: {item.hodReviewedBy}</Text>
-                  </View>
-                )}
-                {item.hrReviewedBy && (
-                  <View style={styles.workflowRow}>
-                    <MaterialCommunityIcons
-                      name={item.status === 'rejected' ? 'close-circle' : 'check-circle'}
-                      size={15}
-                      color={item.status === 'rejected' ? Colors.statusRed : Colors.statusGreen}
-                    />
-                    <Text style={styles.workflowText}>HR: {item.hrReviewedBy}</Text>
-                  </View>
-                )}
-              </View>
-            )}
-
-            <View style={styles.cardFooter}>
-              <Text style={styles.refText}>#MP-{item.id}</Text>
-              {item.status === 'approved' && <Text style={styles.approvedHint}>Added to your attendance</Text>}
-            </View>
-          </View>
-        )}
+        renderItem={({ item: row }) =>
+          row.kind === 'heading' ? <MonthHeading title={row.title} count={row.count} /> : renderCard(row.item, row.index)
+        }
       />
 
-      {/* FAB */}
       <TouchableOpacity
         style={[styles.fab, missingPunchOff && styles.fabOff]}
         onPress={() => router.push('/missing-punch/report')}
         activeOpacity={0.85}
         disabled={missingPunchOff}
+        accessibilityRole="button"
+        accessibilityLabel="Report a missing punch"
+        testID="missing-punch-new"
       >
         <MaterialCommunityIcons name="plus" size={26} color="#fff" />
       </TouchableOpacity>
@@ -292,12 +298,13 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: Colors.bgCard,
     borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
-  backBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceLow },
+  backBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceLow },
   headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 19 },
   headerSubtitle: { color: Colors.textMuted, fontSize: 12, marginTop: 1 },
 
   pad: { padding: 16, paddingBottom: 100 },
-  center: { flex: 1 },
+  grow: { flexGrow: 1 },
+  switcher: { marginHorizontal: -16, marginBottom: 10 },
 
   introCard: {
     flexDirection: 'row', gap: 12,
@@ -311,53 +318,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   introBody: { fontSize: 12, color: Colors.textSecondary, lineHeight: 17 },
   offNote: { marginBottom: 14 },
 
-  monthRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingVertical: 8, paddingHorizontal: 8,
-    marginBottom: 12,
-    ...cardShadow,
-  },
-  monthNavBtn: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  monthLabelWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'center' },
-  monthLabel: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
-  activePeriodPill: { backgroundColor: Colors.badgeBlueBg, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
-  activePeriodText: { color: Colors.categoryTracking, fontSize: 10, fontWeight: '800' },
-
-  summaryGrid: { flexDirection: 'row', gap: 8, marginBottom: 14 },
-  summaryBox: {
-    flex: 1,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingVertical: 10,
-    alignItems: 'center',
-    gap: 2,
-    ...cardShadow,
-  },
-  summaryNum: { fontFamily: FontFamily.displayBold, fontSize: 19 },
-  summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700' },
-
-  tabRow: {
-    flexDirection: 'row', gap: 6,
-    backgroundColor: Colors.bgSurfaceLow,
-    borderRadius: BorderRadius.lg,
-    padding: 4,
-    marginBottom: 14,
-  },
-  tabBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 9, borderRadius: BorderRadius.md },
-  tabBtnActive: { backgroundColor: Colors.bgCard, ...cardShadow },
-  tabBtnText: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
-  tabBtnTextActive: { color: Colors.primary },
-  tabCountPill: { minWidth: 18, height: 18, borderRadius: 9, backgroundColor: Colors.bgCard, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
-  tabCountPillActive: { backgroundColor: Colors.primary },
-  tabCountText: { color: Colors.textMuted, fontSize: 10, fontWeight: '800' },
-  tabCountTextActive: { color: '#fff' },
-
   card: { backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 10, gap: 10, ...cardShadow },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 },
   cardTopLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
   slotIconWrap: { width: 34, height: 34, borderRadius: 10, backgroundColor: Colors.badgeBlueBg, alignItems: 'center', justifyContent: 'center' },
   type: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
@@ -369,8 +331,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   workflowLabel: { color: Colors.textMuted, fontSize: 9.5, fontWeight: '800', letterSpacing: 0.5 },
   workflowRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   workflowText: { color: Colors.textSecondary, fontSize: 11.5 },
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  refText: { color: Colors.outline, fontSize: 10.5, fontWeight: '700' },
+  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  refText: { color: Colors.outline, fontSize: 10.5, fontWeight: '700', flexShrink: 1 },
   approvedHint: { color: Colors.statusGreen, fontSize: 11, fontWeight: '600' },
 
   fab: {

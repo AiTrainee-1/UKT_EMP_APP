@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,9 +11,13 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 
 import { useEmployeeHod } from '../../src/hooks/useCompensation';
+import { usePendingRequests } from '../../src/hooks/usePendingReminders';
+import { MyRequestsPanel } from '../../src/components/hodAssignment/MyRequestsPanel';
+import { Toast } from '../../src/components/ui/Toast';
+import { countBadge } from '../../src/lib/pendingReminders';
 import { Avatar } from '../../src/components/ui/Avatar';
 import { ContactBlockCard } from '../../src/components/support/ContactBlockCard';
 import { EmptyState } from '../../src/components/ui/EmptyState';
@@ -32,9 +36,14 @@ import {
   unassignedMessage,
 } from '../../src/lib/hodAssignment';
 
+type TabKey = 'head' | 'requests';
+
 /**
- * HOD Assignment: who the employee's Department Head is (the ONE head who decides their requests), how to reach them,
- * and which kinds of request that head can approve. For every employee type, staff and production.
+ * HOD Assignment, two tabs:
+ *  * Department Head: who the employee's Department Head is (the ONE head who decides their requests), how to reach them,
+ *    and which kinds of request that head can approve. For every employee type, staff and production.
+ *  * My Requests: the employee's own requests still waiting for an answer, where each one stands, and "Remind" (once a day
+ *    per request) for whoever has to act now: the Department Head on their phone, or HR. `?tab=requests` opens it.
  */
 export default function HodAssignmentScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -42,7 +51,27 @@ export default function HodAssignmentScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
+  const params = useLocalSearchParams<{ tab?: string }>();
+  const [tab, setTab] = useState<TabKey>(params.tab === 'requests' ? 'requests' : 'head');
+
   const { data, isLoading, refetch, isRefetching } = useEmployeeHod();
+  const pending = usePendingRequests();
+  const badge = countBadge(pending.data?.count);
+
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
+    message: '',
+    type: 'success',
+    visible: false,
+  });
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' | 'info') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type, visible: true });
+    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3800);
+  };
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   const header = (
     <View style={styles.header}>
@@ -57,15 +86,82 @@ export default function HodAssignmentScreen() {
       </TouchableOpacity>
       <View style={{ flex: 1 }}>
         <Text style={styles.headerTitle} accessibilityRole="header">HOD Assignment</Text>
-        <Text style={styles.headerSubtitle}>Your Department Head and what they can approve</Text>
+        <Text style={styles.headerSubtitle}>
+          {tab === 'requests' ? 'Your requests waiting for an answer' : 'Your Department Head and what they can approve'}
+        </Text>
       </View>
     </View>
   );
+
+  const tabs = (
+    <View style={styles.tabBar} accessibilityRole="tablist">
+      {([
+        ['head', 'Department Head', 'account-tie-outline'],
+        ['requests', 'My Requests', 'progress-clock'],
+      ] as const).map(([key, label, icon]) => {
+        const active = tab === key;
+        const count = key === 'requests' ? badge : '';
+        return (
+          <TouchableOpacity
+            key={key}
+            style={[styles.tab, active && styles.tabActive]}
+            onPress={() => setTab(key)}
+            activeOpacity={0.85}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={count ? `${label}, ${count} waiting` : label}
+          >
+            <MaterialCommunityIcons name={icon} size={16} color={active ? '#fff' : Colors.textSecondary} />
+            <Text style={[styles.tabText, active && styles.tabTextActive]} numberOfLines={1}>{label}</Text>
+            {!!count && (
+              <View style={[styles.tabBadge, active && styles.tabBadgeActive]}>
+                <Text style={[styles.tabBadgeText, active && styles.tabBadgeTextActive, TabularNums]}>{count}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+
+  const toastView = <Toast message={toast.message} type={toast.type} visible={toast.visible} />;
+
+  if (tab === 'requests') {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        {header}
+        {tabs}
+        <ScrollView
+          contentContainerStyle={styles.pad}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={pending.isRefetching}
+              onRefresh={() => { void pending.refetch(); }}
+              tintColor={Colors.primary}
+              colors={[Colors.primary]}
+            />
+          }
+        >
+          <MyRequestsPanel
+            data={pending.data}
+            isLoading={pending.isLoading}
+            isError={pending.isError}
+            fetchedAt={pending.dataUpdatedAt}
+            onRetry={() => { void pending.refetch(); }}
+            onToast={showToast}
+          />
+        </ScrollView>
+        {toastView}
+      </SafeAreaView>
+    );
+  }
 
   if (isLoading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         {header}
+        {tabs}
         <View style={styles.pad}>
           <SkeletonCard lines={4} />
           <SkeletonCard lines={5} />
@@ -78,6 +174,7 @@ export default function HodAssignmentScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         {header}
+        {tabs}
         <View style={styles.errorWrap}>
           <EmptyState
             icon="cloud-alert-outline"
@@ -99,8 +196,14 @@ export default function HodAssignmentScreen() {
     );
   }
 
+  // A pull also refreshes My Requests, so the count on its tab stays right.
   const refresh = (
-    <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
+    <RefreshControl
+      refreshing={isRefetching}
+      onRefresh={() => { void refetch(); void pending.refetch(); }}
+      tintColor={Colors.primary}
+      colors={[Colors.primary]}
+    />
   );
 
   // ── nobody to show: not assigned yet, or the employee is a Department Head themselves ──
@@ -108,6 +211,7 @@ export default function HodAssignmentScreen() {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         {header}
+        {tabs}
         <ScrollView contentContainerStyle={styles.pad} showsVerticalScrollIndicator={false} refreshControl={refresh}>
           <View style={styles.emptyCard}>
             <View style={styles.emptyIcon}>
@@ -154,6 +258,7 @@ export default function HodAssignmentScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {header}
+      {tabs}
       <ScrollView contentContainerStyle={styles.pad} showsVerticalScrollIndicator={false} refreshControl={refresh}>
         {/* The card */}
         <View style={styles.card}>
@@ -320,6 +425,27 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   backBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceLow },
   headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
   headerSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 1 },
+
+  tabBar: {
+    flexDirection: 'row', gap: 6,
+    marginHorizontal: 16, marginTop: 12, padding: 4,
+    backgroundColor: Colors.bgSurfaceLow, borderRadius: BorderRadius.full,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  tab: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    minHeight: 40, borderRadius: BorderRadius.full, paddingHorizontal: 10,
+  },
+  tabActive: { backgroundColor: Colors.primary },
+  tabText: { color: Colors.textSecondary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  tabTextActive: { color: '#fff' },
+  tabBadge: {
+    minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 5,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.statusRed,
+  },
+  tabBadgeActive: { backgroundColor: '#fff' },
+  tabBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  tabBadgeTextActive: { color: Colors.primary },
 
   pad: { padding: 16, paddingBottom: 32 },
   gap: { marginTop: 14 },

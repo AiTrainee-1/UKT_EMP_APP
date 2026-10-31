@@ -23,6 +23,11 @@ export interface LeaveRequest {
   halfDaySlot?: 'morning' | 'afternoon' | null;
   /** Where the request stands in HR's approval pipeline. Absent on an older backend (`...raw` below carries it). */
   approval?: ApprovalProgress | null;
+  /** Why the employee asked (2026-10-31): 'sick' | 'emergency' | 'personal' | 'other'; '' on older requests. */
+  reasonCategory?: string;
+  reasonCategoryLabel?: string | null;
+  /** HR's / the Department Head's note on the decision. */
+  hrComment?: string | null;
 }
 
 export interface LeaveType {
@@ -77,26 +82,16 @@ export function useLeaveRequests(employeeId: number | null) {
   });
 }
 
-const FALLBACK_LEAVE_TYPES: LeaveType[] = [
-  { id: 1, name: 'Annual Leave' },
-  { id: 2, name: 'Sick Leave' },
-  { id: 3, name: 'Casual Leave' },
-  { id: 4, name: 'Emergency Leave' },
-  { id: 5, name: 'Maternity Leave' },
-  { id: 6, name: 'Paternity Leave' },
-];
-
+// The server's leave types. The Apply Leave form no longer picks one (2026-10-31: it asks for a reason category and sends
+// the plain type "Leave"), and there is no made-up fallback list any more: invented ids could match no real type, or the
+// wrong one.
 export function useLeaveTypes() {
   return useQuery({
     queryKey: ['leave-types'],
     queryFn: async () => {
       const res = await api.get('/leave-types');
       const data = res.data;
-      if (Array.isArray(data) && data.length > 0) {
-        return data.map((t: any) => ({ ...t, id: Number(t.id) })) as LeaveType[];
-      }
-      // Backend has no leave types configured — use defaults
-      return FALLBACK_LEAVE_TYPES;
+      return Array.isArray(data) ? (data.map((t: any) => ({ ...t, id: Number(t.id) })) as LeaveType[]) : [];
     },
   });
 }
@@ -106,6 +101,10 @@ export function useApplyLeave(employeeId: number | null) {
   return useMutation({
     mutationFn: async (data: {
       leaveTypeId?: number;
+      /** A plain type name ("Leave"): never a Casual Leave type. */
+      type?: string;
+      /** Why: 'sick' | 'emergency' | 'personal' | 'other'. */
+      reasonCategory?: string;
       startDate: string;
       endDate: string;
       reason: string;

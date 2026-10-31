@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { router } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
+import { useConfirmSignOut } from '../../src/hooks/useSignOut';
 import { useAttendance } from '../../src/hooks/useAttendance';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { isStaffEmployee } from '../../src/lib/employmentType';
@@ -66,18 +67,14 @@ export default function AttendanceScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const now = new Date();
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [year, setYear] = useState(now.getFullYear());
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: logout },
-    ]);
-  };
+  // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
+  const handleLogout = useConfirmSignOut();
 
   const { data, isLoading, refetch, isRefetching } = useAttendance(
     user?.employeeId ?? null,

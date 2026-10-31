@@ -67,6 +67,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: 'HR Operations',
     items: [
       { icon: 'umbrella-outline', label: 'Leave', route: '/(tabs)/leave', color: '#8E44AD', staffOnly: true },
+      { icon: 'calendar-star', label: 'Casual Leave', route: '/casual-leave', color: '#B7791F', staffOnly: true },
       { icon: 'hand-wave-outline', label: 'Permissions', route: '/requests', color: '#2980B9', staffOnly: true },
       // Compensation is for staff only, and is listed only once the profile has said so (never flashes up for a production
       // employee while it loads); the Department Head card is for everybody.
@@ -78,7 +79,7 @@ const NAV_GROUPS: NavGroup[] = [
     heading: 'Payroll & Salary',
     items: [
       { icon: 'cash-multiple', label: 'Salary Slips', route: '/salary', color: '#27AE60' },
-      { icon: 'bank-transfer', label: 'Advances', route: '/settlement', color: '#7f8c8d' },
+      { icon: 'bank-transfer', label: 'Advances & Loans', route: '/settlement', color: '#7f8c8d' },
     ],
   },
   {

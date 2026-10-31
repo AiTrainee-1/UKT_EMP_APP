@@ -53,10 +53,14 @@ test('casual leave is read from its wire name pendingCasualLeaveCount', () => {
   assert.equal(approvalsBadgeCount({ ...ME, pendingCasualLeavesCount: 9 } as never), 0)
 })
 
-test('On-Duty requests are not counted: the app has no On-Duty tab, so the badge could never be cleared', () => {
-  // The server adds on-duty to pendingApprovalsCount (2 here), but this screen lists leave only.
+test('On-Duty requests are counted now that the screen has an On-Duty tab, only while its switch is on', () => {
+  // The server's own total (3) includes On-Duty: with the tab shown the badge agrees with it.
   const me = { ...ME, pendingApprovalsCount: 3, pendingLeavesCount: 1, pendingOnDutyCount: 2 }
-  assert.equal(approvalsBadgeCount(me), 1)
+  assert.equal(approvalsBadgeCount(me), 3)
+  assert.equal(approvalsBadgeCount({ ...me, canApproveOnDuty: false }), 1)
+  // A backend that does not send the switch reads as off.
+  const { canApproveOnDuty: _gone, ...older } = me
+  assert.equal(approvalsBadgeCount(older), 1)
 })
 
 test('a tab whose switch is off adds nothing, even if a count came with it', () => {
@@ -131,6 +135,7 @@ test('shownApprovalTabs follows the per-person switches, outpass following Permi
     missingPunch: true,
     outpass: true,
     holidayWork: true,
+    onDuty: true,
     resignation: true,
   })
   assert.deepEqual(shownApprovalTabs({ canApprovePermissions: false, canApproveCompensation: true }), {
@@ -139,6 +144,7 @@ test('shownApprovalTabs follows the per-person switches, outpass following Permi
     missingPunch: false,
     outpass: false,
     holidayWork: true,
+    onDuty: false,
     resignation: false,
   })
   assert.deepEqual(shownApprovalTabs(undefined), {
@@ -147,6 +153,7 @@ test('shownApprovalTabs follows the per-person switches, outpass following Permi
     missingPunch: false,
     outpass: false,
     holidayWork: false,
+    onDuty: false,
     resignation: false,
   })
 })

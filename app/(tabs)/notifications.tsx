@@ -18,6 +18,7 @@ import { MotiView } from 'moti';
 import { formatDistanceToNow } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
+import { useConfirmSignOut } from '../../src/hooks/useSignOut';
 import {
   useAppNotifications, useMarkNotificationRead, useMarkAllNotificationsRead, AppNotification,
 } from '../../src/hooks/useAppNotifications';
@@ -65,6 +66,7 @@ const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: stri
   // The messages WhatsApp also sends (backend/api/push_messages.py): the headline comes from the notification itself.
   advance: { icon: 'cash-fast', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Advance Update' },
   approval: { icon: 'check-decagram-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
+  approval_reminder: { icon: 'bell-ring-outline', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Reminder' },
   outpass: { icon: 'exit-run', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Outpass' },
   visitors: { icon: 'account-group-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Visitor' },
   salary_slip: { icon: 'cash-multiple', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Salary Slip' },
@@ -108,7 +110,7 @@ export default function NotificationsScreen() {
   const NOTIF_META = makeNotifMeta(Colors);
   const DEFAULT_NOTIF_META = makeDefaultNotifMeta(Colors);
 
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { data, isLoading, refetch, isRefetching } = useAppNotifications(user?.employeeId ?? null);
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
@@ -137,12 +139,8 @@ export default function NotificationsScreen() {
   const unreadCount = data?.filter(n => !n.isRead).length ?? 0;
   const visible = (data ?? []).filter((n) => filter === 'all' || !n.isRead);
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: logout },
-    ]);
-  };
+  // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
+  const handleLogout = useConfirmSignOut();
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>

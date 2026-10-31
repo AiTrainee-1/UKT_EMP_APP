@@ -35,9 +35,6 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
 
-const now = new Date();
-const defaultReturnTime = format(new Date(now.getTime() + 2 * 60 * 60 * 1000), 'HH:mm');
-
 const PASS_TYPES: { value: OutpassPassType; icon: string; hint: string }[] = [
   { value: 'official', icon: 'briefcase-outline', hint: 'Client visit, sampling, delivery or bank courier' },
   { value: 'personal', icon: 'account-alert-outline', hint: 'Medical, urgent domestic errand or family emergency' },
@@ -70,9 +67,16 @@ export default function RequestGateOutpassScreen() {
   const [showSuccess, setShowSuccess] = React.useState(false);
   const [toast, setToast] = React.useState({ message: '', type: 'error' as 'success' | 'error', visible: false });
 
+  // "Now" is read when the screen renders, never once at module load: the app process lives for days.
+  const now = new Date();
   const { control, handleSubmit, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
-    defaultValues: { passType: 'official', destination: '', reason: '', expectedReturnTime: defaultReturnTime },
+    defaultValues: {
+      passType: 'official',
+      destination: '',
+      reason: '',
+      expectedReturnTime: format(new Date(now.getTime() + 2 * 60 * 60 * 1000), 'HH:mm'),
+    },
   });
 
   const usedThisMonth = (requests ?? []).filter((r) => {
@@ -88,8 +92,11 @@ export default function RequestGateOutpassScreen() {
   const onSubmit = async (form: FormData) => {
     try {
       const [h, m] = form.expectedReturnTime.split(':').map(Number);
-      const expectedReturn = new Date();
+      const sentAt = new Date();
+      const expectedReturn = new Date(sentAt);
       expectedReturn.setHours(h, m, 0, 0);
+      // A return time earlier than now means tomorrow (e.g. asked at 11 PM, back at 1 AM), never a time already past.
+      if (expectedReturn.getTime() <= sentAt.getTime()) expectedReturn.setDate(expectedReturn.getDate() + 1);
       await submit.mutateAsync({
         destination: form.destination,
         reason: form.reason,

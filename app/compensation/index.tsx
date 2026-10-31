@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,11 @@ import { router } from 'expo-router';
 import { format } from 'date-fns';
 
 import { useEmployeeCompensation } from '../../src/hooks/useCompensation';
+import { useCompensationHistory } from '../../src/hooks/useCompensationHistory';
 import { ContactBlockCard } from '../../src/components/support/ContactBlockCard';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { SkeletonCard } from '../../src/components/ui/Skeleton';
+import { Skeleton, SkeletonCard } from '../../src/components/ui/Skeleton';
+import { Reveal } from '../../src/components/Reveal';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
@@ -34,11 +36,22 @@ import {
   groupItems,
   itemFacts,
   kindTone,
+  shiftsLabel,
   statusTone,
   type AllowanceNotice,
   type CompensationItem,
   type StatusTone,
 } from '../../src/lib/compensation';
+import {
+  FILTERS,
+  groupByMonth,
+  historyFacts,
+  historyKindTone,
+  otPayLine,
+  type HistoryItem,
+  type SourceFilter,
+} from '../../src/lib/compensationHistory';
+import { formatInr } from '../../src/lib/salaryInsights';
 
 type Tab = 'mine' | 'ask';
 
@@ -49,10 +62,19 @@ export default function CompensationScreen() {
   const styles = useThemedStyles(makeStyles);
 
   const [tab, setTab] = useState<Tab>('mine');
+  const [year, setYear] = useState<number | null>(null);
+  const [filter, setFilter] = useState<SourceFilter>('all');
   const { data, isLoading, refetch, isRefetching } = useEmployeeCompensation();
+  // The whole year (every kind, HR's marked), staff only: asked only once the 90-day reply says this is a staff member.
+  const history = useCompensationHistory(year, data?.isStaff === true);
 
   // "Today" is read at render: the screen can stay open past midnight, and the allowance banners are about today / tomorrow.
   const todayIso = format(new Date(), 'yyyy-MM-dd');
+
+  const months = useMemo(
+    () => (history.data ? groupByMonth(history.data.items, history.data.otPayByMonth, filter) : []),
+    [history.data, filter],
+  );
 
   const statusColors = (tone: StatusTone) => {
     switch (tone) {
@@ -77,7 +99,7 @@ export default function CompensationScreen() {
       </TouchableOpacity>
       <View style={{ flex: 1 }}>
         <Text style={styles.headerTitle} accessibilityRole="header">Compensation</Text>
-        <Text style={styles.headerSubtitle}>Detected for you and assigned by HR</Text>
+        <Text style={styles.headerSubtitle}>Everything detected for you and given by HR</Text>
       </View>
     </View>
   );
@@ -88,6 +110,7 @@ export default function CompensationScreen() {
       <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         {header}
         <View style={styles.pad}>
+          <Skeleton height={130} borderRadius={BorderRadius.xl} style={{ marginBottom: 14 }} />
           {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
         </View>
       </SafeAreaView>
@@ -132,15 +155,19 @@ export default function CompensationScreen() {
     );
   }
 
-  const sections = groupItems(data.items);
   const ask = askHrOf(data);
-  const balance = balanceView(data.balanceShifts);
-  const showBalance = data.enabled.holidayWork || data.balanceShifts > 0;
+  const hist = history.data;
+  const balance = balanceView(hist?.balance?.shifts ?? data.balanceShifts);
   const today = data.todayAllowance;
   const tomorrow = data.tomorrowAllowance;
 
   const refresh = (
-    <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
+    <RefreshControl
+      refreshing={isRefetching || history.isRefetching}
+      onRefresh={() => { void refetch(); void history.refetch(); }}
+      tintColor={Colors.primary}
+      colors={[Colors.primary]}
+    />
   );
 
   const allowanceBanner = (notice: AllowanceNotice, which: 'today' | 'tomorrow') => {
@@ -170,19 +197,19 @@ export default function CompensationScreen() {
     );
   };
 
-  const renderItem = (item: CompensationItem) => {
-    const tone = kindTone(item.kind);
+  /** One card of the timeline (a year item) or of the 90-day fallback list. */
+  const renderCard = (item: HistoryItem | CompensationItem, hrMark: { givenByHr: boolean; sourceLabel: string } | null) => {
+    const tone = 'source' in item ? historyKindTone(item.kind) : kindTone(item.kind);
     const sc = statusColors(statusTone(item.status));
-    const facts = itemFacts(item);
+    const facts = 'source' in item ? historyFacts(item) : itemFacts(item);
     const date = formatLongDate(item.date);
-    // A record from before the compensation overhaul (the server's `legacy: true`): marked, as on the web.
     const earlier = earlierRecordLabel(item);
     return (
       <View
         key={item.key}
         style={[styles.itemCard, { borderLeftColor: tone.solid }]}
         accessible
-        accessibilityLabel={`${tone.label}${date ? `, ${date}` : ''}. ${item.title}. ${item.statusLabel}.${earlier ? ` ${earlier}.` : ''}`}
+        accessibilityLabel={`${tone.label}${date ? `, ${date}` : ''}. ${item.title}. ${item.statusLabel}.${hrMark ? ` ${hrMark.sourceLabel}.` : ''}${earlier ? ` ${earlier}.` : ''}`}
       >
         <View style={styles.itemTop}>
           <View style={[styles.kindChip, { backgroundColor: isDark ? tone.softDark : tone.softLight }]}>
@@ -195,10 +222,26 @@ export default function CompensationScreen() {
             </View>
           )}
         </View>
-        {!!earlier && (
-          <View style={styles.earlierChip} testID="compensation-earlier-record">
-            <MaterialCommunityIcons name="history" size={12} color={Colors.textMuted} />
-            <Text style={styles.earlierChipText}>{earlier}</Text>
+        {(!!hrMark || !!earlier) && (
+          <View style={styles.markRow}>
+            {!!hrMark && (
+              <View style={[styles.sourceChip, hrMark.givenByHr ? styles.sourceChipHr : styles.sourceChipAuto]}>
+                <MaterialCommunityIcons
+                  name={hrMark.givenByHr ? 'account-tie-outline' : 'robot-outline'}
+                  size={12}
+                  color={hrMark.givenByHr ? Colors.primary : Colors.textMuted}
+                />
+                <Text style={[styles.sourceChipText, { color: hrMark.givenByHr ? Colors.primary : Colors.textMuted }]}>
+                  {hrMark.sourceLabel}
+                </Text>
+              </View>
+            )}
+            {!!earlier && (
+              <View style={styles.earlierChip} testID="compensation-earlier-record">
+                <MaterialCommunityIcons name="history" size={12} color={Colors.textMuted} />
+                <Text style={styles.earlierChipText}>{earlier}</Text>
+              </View>
+            )}
           </View>
         )}
         <Text style={styles.itemTitle}>{item.title}</Text>
@@ -218,6 +261,151 @@ export default function CompensationScreen() {
               </View>
             ))}
           </View>
+        )}
+      </View>
+    );
+  };
+
+  const fallbackSections = groupItems(data.items);
+
+  const timeline = () => {
+    if (history.isLoading) {
+      return (
+        <View>
+          <Skeleton height={36} borderRadius={BorderRadius.full} style={{ marginBottom: 12 }} />
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}
+        </View>
+      );
+    }
+    if (!hist) {
+      // The year could not be loaded: say so, offer Retry, and still show the last 90 days the main reply carries.
+      return (
+        <View>
+          <View style={styles.inlineError}>
+            <MaterialCommunityIcons name="timeline-alert-outline" size={18} color={Colors.statusRed} />
+            <Text style={styles.inlineErrorText}>Your full compensation history could not be loaded. The last 90 days are below.</Text>
+            <TouchableOpacity onPress={() => history.refetch()} style={styles.inlineRetry} accessibilityRole="button" accessibilityLabel="Try loading the history again">
+              <Text style={styles.inlineRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+          {fallbackSections.map((s) => (
+            <View key={s.group} style={styles.section}>
+              <View style={styles.sectionHead}>
+                <Text style={styles.sectionTitle} accessibilityRole="header">{s.title}</Text>
+                <Text style={styles.sectionCount}>{s.items.length}</Text>
+              </View>
+              {!!s.subtitle && <Text style={styles.sectionSub}>{s.subtitle}</Text>}
+              <View style={styles.itemList}>{s.items.map((it) => renderCard(it, null))}</View>
+            </View>
+          ))}
+        </View>
+      );
+    }
+
+    const counts: Record<SourceFilter, number> = {
+      all: hist.items.length,
+      hr: hist.items.filter((i) => i.source === 'hr').length,
+      automatic: hist.items.filter((i) => i.source === 'automatic').length,
+      company: hist.items.filter((i) => i.source === 'company').length,
+    };
+
+    return (
+      <View>
+        {hist.years.length > 1 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow} accessibilityRole="tablist">
+            {hist.years.map((y) => {
+              const active = y === hist.year;
+              return (
+                <TouchableOpacity
+                  key={y}
+                  onPress={() => setYear(y)}
+                  style={[styles.yearChip, active && styles.chipActive]}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  accessibilityLabel={`Year ${y}`}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{y}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {FILTERS.map((f) => {
+            const active = filter === f.key;
+            return (
+              <TouchableOpacity
+                key={f.key}
+                onPress={() => setFilter(f.key)}
+                style={[styles.filterChip, active && styles.chipActive]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={`Show ${f.label}: ${counts[f.key]}`}
+              >
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{f.label}</Text>
+                <View style={[styles.countPill, active && styles.countPillActive]}>
+                  <Text style={[styles.countText, active && styles.countTextActive]}>{counts[f.key]}</Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
+        {months.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIcon}>
+              <MaterialCommunityIcons name="briefcase-clock-outline" size={30} color={Colors.primary} />
+            </View>
+            <Text style={styles.emptyTitle}>{filter === 'all' ? `Nothing in ${hist.year}` : `Nothing of this kind in ${hist.year}`}</Text>
+            <Text style={styles.emptyText}>
+              When you work extra hours, or on a Sunday or a company holiday, it is detected and listed here. Anything HR
+              gives you or announces appears here too.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyBtn}
+              onPress={() => setTab('ask')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="How to ask HR for compensation"
+            >
+              <MaterialCommunityIcons name="headset" size={15} color={Colors.primary} />
+              <Text style={styles.emptyBtnText}>How to ask HR</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          months.map((m, mi) => (
+            <Reveal key={m.month} index={mi}>
+              <View style={styles.monthBlock}>
+                <View style={styles.monthHead}>
+                  <View style={styles.monthDot} />
+                  <Text style={styles.monthTitle} accessibilityRole="header">{m.label}</Text>
+                  <Text style={styles.monthCount}>
+                    {m.items.length} {m.items.length === 1 ? 'item' : 'items'}
+                    {m.hrShifts > 0 ? ` · ${shiftsLabel(m.hrShifts)} from HR` : ''}
+                  </Text>
+                </View>
+                <View style={styles.monthBody}>
+                  {!!m.otPay && (
+                    <TouchableOpacity
+                      style={styles.payLine}
+                      onPress={m.otPay.slipId ? () => router.push(`/salary/${m.otPay!.slipId}` as any) : undefined}
+                      disabled={!m.otPay.slipId}
+                      accessibilityRole={m.otPay.slipId ? 'button' : undefined}
+                      accessibilityLabel={`${otPayLine(m.otPay)}.${m.otPay.slipId ? ' Open the salary slip.' : ''}`}
+                    >
+                      <MaterialCommunityIcons name="cash-plus" size={16} color={Colors.statusGreen} />
+                      <Text style={styles.payLineText}>{otPayLine(m.otPay)}</Text>
+                      {!!m.otPay.slipId && <MaterialCommunityIcons name="chevron-right" size={16} color={Colors.textMuted} />}
+                    </TouchableOpacity>
+                  )}
+                  <View style={styles.itemList}>
+                    {m.items.map((it) => renderCard(it, { givenByHr: it.givenByHr, sourceLabel: it.sourceLabel }))}
+                  </View>
+                </View>
+              </View>
+            </Reveal>
+          ))
         )}
       </View>
     );
@@ -258,7 +446,7 @@ export default function CompensationScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={refresh}
         >
-          {showBalance && (
+          <Reveal index={0}>
             <LinearGradient
               colors={Colors.gradientPrimary}
               start={{ x: 0, y: 0 }}
@@ -274,11 +462,24 @@ export default function CompensationScreen() {
                 <Text style={styles.balanceUnit}>{balance.unit}</Text>
               </View>
               <Text style={styles.balanceHint}>
-                Added when your Department Head approves work you did on a Sunday or a company holiday. HR gives you a day
-                off from it.
+                Shifts HR or your Department Head added for extra work, less the days off HR already gave you from it.
               </Text>
+              {!!hist?.balance && !!hist.totals && (
+                <View style={styles.balanceStats}>
+                  <BalanceStat label={`Added in ${hist.year}`} value={shiftsLabel(hist.balance.creditedThisYear) ?? '0.00 shift'} />
+                  <BalanceStat label={`Taken in ${hist.year}`} value={shiftsLabel(hist.balance.takenThisYear) ?? '0.00 shift'} />
+                  <BalanceStat label="Given by HR" value={`${hist.totals.givenByHr}`} />
+                  {hist.totals.otPay > 0 && <BalanceStat label="Overtime pay" value={formatInr(hist.totals.otPay)} />}
+                </View>
+              )}
+              {!!hist?.balance?.alternativeDaysAvailable && (
+                <Text style={styles.balanceHint}>
+                  Includes {hist.balance.alternativeDaysAvailable} earlier alternative day
+                  {hist.balance.alternativeDaysAvailable === 1 ? '' : 's'} off still available.
+                </Text>
+              )}
             </LinearGradient>
-          )}
+          </Reveal>
 
           {!!today && allowanceBanner(today, 'today')}
           {!!tomorrow && allowanceBanner(tomorrow, 'tomorrow')}
@@ -298,39 +499,7 @@ export default function CompensationScreen() {
             </View>
           ) : null}
 
-          {sections.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <View style={styles.emptyIcon}>
-                <MaterialCommunityIcons name="briefcase-clock-outline" size={30} color={Colors.primary} />
-              </View>
-              <Text style={styles.emptyTitle}>Nothing here yet</Text>
-              <Text style={styles.emptyText}>
-                When you work extra hours, or on a Sunday or a company holiday, it is detected and listed here. Anything HR
-                assigns to you appears here too.
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyBtn}
-                onPress={() => setTab('ask')}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="How to ask HR for compensation"
-              >
-                <MaterialCommunityIcons name="headset" size={15} color={Colors.primary} />
-                <Text style={styles.emptyBtnText}>How to ask HR</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            sections.map((s) => (
-              <View key={s.group} style={styles.section}>
-                <View style={styles.sectionHead}>
-                  <Text style={styles.sectionTitle} accessibilityRole="header">{s.title}</Text>
-                  <Text style={styles.sectionCount}>{s.items.length}</Text>
-                </View>
-                {!!s.subtitle && <Text style={styles.sectionSub}>{s.subtitle}</Text>}
-                <View style={styles.itemList}>{s.items.map(renderItem)}</View>
-              </View>
-            ))
-          )}
+          {timeline()}
         </ScrollView>
       ) : (
         <ScrollView
@@ -376,6 +545,16 @@ export default function CompensationScreen() {
   );
 }
 
+function BalanceStat({ label, value }: { label: string; value: string }) {
+  const styles = useThemedStyles(makeStyles);
+  return (
+    <View style={styles.balanceStat} accessible accessibilityLabel={`${label}: ${value}`}>
+      <Text style={[styles.balanceStatValue, TabularNums]} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+      <Text style={styles.balanceStatLabel} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+}
+
 const cardShadow = Platform.select({
   ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
   android: { elevation: 1 },
@@ -401,6 +580,17 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     paddingHorizontal: 20, paddingVertical: 12, minHeight: 44,
   },
   retryText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  inlineError: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.badgeRedBg, borderRadius: BorderRadius.lg,
+    padding: 12, marginBottom: 14,
+  },
+  inlineErrorText: { flex: 1, color: Colors.textPrimary, fontSize: 12.5, lineHeight: 18 },
+  inlineRetry: {
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.bgCard, minHeight: 36, justifyContent: 'center',
+  },
+  inlineRetryText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
 
   // Tabs
   tabs: {
@@ -433,6 +623,14 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   balanceValue: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 36 },
   balanceUnit: { color: 'rgba(255,255,255,0.85)', fontSize: 15, fontWeight: '700' },
   balanceHint: { color: 'rgba(255,255,255,0.8)', fontSize: 12, lineHeight: 17, marginTop: 4 },
+  balanceStats: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  balanceStat: {
+    flexGrow: 1, flexBasis: '22%', minWidth: 70,
+    backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: BorderRadius.md,
+    paddingHorizontal: 8, paddingVertical: 8,
+  },
+  balanceStatValue: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 13.5 },
+  balanceStatLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 10, fontWeight: '600', marginTop: 1 },
 
   // Allowance banner
   banner: {
@@ -456,7 +654,40 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   noteText: { flex: 1, color: Colors.textPrimary, fontSize: 12.5, lineHeight: 18 },
 
-  // Sections and items
+  // Year / filter chips
+  chipRow: { gap: 8, paddingBottom: 10 },
+  yearChip: {
+    paddingHorizontal: 14, minHeight: 36, justifyContent: 'center',
+    borderRadius: BorderRadius.full, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bgCard,
+  },
+  filterChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingLeft: 12, paddingRight: 6, minHeight: 36,
+    borderRadius: BorderRadius.full, borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bgCard,
+  },
+  chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  chipText: { color: Colors.textSecondary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
+  chipTextActive: { color: '#fff' },
+  countPill: { minWidth: 22, paddingHorizontal: 6, paddingVertical: 2, borderRadius: BorderRadius.full, backgroundColor: Colors.bgSurfaceLow, alignItems: 'center' },
+  countPillActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
+  countText: { color: Colors.textMuted, fontSize: 11, fontWeight: '800' },
+  countTextActive: { color: '#fff' },
+
+  // Timeline
+  monthBlock: { marginBottom: 6 },
+  monthHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6, marginBottom: 8 },
+  monthDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.primary },
+  monthTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 15 },
+  monthCount: { flex: 1, textAlign: 'right', color: Colors.textMuted, fontSize: 11.5, fontWeight: '700' },
+  monthBody: { borderLeftWidth: 2, borderLeftColor: Colors.outlineVariant, marginLeft: 4, paddingLeft: 12 },
+  payLine: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.badgeGreenBg, borderRadius: BorderRadius.lg,
+    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10, minHeight: 44,
+  },
+  payLineText: { flex: 1, color: Colors.textPrimary, fontSize: 12.5, fontWeight: '600', lineHeight: 17 },
+
+  // Sections (90-day fallback)
   section: { marginBottom: 6 },
   sectionHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginTop: 8 },
   sectionTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 15 },
@@ -481,6 +712,14 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   kindChipText: { fontSize: 11.5, fontWeight: '800', flexShrink: 1 },
   statusChip: { borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4, maxWidth: '100%' },
   statusChipText: { fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  markRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  sourceChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',
+    borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 3, borderWidth: 1,
+  },
+  sourceChipHr: { backgroundColor: Colors.primaryFixed, borderColor: Colors.primary },
+  sourceChipAuto: { backgroundColor: Colors.bgSurfaceLow, borderColor: Colors.border },
+  sourceChipText: { fontSize: 11, fontWeight: '700' },
   // "Earlier record": muted, under the kind/status row, the way the web draws its muted chip.
   earlierChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start',

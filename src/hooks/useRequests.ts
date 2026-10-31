@@ -35,6 +35,9 @@ export interface PermissionRequest {
   appliedOn: string;
   /** Where the request stands in HR's approval pipeline. Absent on an older backend. */
   approval?: ApprovalProgress | null;
+  /** Who approved / rejected it and as what ('hr' | 'dept_head'), kept on the request. */
+  approvedBy?: string | null;
+  approverRole?: string | null;
 }
 
 export interface PermissionsResult {
@@ -74,6 +77,9 @@ function normalizePermission(raw: any): PermissionRequest {
     hasCapInfo: hasCapInfo(raw),
     appliedOn: raw.appliedOn ?? raw.createdAt,
     approval: raw.approval ?? null,
+    // Who decided a request older than the approval trail (the badge on the card names them).
+    approvedBy: raw.approvedBy ?? null,
+    approverRole: raw.approverRole ?? null,
   };
 }
 
@@ -115,6 +121,8 @@ export function useSubmitPermission(employeeId: number | null) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['permissions', employeeId] });
+      // The monthly allowance / late pool on the Permission and My Shift pages count this one too.
+      queryClient.invalidateQueries({ queryKey: ['employee-shift-stats'] });
     },
   });
 }
@@ -154,6 +162,7 @@ export interface MissingPunchItem {
   approval?: ApprovalProgress | null;
 }
 
+/** The employee's missing punch requests: one month's when `month`/`year` are given, else the latest 300 (all months). */
 export function useMissingPunch(employeeId: number | null, month?: number, year?: number) {
   return useQuery({
     queryKey: ['missing-punch-requests', employeeId, month, year],

@@ -11,6 +11,7 @@ import {
   type ApprovalProgress,
   type ApprovalStepState,
 } from '../../lib/approval';
+import { deciderFromApproval, deciderText, type Decider } from '../../lib/approvalsDecider';
 
 const STATE_ICON: Record<ApprovalStepState, string> = {
   approved: 'check-circle',
@@ -26,20 +27,75 @@ const stateColor = (state: ApprovalStepState, Colors: Palette) =>
   : state === 'pending' ? Colors.statusYellow
   : Colors.outline;
 
-/** "Waiting for HR": who a pending request is with now. Nothing once it is decided, or when the server sent no
- *  `approval` (an older backend). */
+/**
+ * WHO approved or rejected a request, prominently: "Approved by HR (Meena) · 31 Oct, 10:05 AM" on a green (or red) band,
+ * with an optional second line (`note`). Nothing when `decider` is null. Owner 2026-10-31: every decided request must
+ * clearly show who decided it.
+ */
+export function DecisionBadge({
+  decider,
+  note,
+  tone,
+  style,
+  testID,
+}: {
+  decider: Decider | null | undefined;
+  note?: string | null;
+  /** Overrides the colour (the head's "approved, waiting for HR" is blue). */
+  tone?: 'approved' | 'rejected' | 'waiting';
+  style?: StyleProp<ViewStyle>;
+  testID?: string;
+}) {
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  if (!decider) return null;
+  const t = tone ?? decider.decision;
+  const fg = t === 'approved' ? Colors.badgeGreenText : t === 'rejected' ? Colors.badgeRedText : Colors.badgeBlueText;
+  const bg = t === 'approved' ? Colors.badgeGreenBg : t === 'rejected' ? Colors.badgeRedBg : Colors.badgeBlueBg;
+  const icon = t === 'waiting' ? 'progress-clock' : decider.decision === 'approved' ? 'check-decagram' : 'close-octagon';
+  const text = deciderText(decider);
+  return (
+    <View
+      style={[styles.decision, { backgroundColor: bg, borderColor: fg }, style]}
+      accessible
+      accessibilityLabel={note ? `${text}. ${note}` : text}
+      testID={testID}
+    >
+      <MaterialCommunityIcons name={icon as any} size={17} color={fg} />
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.decisionText, { color: fg }]}>{text}</Text>
+        {!!note && <Text style={[styles.decisionNote, { color: fg }]}>{note}</Text>}
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Where a request stands, in one chip: "Waiting for HR" while it is pending, and once it is decided WHO decided it
+ * ("Approved by HR (Meena) · 31 Oct, 10:05 AM", see DecisionBadge) - so every card that shows this chip names its
+ * approver. `fallback` names the decider of an old request whose `approval` block cannot (approvedBy / reviewedBy
+ * fields); `showDecision={false}` keeps the chip to the waiting state only (a screen that shows the decision itself).
+ * Nothing when the server sent no `approval` and no fallback.
+ */
 export function WaitingChip({
   approval,
   style,
+  showDecision = true,
+  fallback,
 }: {
   approval?: ApprovalProgress | null;
   style?: StyleProp<ViewStyle>;
+  showDecision?: boolean;
+  fallback?: Decider | null;
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   const text = waitingText(approval);
-  if (!text) return null;
+  if (!text) {
+    if (!showDecision) return null;
+    return <DecisionBadge decider={deciderFromApproval(approval) ?? fallback ?? null} style={style} />;
+  }
   return (
     <View style={[styles.chip, style]}>
       <MaterialCommunityIcons name="clock-outline" size={12} color={Colors.badgeBlueText} />
@@ -94,6 +150,19 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     paddingVertical: 4,
   },
   chipText: { color: Colors.badgeBlueText, fontSize: 11.5, fontWeight: '700', flexShrink: 1 },
+
+  decision: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'stretch',
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  decisionText: { fontSize: 13, fontWeight: '800', lineHeight: 17 },
+  decisionNote: { fontSize: 11.5, fontWeight: '600', marginTop: 1, opacity: 0.9 },
 
   trail: { gap: 5 },
   trailLabel: { color: Colors.textMuted, fontSize: 9.5, fontWeight: '800', letterSpacing: 0.5 },

@@ -31,6 +31,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
 import { isServerProblem } from '../../src/lib/supportContact';
 import { otpCopy } from '../../src/lib/otp';
+import { onlineManager } from '@tanstack/react-query';
 import { loginRequest, loginOptionsRequest, otpLoginRequest, type LoginOptions } from '../../src/hooks/useAuth';
 
 const schema = z.object({
@@ -92,12 +93,22 @@ export default function LoginScreen() {
   }, [setValue]);
 
   useEffect(() => {
-    loginOptionsRequest()
-      .then((o) => {
-        setOptions(o);
-        setMode(o.otpLogin ? 'otp' : 'password');
-      })
-      .catch(() => {});
+    let loaded = false;
+    const load = () => {
+      loginOptionsRequest()
+        .then((o) => {
+          loaded = true;
+          setOptions(o);
+          setMode(o.otpLogin ? 'otp' : 'password');
+        })
+        .catch(() => {});
+    };
+    load();
+    // Opened without internet: load the sign-in options once the phone is back online (src/lib/networkStatus.ts feeds
+    // TanStack's onlineManager).
+    return onlineManager.subscribe((online) => {
+      if (online && !loaded) load();
+    });
   }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'error') => {

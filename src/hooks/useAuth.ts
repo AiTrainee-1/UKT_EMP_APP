@@ -2,6 +2,14 @@ import { createContext, useContext } from 'react';
 import type { Href } from 'expo-router';
 import api from '../lib/api';
 import { setToken, setEmployeeId, setEmployeeName, clearAuth, getToken, getEmployeeId, getEmployeeName } from '../lib/auth';
+import {
+  classifySessionError,
+  classifySessionResponse,
+  sessionAction,
+  storedSessionUser,
+  type SessionAction,
+  type SessionCheck,
+} from '../lib/networkSession';
 
 export interface AuthUser {
   employeeId: number;
@@ -125,16 +133,81 @@ export async function setPasswordRequest(identifier: string, password: string) {
   return res.data;
 }
 
-export async function checkAuth(): Promise<AuthUser | null> {
-  const token = await getToken();
-  if (!token) return null;
+// ---------------------------------------------------------------------------
+// Session restore. The rule (src/lib/networkSession.ts): only the server can end a session. A stored sign-in is cleared
+// only when GET /auth/me is ANSWERED with a refusal (401, or the server's own 403). No internet, a timeout, a DNS
+// failure or a 5xx keeps the employee signed in with what is stored on the phone, and the server is asked again when
+// the internet comes back (app/_layout.tsx).
+// ---------------------------------------------------------------------------
+
+export interface StoredSession {
+  token: string | null;
+  /** The employee stored next to the token at sign-in, or null when there is none. */
+  user: AuthUser | null;
+}
+
+/** What the phone remembers from the last sign-in. Never touches the network. */
+export async function readStoredSession(): Promise<StoredSession> {
+  const token = await getToken().catch(() => null);
+  if (!token) return { token: null, user: null };
+  const [employeeId, name] = await Promise.all([getEmployeeId().catch(() => null), getEmployeeName().catch(() => null)]);
+  return { token, user: storedSessionUser(employeeId, name) };
+}
+
+export interface SessionVerification {
+  check: SessionCheck;
+  action: SessionAction;
+}
+
+/**
+ * Asks the server whether the stored token is still good. Never clears anything itself (the caller decides when);
+ * a 401 here is also seen by the API client, which runs the app's one orderly sign-out (src/lib/api.ts).
+ */
+export async function verifySession(stored: AuthUser | null): Promise<SessionVerification> {
+  let check: SessionCheck;
+  let data: unknown;
   try {
     const res = await api.get('/auth/me');
-    const employeeId = await getEmployeeId();
-    const name = await getEmployeeName();
-    return { employeeId: employeeId!, name: name || '', role: res.data.role };
-  } catch {
-    await clearAuth();
+    data = res.data;
+    check = classifySessionResponse(data);
+  } catch (err) {
+    check = classifySessionError(err);
+  }
+  const action = sessionAction(check, stored, data);
+  if (action.kind === 'signed-in' && !stored) {
+    // The phone had lost the stored employee: keep the server's copy for the next offline start.
+    await setEmployeeId(action.user.employeeId).catch(() => {});
+    await setEmployeeName(action.user.name).catch(() => {});
+  }
+  return { check, action };
+}
+
+/**
+ * The signed-in user after asking the server, or null for "show Login". Clears the stored sign-in only when the server
+ * refused the token; offline / timeout / server trouble returns the stored user instead.
+ */
+export async function checkAuth(): Promise<AuthUser | null> {
+  const stored = await readStoredSession();
+  if (!stored.token) return null;
+  const { action } = await verifySession(stored.user);
+  if (action.kind === 'sign-out') {
+    // Only if it is still the token that was refused (a new sign-in may have replaced it meanwhile).
+    if ((await getToken().catch(() => null)) === stored.token) await clearAuth();
     return null;
+  }
+  return action.kind === 'signed-in' ? action.user : null;
+}
+
+/**
+ * Whether our server answers at all (used on the login screens when the internet comes back, where there is no session
+ * to re-check). Any HTTP answer below 500 counts; no answer or a 5xx does not.
+ */
+export async function pingServer(): Promise<boolean> {
+  try {
+    await api.get('/auth/login-options', { isPublic: true });
+    return true;
+  } catch (err: any) {
+    const status = err?.response?.status;
+    return typeof status === 'number' && status < 500;
   }
 }

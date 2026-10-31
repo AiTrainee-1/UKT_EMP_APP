@@ -2,9 +2,12 @@
 // (pure functions, no React Native, unit-tested in approvalBadge.test.ts).
 //
 // The badge must be exactly what the screen can clear: the sum of the pending counts of the tabs the head actually sees
-// there, every count read from GET /manager/me (backend/api/manager_views.py::manager_me). It is NOT
-// `pendingApprovalsCount`: the server adds On-Duty requests to that total, and this app has no On-Duty tab, so the badge
-// would show a number the head can never clear. A kind this app has no tab for is never counted.
+// there, every count read from GET /manager/me (backend/api/manager_views.py::manager_me). A kind this app has no tab for is
+// never counted.
+//
+// On-Duty: until 2026-10-31 the screen had no On-Duty tab, so `pendingOnDutyCount` was left out (a number the head could
+// never clear). The tab exists now (Approvals -> On-Duty, behind the "can approve On-Duty" switch), so it is counted while
+// that switch is on - and on a current backend the badge equals the server's own `pendingApprovalsCount`.
 //
 // Outpass: the Outpass tab is counted from `pendingOutpassCount` (an additive key the server sends since the outpass
 // total became part of pendingApprovalsCount); an older backend that does not send it leaves outpass out of the badge.
@@ -17,6 +20,7 @@ export interface ManagerTabInfo {
   canApproveAttendance?: boolean;
   canApproveMissingPunch?: boolean;
   canApproveCompensation?: boolean;
+  canApproveOnDuty?: boolean;
   pendingApprovalsCount?: number;
   pendingLeavesCount?: number;
   pendingPermissionsCount?: number;
@@ -26,6 +30,7 @@ export interface ManagerTabInfo {
   pendingMissingPunchCount?: number;
   pendingCompensationCount?: number;
   pendingOutpassCount?: number;
+  pendingOnDutyCount?: number;
 }
 
 /** The tabs that depend on a per-person switch (Leave and Permission are always listed for a head). A switch an older
@@ -38,6 +43,8 @@ export interface ShownApprovalTabs {
   outpass: boolean;
   /** Holiday / Sunday work compensation claims. */
   holidayWork: boolean;
+  /** On-Duty requests (the switch "can approve On-Duty"). */
+  onDuty: boolean;
   resignation: boolean;
 }
 
@@ -49,6 +56,7 @@ export function shownApprovalTabs(manager: ManagerTabInfo | null | undefined): S
     missingPunch: m.canApproveMissingPunch === true,
     outpass: m.canApprovePermissions === true,
     holidayWork: m.canApproveCompensation === true,
+    onDuty: m.canApproveOnDuty === true,
     resignation: m.canApproveResignations === true,
   };
 }
@@ -66,6 +74,7 @@ const PER_KIND_KEYS = [
   'pendingMissingPunchCount',
   'pendingCompensationCount',
   'pendingOutpassCount',
+  'pendingOnDutyCount',
 ] as const;
 
 /**
@@ -86,6 +95,7 @@ export function approvalsBadgeCount(manager: ManagerTabInfo | null | undefined):
     (shown.missingPunch ? count(manager.pendingMissingPunchCount) : 0) +
     (shown.holidayWork ? count(manager.pendingCompensationCount) : 0) +
     (shown.outpass ? count(manager.pendingOutpassCount) : 0) +
+    (shown.onDuty ? count(manager.pendingOnDutyCount) : 0) +
     (shown.resignation ? count(manager.pendingResignationsCount) : 0)
   );
 }

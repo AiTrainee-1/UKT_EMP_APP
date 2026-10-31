@@ -3,573 +3,379 @@ import {
   View,
   Text,
   StyleSheet,
-  TouchableOpacity,
-  Image,
-  Animated,
-  Dimensions,
-  Platform,
+  Pressable,
   StatusBar,
   ScrollView,
   Share,
+  RefreshControl,
+  useWindowDimensions,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import QRCode from 'react-native-qrcode-svg';
-import { format } from 'date-fns';
+import { MotiView } from 'moti';
 
 import { useAuth } from '../../src/hooks/useAuth';
-import { useIdCard, useIdCardSettings, IdCardData, IdCardTemplate } from '../../src/hooks/useIdCard';
+import { useIdCard, useIdCardSettings, type IdCardData, type IdCardTemplate } from '../../src/hooks/useIdCard';
 import { useEmployee } from '../../src/hooks/useEmployee';
-import { Avatar } from '../../src/components/ui/Avatar';
 import { UKTLogo } from '../../src/components/UKTLogo';
-import { SkeletonCard } from '../../src/components/ui/Skeleton';
-import { Colors } from '../../src/constants/colors';
+import { Skeleton } from '../../src/components/ui/Skeleton';
+import { Reveal } from '../../src/components/Reveal';
+import { RetryPanel } from '../../src/components/documents/RetryPanel';
+import { FlipCard, type FlipCardHandle } from '../../src/components/idcard/FlipCard';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
+import { useReduceMotion } from '../../src/lib/motionPrefs';
+import { employeeStatusInfo, idCardHeight, idCardWidth, shareMessage, verifyUrl } from '../../src/lib/idCard';
 
-// Best-effort public web origin for the QR verify link — set
-// EXPO_PUBLIC_WEB_APP_URL to the HR Portal's real public URL once known.
-const WEB_ORIGIN =
-  process.env.EXPO_PUBLIC_WEB_APP_URL ??
-  (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/:\d+\/api\/?$/, '');
-
-const { width: SCREEN_W } = Dimensions.get('window');
-const CARD_W = Math.min(SCREEN_W - 56, 300);
-
-function fmtDate(str?: string | null) {
-  if (!str) return '—';
-  try {
-    return format(new Date(str), 'dd MMM yyyy');
-  } catch {
-    return str;
-  }
-}
-
-function DashRow({ label, value }: { label: string; value: string }) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <View style={rowSt.row}>
-      <Text style={rowSt.label}>{label}</Text>
-      <Text style={rowSt.value} numberOfLines={2}>{value || '—'}</Text>
-    </View>
-  );
-}
-
-const rowSt = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 5,
-    borderBottomWidth: 1,
-    borderBottomColor: '#c7d2e0',
-    borderStyle: 'dashed',
-  },
-  label: { color: '#5b6b80', fontSize: 9, fontWeight: '700' },
-  value: { color: '#0f172a', fontSize: 9, fontWeight: '700', flexShrink: 1, textAlign: 'right', maxWidth: '65%' },
-});
-
-interface FaceProps {
-  data: IdCardData;
-  template: IdCardTemplate;
-  qrValue: string;
-}
-
-function CardHeader({ template, data }: { template: IdCardTemplate; data: IdCardData }) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <>
-      <LinearGradient
-        colors={[template.primaryColor, template.secondaryColor]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={cardSt.headerBar}
-      >
-        <View style={cardSt.headerLogo}>
-          {data.company?.logo ? (
-            <Image source={{ uri: data.company.logo }} style={{ width: 24, height: 24, borderRadius: 12 }} />
-          ) : (
-            <UKTLogo size={22} />
-          )}
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={cardSt.companyName} numberOfLines={1}>{data.company?.name || 'UK Textiles'}</Text>
-          <Text style={cardSt.companyAddress} numberOfLines={1}>{data.company?.address || ''}</Text>
-        </View>
-      </LinearGradient>
-      <View style={cardSt.subHeader}>
-        <Text style={[cardSt.subHeaderText, { color: template.primaryColor }]}>EMPLOYEE IDENTITY CARD</Text>
-      </View>
-    </>
-  );
-}
-
-function CardFooter({ template }: { template: IdCardTemplate }) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <LinearGradient
-      colors={[template.primaryColor, template.secondaryColor, template.primaryColor]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 0 }}
-      style={cardSt.footerBar}
-    />
-  );
-}
-
-function StaffFront({ data, template }: FaceProps) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <View style={[cardSt.card, { width: CARD_W, aspectRatio: 240 / 380 }]}>
-      <CardHeader template={template} data={data} />
-      <View style={cardSt.staffBody}>
-        <Avatar uri={data.photoUrl} name={data.name} size={96} borderColor={template.secondaryColor} bgColor={Colors.primaryFixed} />
-        <Text style={cardSt.name} numberOfLines={2}>{data.name}</Text>
-        <View style={[cardSt.designationPill, { backgroundColor: `${template.primaryColor}18` }]}>
-          <Text style={[cardSt.designationText, { color: template.primaryColor }]} numberOfLines={1}>{data.designation}</Text>
-        </View>
-        <LinearGradient
-          colors={[template.primaryColor, template.secondaryColor]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={cardSt.codeStrip}
-        >
-          <Text style={cardSt.codeLabel}>EMPLOYEE CODE</Text>
-          <Text style={cardSt.codeValue}>{data.code}</Text>
-        </LinearGradient>
-        <View style={{ width: '100%' }}>
-          <DashRow label="Department" value={data.department} />
-          <DashRow label="Joined" value={fmtDate(data.joinDate)} />
-        </View>
-      </View>
-      <CardFooter template={template} />
-    </View>
-  );
-}
-
-function StaffBack({ data, template, qrValue }: FaceProps) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <View style={[cardSt.card, { width: CARD_W, aspectRatio: 240 / 380 }]}>
-      <CardHeader template={template} data={data} />
-      <View style={cardSt.staffBackBody}>
-        <DashRow label="Blood Group" value={data.bloodGroup || ''} />
-        <DashRow label="Date of Birth" value={fmtDate(data.dateOfBirth)} />
-        <DashRow label="Emergency Contact" value={data.emergencyContact || ''} />
-        <DashRow label="Address" value={data.address || ''} />
-
-        {template.showQrOnBack && !!qrValue && (
-          <View style={cardSt.qrWrap}>
-            <QRCode value={qrValue} size={80} color="#0f172a" backgroundColor="#fff" />
-            <Text style={[cardSt.qrCaption, { color: template.primaryColor }]}>SCAN TO VERIFY EMPLOYEE</Text>
-          </View>
-        )}
-
-        <Text style={cardSt.instructions}>
-          This card remains the property of {data.company?.name || 'the company'}. If found, please return
-          to the address above. Unauthorized use is prohibited.
-        </Text>
-
-        {data.company?.signature ? (
-          <View style={cardSt.signatureWrap}>
-            <Image source={{ uri: data.company.signature }} style={{ width: 60, height: 22, resizeMode: 'contain' }} />
-            <Text style={cardSt.signatureCaption}>Authorised Signatory</Text>
-          </View>
-        ) : null}
-      </View>
-      <CardFooter template={template} />
-    </View>
-  );
-}
-
-function ProductionFront({ data, template }: FaceProps) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <View style={[cardSt.card, { width: CARD_W, aspectRatio: 380 / 240 }]}>
-      <CardHeader template={template} data={data} />
-      <View style={cardSt.prodBody}>
-        <Avatar uri={data.photoUrl} name={data.name} size={72} borderColor={template.secondaryColor} bgColor={Colors.primaryFixed} />
-        <View style={{ flex: 1, gap: 4 }}>
-          <Text style={cardSt.name} numberOfLines={2}>{data.name}</Text>
-          <View style={[cardSt.designationPill, { backgroundColor: `${template.primaryColor}18`, alignSelf: 'flex-start' }]}>
-            <Text style={[cardSt.designationText, { color: template.primaryColor }]} numberOfLines={1}>{data.designation}</Text>
-          </View>
-          <LinearGradient
-            colors={[template.primaryColor, template.secondaryColor]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={[cardSt.codeStrip, { paddingVertical: 4 }]}
-          >
-            <Text style={cardSt.codeValue}>{data.code}</Text>
-          </LinearGradient>
-        </View>
-        <View style={{ width: 110 }}>
-          <DashRow label="Dept" value={data.department} />
-          <DashRow label="Joined" value={fmtDate(data.joinDate)} />
-          <DashRow label="Type" value="Production" />
-        </View>
-      </View>
-      <CardFooter template={template} />
-    </View>
-  );
-}
-
-function ProductionBack({ data, template, qrValue }: FaceProps) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <View style={[cardSt.card, { width: CARD_W, aspectRatio: 380 / 240 }]}>
-      <CardHeader template={template} data={data} />
-      <View style={cardSt.prodBody}>
-        {template.showQrOnBack && !!qrValue && (
-          <View style={cardSt.qrWrap}>
-            <QRCode value={qrValue} size={72} color="#0f172a" backgroundColor="#fff" />
-            <Text style={[cardSt.qrCaption, { color: template.primaryColor, fontSize: 7 }]}>SCAN TO VERIFY</Text>
-          </View>
-        )}
-        <View style={{ flex: 1, gap: 2 }}>
-          <DashRow label="Blood Group" value={data.bloodGroup || ''} />
-          <DashRow label="Date of Birth" value={fmtDate(data.dateOfBirth)} />
-          <DashRow label="Emergency" value={data.emergencyContact || ''} />
-          <DashRow label="Address" value={data.address || ''} />
-        </View>
-      </View>
-      <CardFooter template={template} />
-    </View>
-  );
-}
-
-function FlipCard({ data, template, qrValue, isProduction }: FaceProps & { isProduction: boolean }) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  const flipAnim = useRef(new Animated.Value(0)).current;
-  const [showingBack, setShowingBack] = useState(false);
-
-  const flip = () => {
-    Animated.spring(flipAnim, {
-      toValue: showingBack ? 0 : 1,
-      friction: 8.5,
-      tension: 10,
-      useNativeDriver: true,
-    }).start();
-    setShowingBack((v) => !v);
-  };
-
-  const frontRotate = flipAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
-  const backRotate = flipAnim.interpolate({ inputRange: [0, 1], outputRange: ['180deg', '360deg'] });
-
-  const Front = isProduction ? ProductionFront : StaffFront;
-  const Back = isProduction ? ProductionBack : StaffBack;
-
-  return (
-    <TouchableOpacity activeOpacity={0.92} onPress={flip} style={{ alignItems: 'center' }}>
-      <View>
-        <Animated.View style={[cardSt.flipFace, { transform: [{ rotateY: frontRotate }] }]}>
-          <Front data={data} template={template} qrValue={qrValue} />
-        </Animated.View>
-        <Animated.View style={[cardSt.flipFace, cardSt.flipBack, { transform: [{ rotateY: backRotate }] }]}>
-          <Back data={data} template={template} qrValue={qrValue} />
-        </Animated.View>
-      </View>
-      <View style={cardSt.flipHint}>
-        <MaterialCommunityIcons name="rotate-3d-variant" size={13} color={Colors.textMuted} />
-        <Text style={cardSt.flipHintText}>Tap card to flip</Text>
-      </View>
-    </TouchableOpacity>
-  );
-}
+const DEFAULT_TEMPLATE: IdCardTemplate = { primaryColor: '#1E3A8A', secondaryColor: '#2563EB', showQrOnBack: true };
 
 export default function IdCardScreen() {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
+  const { C, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const reduceMotion = useReduceMotion();
+  const { width: windowWidth } = useWindowDimensions();
 
   const { user } = useAuth();
-  const { data: card, isLoading: cardLoading } = useIdCard(user?.employeeId ?? null);
-  const { data: settings } = useIdCardSettings();
-  const { data: emp, isLoading: empLoading } = useEmployee(user?.employeeId ?? null);
+  const employeeId = user?.employeeId ?? null;
+  const cardQ = useIdCard(employeeId);
+  const settingsQ = useIdCardSettings();
+  const empQ = useEmployee(employeeId);
+  const emp = empQ.data;
 
-  // Fall back to the general employee record if the dedicated ID card
-  // endpoint isn't reachable for this account.
-  const data: IdCardData | null = card ?? (emp
-    ? {
-        id: emp.id,
-        code: emp.employeeCode,
-        name: emp.name,
-        designation: emp.designationTitle,
-        department: emp.departmentName,
-        employmentType: emp.employmentType,
-        photoUrl: emp.photoUrl ?? null,
-        bloodGroup: emp.bloodGroup,
-        dateOfBirth: emp.dateOfBirth,
-        emergencyContact: emp.emergencyContact,
-        address: emp.address,
-        phone: emp.phone,
-        email: emp.email,
-        joinDate: emp.joinDate,
-        status: emp.status,
-        company: settings?.company,
-        template: settings?.template ?? {
-          primaryColor: '#1E3A8A',
-          secondaryColor: '#2563EB',
-          showQrOnBack: true,
-        },
-      }
-    : null);
+  // Fall back to the general employee record if the dedicated ID card endpoint isn't reachable.
+  const data: IdCardData | null =
+    cardQ.data ??
+    (emp
+      ? {
+          id: emp.id,
+          code: emp.employeeCode,
+          name: emp.name,
+          designation: emp.designationTitle,
+          department: emp.departmentName,
+          employmentType: emp.employmentType,
+          photoUrl: emp.photoUrl ?? null,
+          bloodGroup: emp.bloodGroup,
+          dateOfBirth: emp.dateOfBirth,
+          emergencyContact: emp.emergencyContact,
+          address: emp.address,
+          phone: emp.phone,
+          email: emp.email,
+          joinDate: emp.joinDate,
+          status: emp.status,
+          company: settingsQ.data?.company,
+          template: settingsQ.data?.template ?? DEFAULT_TEMPLATE,
+        }
+      : null);
 
-  const isLoading = cardLoading && empLoading;
+  const loading = !data && (cardQ.isLoading || empQ.isLoading);
+  const failed = !data && !loading;
+  const retrying = cardQ.isFetching || empQ.isFetching;
+  const retry = () => {
+    void cardQ.refetch();
+    void empQ.refetch();
+    void settingsQ.refetch();
+  };
+
   const isProduction = data?.employmentType === 'production';
-  const qrValue = data?.code ? `${WEB_ORIGIN}/verify/${data.code}` : '';
-  const template = data?.template ?? { primaryColor: '#1E3A8A', secondaryColor: '#2563EB', showQrOnBack: true };
+  const cardW = idCardWidth(windowWidth, isProduction);
+  const template = data?.template ?? DEFAULT_TEMPLATE;
+  const qrValue = verifyUrl(process.env.EXPO_PUBLIC_WEB_APP_URL, process.env.EXPO_PUBLIC_API_URL, data?.code);
+  const status = employeeStatusInfo(data?.status);
+  const inactiveLabel = status.kind === 'ended' ? status.label : null;
+
+  const flipRef = useRef<FlipCardHandle>(null);
+  const [side, setSide] = useState<'front' | 'back'>('front');
 
   const handleShare = () => {
     if (!data) return;
-    Share.share({
-      message: `${data.name} · ${data.designation}\nEmployee Code: ${data.code}${qrValue ? `\nVerify: ${qrValue}` : ''}`,
-    });
+    void Share.share({ message: shareMessage(data, qrValue, status) }).catch(() => {});
   };
+
+  const statusChip = (() => {
+    if (status.kind === 'unknown') return null;
+    const tone =
+      status.kind === 'active'
+        ? { bg: C.badgeGreenBg, fg: C.badgeGreenText, dot: C.statusGreen }
+        : status.kind === 'ended'
+          ? { bg: C.badgeRedBg, fg: C.badgeRedText, dot: C.statusRed }
+          : { bg: C.badgeBlueBg, fg: C.badgeBlueText, dot: C.statusBlue };
+    return (
+      <View
+        style={[styles.chip, { backgroundColor: tone.bg }]}
+        accessible
+        accessibilityLabel={`Employment status from HR: ${status.label}`}
+      >
+        <View style={[styles.chipDot, { backgroundColor: tone.dot }]} />
+        <Text style={[styles.chipText, { color: tone.fg }]}>{status.label}</Text>
+      </View>
+    );
+  })();
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
-        </TouchableOpacity>
-        <UKTLogo size={28} />
-        <View>
-          <Text style={styles.brandName}>UKTEXTILES</Text>
-          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
-        </View>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          style={styles.avatarBtn}
-          onPress={() => router.push('/(tabs)/profile')}
-          activeOpacity={0.85}
+        <Pressable
+          onPress={() => router.back()}
+          style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          hitSlop={8}
         >
-          <MaterialCommunityIcons name="account" size={18} color="#fff" />
-        </TouchableOpacity>
+          <MaterialCommunityIcons name="arrow-left" size={20} color={C.textPrimary} />
+        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.headerTitle} accessibilityRole="header">Digital ID Card</Text>
+          <Text style={styles.headerSubtitle}>Show this when someone asks for your ID</Text>
+        </View>
+        <Pressable
+          style={({ pressed }) => [styles.avatarBtn, pressed && { opacity: 0.8 }]}
+          onPress={() => router.push('/(tabs)/profile')}
+          accessibilityRole="button"
+          accessibilityLabel="Open my profile"
+          hitSlop={6}
+        >
+          <MaterialCommunityIcons name="account" size={18} color={C.onPrimary} />
+        </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={styles.titleRow}>
-          <MaterialCommunityIcons name="card-account-details-outline" size={18} color={Colors.primary} />
-          <Text style={styles.titleText}>{isProduction ? 'Production Credential' : 'Staff Credential'}</Text>
-          <View style={{ flex: 1 }} />
-          <View style={styles.typePill}>
-            <Text style={styles.typePillText}>{isProduction ? 'Production' : 'Staff'}</Text>
+      {failed ? (
+        <RetryPanel
+          title="Couldn’t load your ID card"
+          message="Check your internet connection, then try again."
+          onRetry={retry}
+          retrying={retrying}
+        />
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl refreshing={!!data && retrying && !loading} onRefresh={retry} tintColor={C.primary} colors={[C.primary]} />
+          }
+        >
+          <Reveal index={0} style={styles.fullWidth}>
+            <View style={styles.titleRow}>
+              <View style={styles.brand}>
+                <UKTLogo size={26} />
+                <View>
+                  <Text style={styles.titleText}>{isProduction ? 'Production Credential' : 'Staff Credential'}</Text>
+                  <Text style={styles.titleSub}>{data?.company?.name || 'UK Textiles'}</Text>
+                </View>
+              </View>
+              {statusChip}
+            </View>
+          </Reveal>
+
+          {inactiveLabel && (
+            <Reveal index={1} style={styles.fullWidth}>
+              <View style={styles.warn} accessibilityLiveRegion="polite">
+                <MaterialCommunityIcons name="alert-octagon-outline" size={20} color={C.badgeRedText} />
+                <Text style={styles.warnText}>
+                  HR’s records show your status as <Text style={styles.warnStrong}>{inactiveLabel}</Text>. This card is
+                  not valid for entry or verification. If this is wrong, please contact HR.
+                </Text>
+              </View>
+            </Reveal>
+          )}
+
+          <View style={styles.cardArea}>
+            {loading || !data ? (
+              <View accessible accessibilityLabel="Loading your ID card">
+                <Skeleton width={cardW} height={idCardHeight(cardW, isProduction)} borderRadius={18} />
+              </View>
+            ) : (
+              <MotiView
+                from={reduceMotion ? { opacity: 1 } : { opacity: 0, translateY: 24, rotateX: '12deg' }}
+                animate={{ opacity: 1, translateY: 0, rotateX: '0deg' }}
+                transition={{ type: 'spring', damping: 16, stiffness: 120 }}
+              >
+                <FlipCard
+                  ref={flipRef}
+                  data={data}
+                  template={template}
+                  qrValue={qrValue}
+                  isProduction={isProduction}
+                  width={cardW}
+                  inactiveLabel={inactiveLabel}
+                  reduceMotion={reduceMotion}
+                  onSideChange={setSide}
+                />
+              </MotiView>
+            )}
           </View>
-        </View>
 
-        <View style={styles.flipHintPill}>
-          <MaterialCommunityIcons name="rotate-3d-variant" size={13} color={Colors.primary} />
-          <Text style={styles.flipHintPillText}>Tap card to flip view</Text>
-        </View>
+          {!!data && (
+            <Reveal index={2} style={styles.fullWidth}>
+              <Text style={styles.hint}>
+                <MaterialCommunityIcons name="gesture-tap" size={13} color={C.textMuted} /> Tap the card to see the{' '}
+                {side === 'front' ? 'back (blood group, emergency contact, QR code)' : 'front'}
+              </Text>
+              <View style={styles.actions}>
+                <Pressable
+                  onPress={() => flipRef.current?.flip()}
+                  accessibilityRole="button"
+                  accessibilityLabel={side === 'front' ? 'Show the back of the card' : 'Show the front of the card'}
+                  style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.8 }]}
+                >
+                  <MaterialCommunityIcons name="rotate-3d-variant" size={18} color={C.primary} />
+                  <Text style={styles.secondaryText}>{side === 'front' ? 'Show back' : 'Show front'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleShare}
+                  accessibilityRole="button"
+                  accessibilityLabel="Share my ID card details"
+                  style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.88 }]}
+                >
+                  <MaterialCommunityIcons name="share-variant-outline" size={18} color={C.onPrimary} />
+                  <Text style={styles.primaryText}>Share</Text>
+                </Pressable>
+              </View>
+            </Reveal>
+          )}
 
-        {isLoading || !data ? (
-          <SkeletonCard lines={10} />
-        ) : (
-          <FlipCard data={data} template={template} qrValue={qrValue} isProduction={isProduction} />
-        )}
-
-        <View style={styles.infoBox}>
-          <MaterialCommunityIcons name="shield-check-outline" size={16} color={Colors.textMuted} />
-          <Text style={styles.infoText}>
-            This is your official digital employee ID. Present it for verification when required.
-          </Text>
-        </View>
-
-        {!!data && (
-          <TouchableOpacity style={styles.shareBtn} onPress={handleShare} activeOpacity={0.85}>
-            <MaterialCommunityIcons name="share-variant-outline" size={16} color="#fff" />
-            <Text style={styles.shareBtnText}>Share ID Card</Text>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
+          {!!data && (
+            <Reveal index={3} style={styles.fullWidth}>
+              <View style={styles.infoCard}>
+                <View style={styles.infoRow}>
+                  <View style={styles.infoIcon}>
+                    <MaterialCommunityIcons name="qrcode-scan" size={17} color={C.primary} />
+                  </View>
+                  <Text style={styles.infoText}>
+                    The QR code on the back opens the company’s verification page, so security can confirm the card is
+                    yours.
+                  </Text>
+                </View>
+                <View style={[styles.infoRow, styles.infoDivider]}>
+                  <View style={styles.infoIcon}>
+                    <MaterialCommunityIcons name="account-box-outline" size={17} color={C.primary} />
+                  </View>
+                  <Text style={styles.infoText}>
+                    The photo is the one HR has on file (not the photo you set on this phone). To change it or fix any
+                    detail, please contact HR.
+                  </Text>
+                </View>
+              </View>
+            </Reveal>
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgLight },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: Colors.bgCard,
-    borderBottomWidth: 1, borderBottomColor: Colors.border,
-  },
-  backBtn: {
-    width: 34, height: 34, borderRadius: 17,
-    backgroundColor: Colors.bgSurfaceLow,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 12, letterSpacing: 0.2 },
-  brandSub: { color: Colors.textMuted, fontSize: 7.5, fontWeight: '700', letterSpacing: 0.6 },
-  avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+const makeStyles = (C: Palette) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: C.bgLight },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: C.bgCard,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+    },
+    backBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: C.bgSurfaceLow,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    headerTitle: { color: C.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+    headerSubtitle: { color: C.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 11.5, marginTop: 1 },
+    avatarBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: C.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  scroll: { padding: 16, paddingTop: 20, paddingBottom: 40, gap: 16, alignItems: 'center' },
+    scroll: { padding: 16, paddingTop: 18, paddingBottom: 40, gap: 16, alignItems: 'center' },
+    fullWidth: { width: '100%' },
 
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' },
-  titleText: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
-  typePill: { backgroundColor: Colors.primaryFixed, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4 },
-  typePillText: { color: Colors.primary, fontSize: 10.5, fontWeight: '800' },
+    titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, width: '100%' },
+    brand: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+    titleText: { color: C.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 16.5 },
+    titleSub: { color: C.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 12, marginTop: 1 },
+    chip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      borderRadius: BorderRadius.full,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    chipDot: { width: 7, height: 7, borderRadius: 3.5 },
+    chipText: { fontFamily: FontFamily.bodySemibold, fontSize: 11.5 },
 
-  flipHintPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.primaryFixed,
-    borderRadius: BorderRadius.full,
-    paddingHorizontal: 14, paddingVertical: 7,
-  },
-  flipHintPillText: { color: Colors.primary, fontSize: 11.5, fontWeight: '700' },
+    warn: {
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'flex-start',
+      backgroundColor: C.badgeRedBg,
+      borderRadius: BorderRadius.md,
+      borderWidth: 1,
+      borderColor: C.statusRed,
+      padding: 12,
+    },
+    warnText: { flex: 1, color: C.badgeRedText, fontFamily: FontFamily.bodyRegular, fontSize: 13, lineHeight: 19 },
+    warnStrong: { fontFamily: FontFamily.bodySemibold },
 
-  infoBox: {
-    flexDirection: 'row',
-    gap: 8,
-    backgroundColor: Colors.bgCard,
-    borderWidth: 1, borderColor: Colors.border,
-    borderRadius: BorderRadius.lg,
-    padding: 12,
-    alignItems: 'flex-start',
-    width: '100%',
-  },
-  infoText: { color: Colors.textMuted, fontSize: 12, flex: 1, lineHeight: 18 },
+    cardArea: { alignItems: 'center', paddingTop: 4, paddingBottom: 2 },
 
-  shareBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.full,
-    paddingVertical: 13,
-    width: '100%',
-  },
-  shareBtnText: { color: '#fff', fontSize: 13.5, fontWeight: '800' },
-});
+    hint: { color: C.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 12, textAlign: 'center', marginBottom: 12 },
+    actions: { flexDirection: 'row', gap: 10 },
+    secondaryBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: C.primaryFixed,
+      borderRadius: BorderRadius.full,
+      paddingVertical: 13,
+      minHeight: 48,
+    },
+    secondaryText: { color: C.primary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
+    primaryBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: C.primary,
+      borderRadius: BorderRadius.full,
+      paddingVertical: 13,
+      minHeight: 48,
+    },
+    primaryText: { color: C.onPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
 
-const cardSt = StyleSheet.create({
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    overflow: 'hidden',
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.18, shadowRadius: 20 },
-      android: { elevation: 10 },
-    }),
-  },
-  flipFace: {
-    backfaceVisibility: 'hidden',
-  },
-  flipBack: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-  },
-  flipHint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 12,
-  },
-  flipHintText: { color: Colors.textMuted, fontSize: 11, fontWeight: '600' },
-
-  headerBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 10,
-  },
-  headerLogo: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#fff',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  companyName: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  companyAddress: { color: 'rgba(255,255,255,0.85)', fontSize: 7 },
-  subHeader: {
-    backgroundColor: '#eaf6fd',
-    paddingVertical: 4,
-    alignItems: 'center',
-  },
-  subHeaderText: { fontSize: 8, fontWeight: '800', letterSpacing: 1.4 },
-
-  staffBody: {
-    flex: 1,
-    alignItems: 'center',
-    padding: 14,
-    gap: 8,
-  },
-  staffBackBody: {
-    flex: 1,
-    padding: 14,
-    gap: 4,
-  },
-  prodBody: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    gap: 12,
-  },
-
-  name: { color: '#0f172a', fontSize: 14, fontWeight: '900', textAlign: 'center' },
-  designationPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: BorderRadius.full,
-  },
-  designationText: { fontSize: 10, fontWeight: '700' },
-
-  codeStrip: {
-    width: '100%',
-    borderRadius: 8,
-    paddingVertical: 6,
-    alignItems: 'center',
-  },
-  codeLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 7, fontWeight: '700', letterSpacing: 1 },
-  codeValue: { color: '#fff', fontSize: 13, fontWeight: '900', letterSpacing: 1, fontFamily: Platform.select({ ios: 'Courier', android: 'monospace' }) },
-
-  qrWrap: { alignItems: 'center', gap: 4, marginTop: 6 },
-  qrCaption: { fontSize: 8, fontWeight: '800', letterSpacing: 0.8 },
-
-  instructions: { color: '#5b6b80', fontSize: 7, lineHeight: 10, textAlign: 'center', marginTop: 8 },
-
-  signatureWrap: { alignItems: 'center', marginTop: 8, gap: 2 },
-  signatureCaption: { color: '#5b6b80', fontSize: 7, fontWeight: '600' },
-
-  footerBar: { height: 12 },
-});
+    infoCard: {
+      backgroundColor: C.bgCard,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: BorderRadius.lg,
+      padding: 14,
+    },
+    infoRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+    infoDivider: { borderTopWidth: 1, borderTopColor: C.border, marginTop: 12, paddingTop: 12 },
+    infoIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      backgroundColor: C.primaryFixed,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    infoText: { flex: 1, color: C.textSecondary, fontFamily: FontFamily.bodyRegular, fontSize: 12.5, lineHeight: 18 },
+  });

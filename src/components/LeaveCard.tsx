@@ -9,7 +9,9 @@ import type { Palette } from '../theme/palettes';
 import { BorderRadius } from '../constants/theme';
 import { Badge } from './ui/Badge';
 import { ApprovalTrail, WaitingChip } from './approval/ApprovalTrail';
+import { deciderFromFields } from '../lib/approvalsDecider';
 import { LeaveRequest } from '../hooks/useLeave';
+import { leaveTitle, reasonCategoryIcon } from '../lib/leaveForm';
 
 interface Props {
   request: LeaveRequest;
@@ -51,13 +53,13 @@ export function LeaveCard({ request, index = 0 }: Props) {
       <View style={styles.top}>
         <View style={styles.typeRow}>
           <MaterialCommunityIcons
-            name={request.isHalfDay ? 'weather-sunset-up' : 'umbrella-outline'}
+            name={(request.reasonCategory ? reasonCategoryIcon(request.reasonCategory) : request.isHalfDay ? 'weather-sunset-up' : 'umbrella-outline') as any}
             size={16}
             color={Colors.primary}
           />
-          <Text style={styles.type}>{request.isHalfDay ? 'Half-Day Leave' : request.leaveType}</Text>
+          <Text style={styles.type}>{leaveTitle(request)}</Text>
         </View>
-        <Badge label={request.status} variant={variant} />
+        <Badge label={request.status === 'Pending' ? 'Waiting' : request.status} variant={variant} />
       </View>
       <View style={styles.dateRow}>
         <MaterialCommunityIcons name="calendar-outline" size={14} color={Colors.textMuted} />
@@ -68,10 +70,21 @@ export function LeaveCard({ request, index = 0 }: Props) {
           </View>
         )}
       </View>
-      {request.reason && (
+      {!!request.reason && (
         <Text style={styles.reason} numberOfLines={2}>"{request.reason}"</Text>
       )}
-      <WaitingChip approval={request.approval} />
+      {request.status !== 'Pending' && !!request.hrComment && (
+        <Text style={styles.comment} numberOfLines={3}>Note from approver: "{request.hrComment}"</Text>
+      )}
+      {/* Pending: who it waits for. Decided: WHO approved / rejected it, prominently (owner 2026-10-31). */}
+      <WaitingChip
+        approval={request.approval}
+        fallback={deciderFromFields({
+          status: request.status,
+          name: (request as any).approvedBy,
+          role: (request as any).approverRole,
+        })}
+      />
       <ApprovalTrail approval={request.approval} />
     </MotiView>
   );
@@ -123,4 +136,5 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     fontSize: 12,
     fontStyle: 'italic',
   },
+  comment: { color: Colors.textSecondary, fontSize: 12 },
 });

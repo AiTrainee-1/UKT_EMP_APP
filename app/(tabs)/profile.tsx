@@ -22,6 +22,7 @@ import { router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { APP_VERSION } from '../../src/lib/appVersion';
 import { useAuth, setPasswordRequest } from '../../src/hooks/useAuth';
+import { useConfirmSignOut } from '../../src/hooks/useSignOut';
 import { useEmployee, statusLabel } from '../../src/hooks/useEmployee';
 import { useShift } from '../../src/hooks/useShift';
 import { useFamily, RELATION_LABEL } from '../../src/hooks/useFamily';
@@ -92,7 +93,7 @@ export default function ProfileScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { data: emp, isLoading } = useEmployee(user?.employeeId ?? null);
   const { data: shift } = useShift(user?.employeeId ?? null);
   const { data: dependents } = useFamily(user?.employeeId ?? null);
@@ -129,12 +130,8 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: logout },
-    ]);
-  };
+  // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
+  const handleLogout = useConfirmSignOut();
 
   const resignationSubtitle = () => {
     if (!resignation) return 'View resignation & notice details';

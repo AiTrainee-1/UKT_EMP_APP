@@ -529,6 +529,8 @@ export function notificationRoute(type: unknown, viewer?: { isManager?: boolean 
   const t = typeof type === 'string' ? type.trim().toLowerCase() : '';
   if (t === 'compensation') return '/compensation';
   if (t === 'holiday_work') return viewer?.isManager === false ? null : APPROVALS_ROUTE;
+  // An employee reminding their Department Head of a waiting request (backend mobile_reminder_views.py).
+  if (t === 'approval_reminder') return viewer?.isManager === false ? null : APPROVALS_ROUTE;
   return null;
 }
 

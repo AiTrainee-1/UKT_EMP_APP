@@ -37,4 +37,11 @@ export async function clearAuth(): Promise<void> {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
   await SecureStore.deleteItemAsync(EMPLOYEE_ID_KEY);
   await SecureStore.deleteItemAsync(EMPLOYEE_NAME_KEY);
+  // Opened copies of HR documents (PAN, Aadhaar, ...) must not stay on a phone the next person signs in on. Required
+  // here, not imported: useDocuments imports this file.
+  try {
+    (require('../hooks/useDocuments') as typeof import('../hooks/useDocuments')).clearDocumentCache();
+  } catch {
+    /* best effort */
+  }
 }

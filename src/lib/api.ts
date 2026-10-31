@@ -2,6 +2,7 @@ import axios from 'axios';
 import { getToken, clearAuth } from './auth';
 import { router } from 'expo-router';
 import { markServerOffline, markServerOnline } from './serverStatus';
+import { noteServerAnswered } from './networkStatus';
 import { isNetworkFailure } from './supportContact';
 import { camelizeKeys, decamelizeKeys } from './caseKeys';
 
@@ -62,6 +63,9 @@ api.interceptors.response.use(
   (response) => {
     // A successful response means the server is there (see src/lib/serverStatus.ts).
     markServerOnline();
+    // ...and that the internet works (src/lib/networkStatus.ts). Only a JSON answer counts: a Wi-Fi sign-in page that
+    // answers every address with HTML is not our server.
+    if (response.data !== null && typeof response.data === 'object') noteServerAnswered();
     if (response.data) response.data = camelizeKeys(response.data);
     return response;
   },

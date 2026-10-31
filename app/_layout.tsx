@@ -4,8 +4,10 @@ import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { StatusBar } from 'expo-status-bar';
-import { AuthContext, AuthUser, checkAuth, useAuth } from '../src/hooks/useAuth';
-import { clearAuth } from '../src/lib/auth';
+import { AuthContext, AuthUser, pingServer, readStoredSession, useAuth, verifySession } from '../src/hooks/useAuth';
+import { clearAuth, getToken } from '../src/lib/auth';
+import { readNetworkOnline, startNetworkMonitoring } from '../src/lib/networkStatus';
+import { startupPlan } from '../src/lib/networkSession';
 import { setUnauthorizedHandler } from '../src/lib/api';
 import { router, type Href } from 'expo-router';
 import { Colors } from '../src/constants/colors';
@@ -102,9 +104,31 @@ const eb = StyleSheet.create({
   stack: { color: '#64748b', fontSize: 10, lineHeight: 16 },
 });
 
+// Queries pause while the phone is offline and pick up when it is back (src/lib/networkStatus.ts wires onlineManager).
+// Mutations keep failing straight away offline ('always'), so a button never spins until the internet returns and the
+// screens keep showing their own "could not reach the server" errors.
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 1000 * 60 * 5 } },
+  defaultOptions: {
+    queries: { retry: 1, staleTime: 1000 * 60 * 5 },
+    mutations: { networkMode: 'always' },
+  },
 });
+
+// Online at start-up with a stored sign-in: give the server this long to confirm it, then open with the stored user
+// and let the check finish in the background (never wait out the 15 s request timeout on the startup screen).
+const STARTUP_VERIFY_BUDGET_MS = 3000;
+// The longest "Reconnecting..." waits for the screens' refetch after the session check.
+const RECONNECT_REFETCH_LIMIT_MS = 10000;
+
+function settleWithin<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(null); },
+    );
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Resignation Guard — polls /api/my/resignation; deactivates on approval
@@ -268,12 +292,11 @@ export default function RootLayout() {
     Manrope_700Bold,
   });
 
-  useEffect(() => {
-    checkAuth()
-      .then((u) => { setUser(u); })
-      .catch(() => {})
-      .finally(() => { setIsLoading(false); });
-  }, []);
+  // The latest signed-in user, for the reconnect re-check (which runs outside React).
+  const userRef = useRef<AuthUser | null>(null);
+  userRef.current = user;
+
+  // (Restoring the sign-in at start-up and re-checking it when the internet comes back: see below the sign-out code.)
 
   // The HR / software-support contact details (Settings -> HR Contact in the HR portal). Fetched at app
   // start, before anyone signs in, so a launch with a working server saves them on the phone and they are
@@ -332,6 +355,84 @@ export default function RootLayout() {
     return () => setUnauthorizedHandler(null);
   }, []);
 
+  // Restoring the sign-in at start-up. Only the server can end a session (src/lib/networkSession.ts): the stored token
+  // is cleared only when GET /auth/me is answered with a refusal (401 / the server's own 403). No internet, a timeout or
+  // server trouble opens the app with the employee stored on the phone; the server is asked again when the internet
+  // comes back (the reconnect re-check below). Offline at start: straight to Home with the stored user, no waiting.
+  useEffect(() => {
+    let alive = true;
+    let finished = false;
+    const finish = (u: AuthUser | null) => {
+      if (!alive || finished) return;
+      finished = true;
+      setUser(u);
+      setIsLoading(false);
+    };
+    (async () => {
+      const stored = await readStoredSession();
+      const online = stored.token ? await readNetworkOnline() : null;
+      const plan = startupPlan({ hasToken: !!stored.token, hasStoredUser: !!stored.user, online });
+      if (plan === 'login' || plan === 'login-keep-token') return finish(null);
+      if (plan === 'open-stored') return finish(stored.user);
+
+      // Online: wait a little for the server; with a stored user, never longer than the budget.
+      const verifying = verifySession(stored.user);
+      const early = stored.user ? await settleWithin(verifying, STARTUP_VERIFY_BUDGET_MS) : await verifying;
+      if (early) {
+        if (early.action.kind === 'sign-out') {
+          // A 401 has already been through the API client's sign-out; this covers the 403 (and keeps a newer token).
+          if ((await getToken().catch(() => null)) === stored.token) await clearAuth();
+          return finish(null);
+        }
+        return finish(early.action.kind === 'signed-in' ? early.action.user : null);
+      }
+
+      // The server is slow: open with the stored user and let the check finish in the background.
+      finish(stored.user);
+      const late = await verifying;
+      if (!alive) return;
+      if (late.action.kind === 'sign-out') {
+        if ((await getToken().catch(() => null)) === stored.token) await logoutRef.current();
+      } else if (late.action.kind === 'signed-in') {
+        const fresh = late.action.user;
+        setUser((prev) => (prev && prev.employeeId === fresh.employeeId && prev.role !== fresh.role ? { ...prev, role: fresh.role } : prev));
+      }
+    })().catch(() => finish(null));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // The phone's internet (src/lib/networkStatus.ts) and the connection banner. Each time the internet comes back the bar
+  // says "Reconnecting..." while this re-checks the session and refetches what is on screen; true = the server answered.
+  useEffect(
+    () =>
+      startNetworkMonitoring(async () => {
+        const signedIn = userRef.current;
+        if (signedIn) {
+          const { check, action } = await verifySession(signedIn);
+          if (action.kind === 'sign-out') {
+            // A 401 has already signed out through the API client (token gone); a 403 signs out here, the same way.
+            if (await getToken().catch(() => null)) await logoutRef.current();
+            return true;
+          }
+          if (check !== 'valid') return false;
+          if (action.kind === 'signed-in' && action.user.role !== signedIn.role) {
+            const fresh = action.user;
+            setUser((prev) => (prev && prev.employeeId === fresh.employeeId ? { ...prev, role: fresh.role } : prev));
+          }
+        } else if (!(await pingServer())) {
+          return false;
+        }
+        await settleWithin(
+          queryClient.invalidateQueries({ refetchType: 'active' }, { cancelRefetch: false }),
+          RECONNECT_REFETCH_LIMIT_MS,
+        );
+        return true;
+      }),
+    [],
+  );
+
   if (!fontsReady) return null;
 
   return (
@@ -374,6 +475,7 @@ export default function RootLayout() {
             <Stack.Screen name="help" />
             <Stack.Screen name="compensation" />
             <Stack.Screen name="hod-assignment" />
+            <Stack.Screen name="casual-leave" />
           </Stack>
           </View>
           </AuthContext.Provider>

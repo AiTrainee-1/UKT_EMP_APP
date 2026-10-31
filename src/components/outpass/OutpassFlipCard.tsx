@@ -8,7 +8,8 @@ import { format } from 'date-fns';
 import QRCode from 'react-native-qrcode-svg';
 
 import { Avatar } from '../ui/Avatar';
-import { ApprovalTrail } from '../approval/ApprovalTrail';
+import { ApprovalTrail, DecisionBadge } from '../approval/ApprovalTrail';
+import { deciderFromApproval } from '../../lib/approvalsDecider';
 import { trailWorthShowing, waitingText } from '../../lib/approval';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
@@ -292,6 +293,7 @@ export function OutpassFlipCard({
               {request.status === 'pending' && (
                 <Text style={styles.backPendingNote}>{waitingText(request.approval) ?? 'Waiting for approval.'}</Text>
               )}
+              {showTrail && <DecisionBadge decider={deciderFromApproval(request.approval)} style={{ marginTop: 8 }} />}
               <ApprovalTrail approval={request.approval} />
             </View>
           </View>

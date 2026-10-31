@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Switch,
   RefreshControl,
-  Platform,
   StatusBar,
   Alert,
 } from 'react-native';
@@ -16,50 +15,46 @@ import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { format } from 'date-fns';
+import { MotiView } from 'moti';
 
 import { useAuth } from '../../src/hooks/useAuth';
-import { useLeaveRequests, useLeaveTypes, useApplyLeave, LeaveRequest } from '../../src/hooks/useLeave';
-import { useCasualLeaves, useCLEligibility, useApplyCasualLeave } from '../../src/hooks/useCasualLeave';
+import { useConfirmSignOut } from '../../src/hooks/useSignOut';
+import { useLeaveRequests, useApplyLeave, LeaveRequest } from '../../src/hooks/useLeave';
+import { useCasualLeaves, useCLEligibility } from '../../src/hooks/useCasualLeave';
 import { useHolidays } from '../../src/hooks/useHolidays';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { approvalErrorMessage, workflowOff } from '../../src/lib/approval';
 import { checkRequestDate } from '../../src/lib/requestWindow';
-import {
-  casualLeaveAvailable,
-  casualLeaveClosedReason,
-  casualLeaveDefaultDate,
-  casualLeaveMonthBlock,
-  isoToLocalDate,
-  rangeFieldErrors,
-  requestPickerLimits,
-} from '../../src/lib/requestWindowForm';
+import { isoToLocalDate, rangeFieldErrors, requestPickerLimits } from '../../src/lib/requestWindowForm';
+import { defaultView, rowsForView, viewCounts, type RequestView, type ViewOptions } from '../../src/lib/requestViews';
+import { asPortion, asStatus, monthCardState, monthKeyOf, yearMonths, yearTotals } from '../../src/lib/casualLeave';
+import { PLAIN_LEAVE_TYPE, REASON_CATEGORIES, leaveDayForMonth, type ReasonCategory } from '../../src/lib/leaveForm';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
+import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
+import { ClEntryCard } from '../../src/components/casualLeave/ClEntryCard';
+import { LoadError } from '../../src/components/casualLeave/LoadError';
 import { LeaveCard } from '../../src/components/LeaveCard';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Button } from '../../src/components/ui/Button';
-import { Input } from '../../src/components/ui/Input';
 import { TextArea } from '../../src/components/ui/TextArea';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { DatePickerField } from '../../src/components/ui/DatePickerField';
-import { Colors } from '../../src/constants/colors';
 import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
-import { FontFamily, TabularNums } from '../../src/constants/typography';
+import { FontFamily } from '../../src/constants/typography';
 
 const schema = z.object({
-  // Not required at the schema level -a Half Day request skips the leave-type
-  // picker entirely (see the halfDay branch in onSubmit), so this is only
-  // validated when halfDay is false.
-  leaveTypeId: z.string(),
+  // Why the employee needs leave (owner 2026-10-31): Sick Leave / Emergency / Personal / Other Reasons. Required.
+  reasonCategory: z.string().min(1, 'Choose why you need leave'),
   date: z.string().min(1, 'Date is required'),
   startDate: z.string().min(1, 'Start date is required'),
   endDate: z.string().min(1, 'End date is required'),
@@ -69,14 +64,19 @@ type FormData = z.infer<typeof schema>;
 
 // The sheet's starting values. `today` is read each time the sheet opens (see openApply), never once at module load.
 const makeDefaults = (today: string): FormData => ({
-  leaveTypeId: '',
+  reasonCategory: '',
   date: today,
   startDate: today,
   endDate: today,
   reason: '',
 });
 
-type ReqTab = 'live' | 'confirmed';
+const VIEW_EMPTY: Record<RequestView, { title: string; subtitle: string }> = {
+  waiting: { title: 'Nothing waiting', subtitle: 'Leave you ask for waits here until it is approved or rejected.' },
+  month: { title: 'No leave taken this month', subtitle: 'Approved leave for days of this month shows here.' },
+  approved: { title: 'Nothing approved yet', subtitle: 'Your approved leave shows here.' },
+  rejected: { title: 'Nothing rejected', subtitle: 'Leave that was not approved shows here.' },
+};
 
 export default function LeaveScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -88,82 +88,63 @@ export default function LeaveScreen() {
   // would go stale, and be wrong exactly around the 1st-3rd when the request window moves.
   const limits = requestPickerLimits(new Date());
   const todayStr = limits.window.today;
+  const thisYear = new Date().getFullYear();
 
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+  const employeeId = user?.employeeId ?? null;
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: logout },
-    ]);
-  };
+  // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
+  const handleLogout = useConfirmSignOut();
   const [showApply, setShowApply] = useState(false);
-  const [showCLApply, setShowCLApply] = useState(false);
-  const [clDate, setClDate] = useState(limits.defaultDate);
-  const [clReason, setClReason] = useState('');
-  // Errors are shown inside the sheets: the Toast is drawn behind their Modal. `server` is the server's own sentence.
-  const [clErrors, setClErrors] = useState<{ date?: string; reason?: string; server?: string }>({});
   const [formError, setFormError] = useState('');
   const [multiDay, setMultiDay] = useState(false);
   const [halfDay, setHalfDay] = useState(false);
   const [halfDaySlot, setHalfDaySlot] = useState<'morning' | 'afternoon' | ''>('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMsg, setSuccessMsg] = useState('Your leave request has been sent for approval.');
-  const [tab, setTab] = useState<ReqTab>('live');
-  const [showFilters, setShowFilters] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [dateFrom, setDateFrom] = useState<string | undefined>();
-  const [dateTo, setDateTo] = useState<string | undefined>();
+  const [view, setView] = useState<RequestView | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
     message: '', type: 'success', visible: false,
   });
 
-  const { data: requests, isLoading: reqLoading, refetch: refetchReq, isRefetching } = useLeaveRequests(user?.employeeId ?? null);
-  const { data: leaveTypes, isLoading: typesLoading } = useLeaveTypes();
-  const applyLeave = useApplyLeave(user?.employeeId ?? null);
+  const requestsQuery = useLeaveRequests(employeeId);
+  const { data: requests, isLoading: reqLoading, isError: reqFailed, isFetching: reqFetching } = requestsQuery;
+  const applyLeave = useApplyLeave(employeeId);
 
-  const { data: clEligibility, refetch: refetchClEligibility } = useCLEligibility(user?.employeeId ?? null);
-  const { data: clRequests } = useCasualLeaves(user?.employeeId ?? null, {
-    month: new Date().getMonth() + 1,
-    year: new Date().getFullYear(),
-  });
-  const applyCL = useApplyCasualLeave(user?.employeeId ?? null);
+  // Casual Leave lives on its own screen; the card here shows this month and the year at a glance.
+  const clEligibility = useCLEligibility(employeeId);
+  const clList = useCasualLeaves(employeeId);
+  const clRows = useMemo(
+    () => (clList.data ?? []).map((r) => ({ id: r.id, date: r.date, portion: asPortion(r.portion), status: asStatus(r.status) })),
+    [clList.data],
+  );
+  const clMonths = useMemo(() => yearMonths(clRows, thisYear), [clRows, thisYear]);
+  const clTotals = useMemo(() => yearTotals(clRows, thisYear), [clRows, thisYear]);
+  const clMonthsList = clEligibility.data?.months;
+  const clThisMonth = clMonthsList?.find((m) => m.month === monthKeyOf(new Date())) ?? clMonthsList?.[clMonthsList.length - 1];
+  const clState = clEligibility.data
+    ? monthCardState(clThisMonth, { eligible: clEligibility.data.eligible, reason: clEligibility.data.reason })
+    : null;
+
   // HR can switch a kind of request off (Approval Workflow Control). Only a hint that may be a minute old: the server
-  // refuses a new request either way and its message is shown (see onSubmit / onSubmitCL).
+  // refuses a new request either way and its message is shown (see onSubmit).
   const { data: approvalSummary } = useApprovalSummary();
   const leaveOff = workflowOff(approvalSummary?.leave);
-  const casualLeaveOff = workflowOff(approvalSummary?.casualLeave);
-  const { data: holidays } = useHolidays(new Date().getFullYear());
+  const { data: holidays } = useHolidays(thisYear);
   const nextHoliday = (holidays ?? [])
     .filter((h) => new Date(h.date) >= new Date(todayStr))
     .sort((a, b) => a.date.localeCompare(b.date))[0];
-  const clProgress = clEligibility?.yearlyEntitlement
-    ? Math.max(0, Math.min(1, (clEligibility.remainingThisYear ?? 0) / clEligibility.yearlyEntitlement))
-    : 0;
 
+  // The four views: Waiting / Taken this month (approved leave on a day of this month) / Approved / Rejected.
   const allRequests = requests ?? [];
-  const uniqueTypes = Array.from(new Set(allRequests.map((r) => r.leaveType).filter(Boolean)));
-
-  const passesFilters = (r: LeaveRequest) => {
-    if (typeFilter && r.leaveType !== typeFilter) return false;
-    if (dateFrom && r.endDate < dateFrom) return false;
-    if (dateTo && r.startDate > dateTo) return false;
-    return true;
+  const today = new Date();
+  const viewOpts: ViewOptions<LeaveRequest> = {
+    statusOf: (r) => r.status,
+    month: { dateOf: (r) => leaveDayForMonth(r.startDate, r.endDate, today), kind: 'taken' },
   };
-
-  const liveList = allRequests.filter((r) => r.status === 'Pending').filter(passesFilters);
-  const confirmedList = allRequests.filter((r) => r.status !== 'Pending').filter(passesFilters);
-  const activeList = tab === 'live' ? liveList : confirmedList;
-
-  const totalTaken = allRequests
-    .filter((r) => r.status === 'Approved')
-    .reduce((sum, r) => sum + (r.totalDays ?? r.days ?? 0), 0);
-  const submittedCount = allRequests.length;
-  const approvedCount = allRequests.filter((r) => r.status === 'Approved').length;
-  const rejectedCount = allRequests.filter((r) => r.status === 'Rejected').length;
-
-  const hasActiveFilters = !!typeFilter || !!dateFrom || !!dateTo;
-  const clearFilters = () => { setTypeFilter(null); setDateFrom(undefined); setDateTo(undefined); };
+  const counts = viewCounts(allRequests, viewOpts);
+  const activeView = view ?? defaultView(counts);
+  const shown = rowsForView(allRequests, activeView, viewOpts);
 
   const { control, handleSubmit, reset, watch, setError, clearErrors, setValue, getValues, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -228,6 +209,7 @@ export default function LeaveScreen() {
   const onSubmit = async (data: FormData) => {
     // The server is the authority (India time); this device-clock check, read now, only saves the employee a round trip.
     const now = new Date();
+    const reasonCategory = data.reasonCategory as ReasonCategory;
     if (halfDay) {
       if (!halfDaySlot) {
         failInSheet('Please select Morning or Afternoon.');
@@ -241,6 +223,8 @@ export default function LeaveScreen() {
       }
       try {
         await applyLeave.mutateAsync({
+          type: PLAIN_LEAVE_TYPE,
+          reasonCategory,
           startDate: data.date,
           endDate: data.date,
           reason: data.reason,
@@ -248,6 +232,7 @@ export default function LeaveScreen() {
           halfDaySlot,
         });
         closeSheet();
+        setView('waiting');
         setSuccessMsg('Your half-day leave request has been sent for approval.');
         setShowSuccess(true);
       } catch (err) {
@@ -256,10 +241,6 @@ export default function LeaveScreen() {
       return;
     }
 
-    if (!data.leaveTypeId) {
-      setError('leaveTypeId', { message: 'Please select a leave type' });
-      return;
-    }
     const startDate = multiDay ? data.startDate : data.date;
     const endDate = multiDay ? data.endDate : data.date;
     if (multiDay) {
@@ -280,13 +261,10 @@ export default function LeaveScreen() {
       }
     }
     try {
-      await applyLeave.mutateAsync({
-        leaveTypeId: Number(data.leaveTypeId),
-        startDate,
-        endDate,
-        reason: data.reason,
-      });
+      // A plain "Leave" with the reason category: never a Casual Leave type, never an id the app made up.
+      await applyLeave.mutateAsync({ type: PLAIN_LEAVE_TYPE, reasonCategory, startDate, endDate, reason: data.reason });
       closeSheet();
+      setView('waiting');
       setSuccessMsg('Your leave request has been sent for approval.');
       setShowSuccess(true);
     } catch (err) {
@@ -294,81 +272,13 @@ export default function LeaveScreen() {
     }
   };
 
-  // Casual Leave: which months the server says can be applied for (previous month only while the grace is open, then the
-  // current month). Absent on an older server, then the single `eligible` flag decides as before.
-  const clMonths = clEligibility?.months;
-  const clOpen = casualLeaveAvailable(clEligibility?.eligible, clMonths);
-  // Set when the month of the picked date is listed and not eligible: shown under the date, and Submit is blocked.
-  const clMonthBlock = casualLeaveMonthBlock(clDate, clMonths);
-  const clFormError = clErrors.server ?? clErrors.date ?? clErrors.reason;
-
-  // `refresh` false: the answer was just fetched (onCLCardPress), `months` is that fresh list.
-  const openCL = (refresh = true, months = clMonths) => {
-    // The list may be hours old (this tab stays mounted): ask again, so the months match the day it is opened.
-    if (refresh) refetchClEligibility({ cancelRefetch: false });
-    // On a grace day with only last month left open it starts on last month, not on a red message about the new month.
-    setClDate(casualLeaveDefaultDate(new Date(), months));
-    setClReason('');
-    setClErrors({});
-    setShowCLApply(true);
-  };
-
-  // The card is dead while the cached answer says closed, and that answer can be old (the month moved on, or last month's grace
-  // days opened it again; nothing else would refresh it). So a tap on a closed card asks the server first, then decides.
-  const clTapBusy = useRef(false);
-  const onCLCardPress = async () => {
-    if (casualLeaveOff) return;
-    if (clOpen) {
-      openCL();
-      return;
-    }
-    if (clTapBusy.current) return;
-    clTapBusy.current = true;
-    try {
-      const res = await refetchClEligibility({ cancelRefetch: false });
-      // A failed refresh keeps the old answer, so only a good one may open the sheet.
-      if (res.isSuccess && res.data && casualLeaveAvailable(res.data.eligible, res.data.months)) openCL(false, res.data.months);
-    } finally {
-      clTapBusy.current = false;
-    }
-  };
-
-  const closeCLSheet = () => {
-    setShowCLApply(false);
-    setClDate(casualLeaveDefaultDate(new Date(), clMonths));
-    setClReason('');
-    setClErrors({});
-  };
-
   // Pull-to-refresh renews the whole screen, the Casual Leave card included.
   const onRefresh = () => {
-    refetchReq();
-    refetchClEligibility();
+    void requestsQuery.refetch();
+    void clEligibility.refetch();
+    void clList.refetch();
   };
-
-  const onSubmitCL = async () => {
-    // The server is the authority (India time); this check, with "now" read at submit, only guides the employee.
-    const dateMessage = checkRequestDate(clDate, new Date());
-    const reasonMessage = clReason.trim().length < 5 ? 'Please provide a reason (min 5 characters).' : undefined;
-    if (dateMessage || reasonMessage || clMonthBlock) {
-      setClErrors({ date: dateMessage ?? undefined, reason: reasonMessage });
-      if (reasonMessage) showToast(reasonMessage, 'error');
-      return;
-    }
-    setClErrors({});
-    try {
-      await applyCL.mutateAsync({ date: clDate, reason: clReason.trim() });
-      closeCLSheet();
-      setSuccessMsg('Your casual leave request has been submitted.');
-      setShowSuccess(true);
-    } catch (err: any) {
-      const data = err?.response?.data;
-      const msg = data?.error || data?.message || 'Failed to submit. Please try again.';
-      // A refused date (code request_window_closed) is also marked under the date, where the employee will look for it.
-      setClErrors({ date: data?.code === 'request_window_closed' ? msg : undefined, server: msg });
-      showToast(msg, 'error');
-    }
-  };
+  const refreshing = requestsQuery.isRefetching || clList.isRefetching;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -402,7 +312,7 @@ export default function LeaveScreen() {
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
-            refreshing={isRefetching}
+            refreshing={refreshing}
             onRefresh={onRefresh}
             tintColor={Colors.primary}
             colors={[Colors.primary]}
@@ -413,13 +323,14 @@ export default function LeaveScreen() {
         <View style={styles.pageTitleRow}>
           <View>
             <Text style={styles.title}>Leave Portal</Text>
-            <Text style={styles.subtitle}>Manage your leave requests</Text>
+            <Text style={styles.subtitle}>Your leave and Casual Leave</Text>
           </View>
           <TouchableOpacity
             onPress={openApply}
             style={[styles.applyBtn, leaveOff && styles.applyBtnOff]}
             activeOpacity={0.85}
             disabled={leaveOff}
+            testID="leave-apply"
           >
             <MaterialCommunityIcons name="plus" size={16} color="#fff" />
             <Text style={styles.applyText}>Apply Leave</Text>
@@ -427,138 +338,40 @@ export default function LeaveScreen() {
         </View>
         <WorkflowOffNote workflow={approvalSummary?.leave} style={styles.offNote} />
 
-        {/* Casual Leave */}
-        <TouchableOpacity
-          style={styles.clCard}
-          onPress={onCLCardPress}
-          activeOpacity={!clOpen || casualLeaveOff ? 1 : 0.85}
-        >
-          <View style={styles.clTopRow}>
-            <View style={styles.clIcon}>
-              <MaterialCommunityIcons name="calendar-star" size={18} color={Colors.secondary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.clTitle}>Casual Leave (CL)</Text>
-              <Text style={styles.clSub} numberOfLines={1}>
-                {!clOpen
-                  ? casualLeaveClosedReason(clMonths, clEligibility?.reason || 'Not eligible this month')
-                  : `${clRequests?.length ?? 0} applied this month`}
-              </Text>
-            </View>
-            {clOpen && !casualLeaveOff ? (
-              <View style={styles.clQuickBtn}>
-                <Text style={styles.clQuickBtnText}>Quick Apply</Text>
-              </View>
-            ) : null}
-          </View>
-          <WorkflowOffNote workflow={approvalSummary?.casualLeave} />
-          {clEligibility?.yearlyEntitlement != null && (
-            <>
-              <View style={styles.clBalanceRow}>
-                <Text style={[styles.clBalanceNum, TabularNums]}>
-                  {clEligibility.remainingThisYear}
-                  <Text style={styles.clBalanceTotal}> / {clEligibility.yearlyEntitlement} Days Left</Text>
-                </Text>
-              </View>
-              <View style={styles.clProgressTrack}>
-                <View style={[styles.clProgressFill, { width: `${clProgress * 100}%` }]} />
-              </View>
-            </>
-          )}
-        </TouchableOpacity>
+        {/* Casual Leave: this month and the year, opens its own screen. (`as Href`: typed routes learn the new screen on
+            the next Metro start; the cast is harmless after that.) */}
+        <ClEntryCard
+          state={clState}
+          months={clList.data ? clMonths : null}
+          year={thisYear}
+          takenDays={clTotals.takenDays}
+          waitingDays={clTotals.waitingDays}
+          loading={clEligibility.isLoading}
+          failed={(clEligibility.isError && !clEligibility.data) || (clList.isError && !clList.data)}
+          onPress={() => router.push('/casual-leave' as Href)}
+          footer={<WorkflowOffNote workflow={approvalSummary?.casualLeave} />}
+        />
 
-        {/* Summary cards */}
-        <View style={styles.summaryGrid}>
-          {[
-            { label: 'Approved', value: approvedCount, icon: 'check-circle', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-            { label: 'Submitted', value: submittedCount, icon: 'send-outline', color: Colors.secondary, bg: Colors.secondaryFixed },
-            { label: 'Taken', value: totalTaken, icon: 'umbrella', color: Colors.primary, bg: Colors.primaryFixed },
-            { label: 'Rejected', value: rejectedCount, icon: 'close-circle', color: Colors.statusRed, bg: Colors.badgeRedBg },
-          ].map(({ label, value, icon, color, bg }) => (
-            <View key={label} style={styles.summaryCard}>
-              <View style={[styles.summaryIcon, { backgroundColor: bg }]}>
-                <MaterialCommunityIcons name={icon as any} size={16} color={color} />
-              </View>
-              <Text style={[styles.summaryNum, { color }, TabularNums]}>{value}</Text>
-              <Text style={styles.summaryLabel}>{label}</Text>
-            </View>
-          ))}
+        <Text style={styles.sectionTitle}>Your leave requests</Text>
+        <View style={styles.switcherWrap}>
+          <RequestViewSwitcher
+            value={activeView}
+            counts={counts}
+            onChange={setView}
+            labels={{ month: 'Taken this month' }}
+            testID="leave-views"
+          />
         </View>
-
-        {/* Tab switch */}
-        <View style={styles.tabBar}>
-          {([
-            { key: 'live' as ReqTab, label: 'Live Requests', count: liveList.length },
-            { key: 'confirmed' as ReqTab, label: 'Confirmed Requests', count: confirmedList.length },
-          ]).map((t) => (
-            <TouchableOpacity
-              key={t.key}
-              style={[styles.tabBtn, tab === t.key && styles.tabBtnActive]}
-              onPress={() => setTab(t.key)}
-              activeOpacity={0.8}
-            >
-              <Text style={[styles.tabLabel, tab === t.key && styles.tabLabelActive]}>
-                {t.label} ({t.count})
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Filters toggle */}
-        <TouchableOpacity style={styles.filterToggle} onPress={() => setShowFilters((v) => !v)} activeOpacity={0.8}>
-          <MaterialCommunityIcons name="filter-variant" size={16} color={Colors.primary} />
-          <Text style={styles.filterToggleText}>Filters{hasActiveFilters ? ' · Active' : ''}</Text>
-          <MaterialCommunityIcons name={showFilters ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textMuted} />
-        </TouchableOpacity>
-
-        {showFilters && (
-          <View style={styles.filterPanel}>
-            <Text style={styles.fieldLabel}>Leave Type</Text>
-            <View style={styles.chipsWrap}>
-              <TouchableOpacity
-                style={[styles.chip, !typeFilter && styles.chipActive]}
-                onPress={() => setTypeFilter(null)}
-              >
-                <Text style={[styles.chipText, !typeFilter && styles.chipTextActive]}>All</Text>
-              </TouchableOpacity>
-              {uniqueTypes.map((t) => (
-                <TouchableOpacity
-                  key={t}
-                  style={[styles.chip, typeFilter === t && styles.chipActive]}
-                  onPress={() => setTypeFilter(typeFilter === t ? null : t)}
-                >
-                  <Text style={[styles.chipText, typeFilter === t && styles.chipTextActive]}>{t}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-            <View style={styles.dateFilterRow}>
-              <View style={{ flex: 1 }}>
-                <DatePickerField label="From" value={dateFrom ?? ''} onChange={setDateFrom} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <DatePickerField label="To" value={dateTo ?? ''} onChange={setDateTo} />
-              </View>
-            </View>
-            {hasActiveFilters && (
-              <TouchableOpacity onPress={clearFilters} style={styles.clearFiltersBtn}>
-                <MaterialCommunityIcons name="close-circle-outline" size={14} color={Colors.textMuted} />
-                <Text style={styles.clearFiltersText}>Clear filters</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
 
         {/* Leave Requests */}
-        {reqLoading ? (
+        {reqFailed && !requests ? (
+          <LoadError title="Could not load your leave requests" onRetry={() => void requestsQuery.refetch()} busy={reqFetching} />
+        ) : reqLoading ? (
           Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
-        ) : !activeList.length ? (
-          <EmptyState
-            icon="umbrella-outline"
-            title={tab === 'live' ? 'No live requests' : 'No confirmed requests'}
-            subtitle={hasActiveFilters ? 'Try adjusting your filters' : 'Your leave applications will appear here'}
-          />
+        ) : !shown.length ? (
+          <EmptyState icon="umbrella-outline" title={VIEW_EMPTY[activeView].title} subtitle={VIEW_EMPTY[activeView].subtitle} />
         ) : (
-          activeList.map((r, i) => <LeaveCard key={r.id} request={r} index={i} />)
+          shown.map((r, i) => <LeaveCard key={r.id} request={r} index={i} />)
         )}
 
         {nextHoliday && (
@@ -581,37 +394,42 @@ export default function LeaveScreen() {
 
       {/* Apply Leave Sheet */}
       <BottomSheet visible={showApply} onClose={closeSheet} title="Apply for Leave">
-        {!halfDay && (
-          <>
-            <Text style={styles.fieldLabel}>Leave Type</Text>
-            <Controller
-              control={control}
-              name="leaveTypeId"
-              render={({ field: { onChange, value } }) => (
-                <View style={styles.chipsWrap}>
-                  {typesLoading ? (
-                    <Text style={styles.helperText}>Loading types…</Text>
-                  ) : !leaveTypes?.length ? (
-                    <Text style={styles.helperText}>No leave types configured</Text>
-                  ) : (
-                    leaveTypes.map((t) => (
-                      <TouchableOpacity
-                        key={t.id}
-                        style={[styles.chip, value === String(t.id) && styles.chipActive]}
-                        onPress={() => { onChange(String(t.id)); setFormError(''); }}
-                      >
-                        <Text style={[styles.chipText, value === String(t.id) && styles.chipTextActive]}>
-                          {t.name}
-                        </Text>
-                      </TouchableOpacity>
-                    ))
-                  )}
-                </View>
-              )}
-            />
-            {errors.leaveTypeId && <Text style={styles.errorText}>{errors.leaveTypeId.message as string}</Text>}
-          </>
-        )}
+        <Text style={styles.fieldLabel}>Why do you need leave?</Text>
+        <Controller
+          control={control}
+          name="reasonCategory"
+          render={({ field: { onChange, value } }) => (
+            <View style={styles.categoryGrid} accessibilityRole="radiogroup">
+              {REASON_CATEGORIES.map((c) => {
+                const active = value === c.key;
+                return (
+                  <TouchableOpacity
+                    key={c.key}
+                    style={styles.categoryCell}
+                    onPress={() => { onChange(c.key); clearErrors('reasonCategory'); setFormError(''); }}
+                    activeOpacity={0.85}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={`${c.label}. ${c.hint}`}
+                    testID={`leave-category-${c.key}`}
+                  >
+                    <MotiView
+                      animate={{ scale: active ? 1 : 0.97 }}
+                      transition={{ type: 'timing', duration: 160 }}
+                      style={[styles.category, active && styles.categoryActive]}
+                    >
+                      <MaterialCommunityIcons name={c.icon as any} size={20} color={active ? Colors.primary : Colors.textMuted} />
+                      <Text style={[styles.categoryLabel, active && styles.categoryLabelActive]}>{c.label}</Text>
+                      <Text style={styles.categoryHint} numberOfLines={2}>{c.hint}</Text>
+                    </MotiView>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
+        />
+        {errors.reasonCategory && <Text style={styles.errorText}>{errors.reasonCategory.message as string}</Text>}
+        <Text style={styles.clHint}>Casual Leave is applied separately, from the Casual Leave card.</Text>
 
         <View style={styles.toggleRow}>
           <View style={styles.toggleLeft}>
@@ -721,7 +539,7 @@ export default function LeaveScreen() {
           render={({ field: { onChange, value, onBlur } }) => (
             <TextArea
               label="Reason"
-              placeholder="Describe your reason for leave…"
+              placeholder="Tell your approver a little more…"
               value={value}
               onChangeText={(t) => { onChange(t); setFormError(''); }}
               onBlur={onBlur}
@@ -735,32 +553,6 @@ export default function LeaveScreen() {
         {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
         <WorkflowOffNote workflow={approvalSummary?.leave} style={styles.offNote} />
         <Button title="Submit Leave Request" onPress={submitLeave} loading={applyLeave.isPending} disabled={leaveOff} />
-      </BottomSheet>
-
-      {/* Apply Casual Leave Sheet */}
-      <BottomSheet visible={showCLApply} onClose={closeCLSheet} title="Apply for Casual Leave">
-        <DatePickerField
-          label="Date"
-          value={clDate}
-          onChange={(v) => { setClDate(v); setClErrors((e) => ({ ...e, date: undefined, server: undefined })); }}
-          error={clErrors.date ?? clMonthBlock ?? undefined}
-          minDate={limits.minDate}
-          maxDate={limits.maxDate}
-          hint={limits.hint}
-        />
-        <TextArea
-          label="Reason"
-          placeholder="Describe your reason for casual leave…"
-          value={clReason}
-          onChangeText={(t) => { setClReason(t); setClErrors((e) => ({ ...e, reason: undefined, server: undefined })); }}
-          minLength={5}
-          maxLength={200}
-          error={clErrors.reason}
-        />
-        {/* The same sentence again next to Submit: the field it belongs to may be scrolled out of sight. */}
-        {clFormError ? <Text style={styles.errorText}>{clFormError}</Text> : null}
-        <WorkflowOffNote workflow={approvalSummary?.casualLeave} style={styles.offNote} />
-        <Button title="Submit Request" onPress={onSubmitCL} loading={applyCL.isPending} disabled={casualLeaveOff || !!clMonthBlock} />
       </BottomSheet>
 
       <Toast {...toast} />
@@ -801,56 +593,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   offNote: { marginBottom: 14 },
 
   content: { paddingHorizontal: 16, paddingBottom: 100, gap: 4, paddingTop: 8 },
-  sectionTitle: { color: Colors.textPrimary, fontSize: 16, fontWeight: '800', marginBottom: 10, marginTop: 16 },
-
-  // Summary cards
-  summaryGrid: {
-    flexDirection: 'row',
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingVertical: 16,
-    marginTop: 14,
-    marginBottom: 14,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  summaryCard: { flex: 1, alignItems: 'center', gap: 6 },
-  summaryIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  summaryNum: { fontSize: 18, fontWeight: '900' },
-  summaryLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
-
-  clCard: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 14,
-    marginBottom: 14,
-    gap: 10,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  clTopRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  clIcon: {
-    width: 38, height: 38, borderRadius: 12,
-    backgroundColor: Colors.secondaryFixed,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  clTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
-  clSub: { color: Colors.textMuted, fontSize: 11, marginTop: 2, lineHeight: 15 },
-  clQuickBtn: { backgroundColor: Colors.primaryFixed, borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 6 },
-  clQuickBtnText: { color: Colors.primary, fontSize: 10.5, fontWeight: '800' },
-  clBalanceRow: { flexDirection: 'row', alignItems: 'baseline' },
-  clBalanceNum: { color: Colors.primary, fontFamily: FontFamily.displayBold, fontSize: 24 },
-  clBalanceTotal: { color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 12 },
-  clProgressTrack: { height: 5, borderRadius: 3, backgroundColor: Colors.bgSurfaceLow, overflow: 'hidden' },
-  clProgressFill: { height: 5, borderRadius: 3, backgroundColor: Colors.primary },
+  sectionTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 16, marginTop: 4, marginBottom: 4 },
+  switcherWrap: { marginHorizontal: -16, marginBottom: 8 },
 
   holidayCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -864,48 +608,24 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   holidayTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
   holidaySub: { color: Colors.textMuted, fontSize: 11.5, marginTop: 2 },
 
-  // Tab bar
-  tabBar: {
-    flexDirection: 'row',
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 4,
-    gap: 4,
-    marginBottom: 10,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  tabBtn: { flex: 1, borderRadius: BorderRadius.md, paddingVertical: 10, alignItems: 'center' },
-  tabBtnActive: { backgroundColor: Colors.primary },
-  tabLabel: { color: Colors.textMuted, fontSize: 12, fontWeight: '700' },
-  tabLabelActive: { color: '#fff' },
-
-  // Filters
-  filterToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 8,
-    marginBottom: 4,
-  },
-  filterToggleText: { flex: 1, color: Colors.primary, fontSize: 12, fontWeight: '700' },
-  filterPanel: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    padding: 14,
-    marginBottom: 12,
-    gap: 4,
-  },
-  dateFilterRow: { flexDirection: 'row', gap: 10 },
-  clearFiltersBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, alignSelf: 'flex-start', marginTop: 4 },
-  clearFiltersText: { color: Colors.textMuted, fontSize: 12, fontWeight: '600' },
-
   // Bottom sheet form styles
   fieldLabel: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700', marginBottom: 8, letterSpacing: 0.3 },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -4, marginBottom: 6 },
+  categoryCell: { width: '50%', padding: 4 },
+  category: {
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1.5,
+    borderColor: Colors.outlineVariant,
+    backgroundColor: Colors.bgSurfaceLow,
+    padding: 12,
+    gap: 4,
+    minHeight: 88,
+  },
+  categoryActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryFixed },
+  categoryLabel: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  categoryLabelActive: { color: Colors.primary },
+  categoryHint: { color: Colors.textMuted, fontSize: 11, lineHeight: 15 },
+  clHint: { color: Colors.textMuted, fontSize: 11.5, marginBottom: 12 },
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
   chip: {
     paddingHorizontal: 14,
@@ -919,7 +639,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   chipText: { color: Colors.textMuted, fontSize: 13, fontWeight: '600' },
   chipTextActive: { color: Colors.primary, fontWeight: '700' },
   errorText: { color: Colors.error, fontSize: 12, marginBottom: 8, marginTop: -4 },
-  helperText: { color: Colors.textMuted, fontSize: 13, fontStyle: 'italic' },
   toggleRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

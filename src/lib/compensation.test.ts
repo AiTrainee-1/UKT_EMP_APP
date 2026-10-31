@@ -416,3 +416,10 @@ test('the type of a tapped push is read from the notification object, defensivel
   assert.equal(pushNotificationType({ request: { content: { data: { type: '' } } } }), null)
   for (const bad of [null, undefined, 'push', 7, []]) assert.equal(pushNotificationType(bad), null, String(bad))
 })
+
+test('an employee reminder sent to a Department Head opens Approvals; a non-head is never sent there', () => {
+  assert.equal(notificationRoute('approval_reminder'), APPROVALS_ROUTE)
+  assert.equal(notificationRoute('approval_reminder', { isManager: true }), APPROVALS_ROUTE)
+  assert.equal(notificationRoute('approval_reminder', { isManager: false }), null)
+  assert.equal(notificationHint('approval_reminder', { isManager: true }), 'Opens approvals')
+})

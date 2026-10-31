@@ -8,30 +8,43 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MotiView } from 'moti';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useSalarySlip, downloadAndShareSalarySlip } from '../../src/hooks/useSalarySlips';
+import {
+  useSalarySlip,
+  useSalaryBreakdown,
+  downloadAndShareSalarySlip,
+  type SalaryPeriod,
+  type SalarySlip,
+} from '../../src/hooks/useSalarySlips';
 import { Badge } from '../../src/components/ui/Badge';
-import { SkeletonCard } from '../../src/components/ui/Skeleton';
-import { Colors } from '../../src/constants/colors';
+import { EmptyState } from '../../src/components/ui/EmptyState';
+import { Skeleton, SkeletonCard } from '../../src/components/ui/Skeleton';
+import { Reveal } from '../../src/components/Reveal';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius, Spacing } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
-
-const MONTHS = [
-  '', 'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+import {
+  formatCount,
+  formatInr,
+  periodTitle,
+  slipCycleLabel,
+  slipPeriodLabel,
+  waterfallRows,
+  type WaterfallRow,
+} from '../../src/lib/salaryInsights';
 
 function Row({ label, sub, value, highlight, tone }: { label: string; sub?: string; value: string; highlight?: boolean; tone?: 'green' | 'red' }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
-    <View style={styles.row}>
+    <View style={styles.row} accessible accessibilityLabel={`${label}${sub ? `, ${sub}` : ''}: ${value}`}>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowLabel}>{label}</Text>
         {!!sub && <Text style={styles.rowSub}>{sub}</Text>}
@@ -46,10 +59,6 @@ function Row({ label, sub, value, highlight, tone }: { label: string; sub?: stri
   );
 }
 
-function currency(n: number) {
-  return `₹${(n || 0).toLocaleString('en-IN')}`;
-}
-
 export default function SalarySlipDetail() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
@@ -57,7 +66,12 @@ export default function SalarySlipDetail() {
   const styles = useThemedStyles(makeStyles);
 
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { data: slip, isLoading } = useSalarySlip(Number(id));
+  const slipId = Number(id);
+  const validId = Number.isInteger(slipId) && slipId > 0;
+  const slipQ = useSalarySlip(validId ? slipId : null);
+  const breakdownQ = useSalaryBreakdown(validId ? slipId : null);
+  const slip = slipQ.data;
+  const breakdown = breakdownQ.data;
   const [downloading, setDownloading] = useState(false);
 
   const handleDownload = async () => {
@@ -72,97 +86,192 @@ export default function SalarySlipDetail() {
     }
   };
 
-  const totalEarnings = slip ? slip.basic + slip.hra + slip.allowances : 0;
+  const subtitle = breakdown
+    ? periodTitle(breakdown)
+    : slip
+      ? [slipPeriodLabel(slip), slipCycleLabel(slip)].filter(Boolean).join(' · ')
+      : '';
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.75}>
-          <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Salary Breakdown</Text>
-          {!!slip && <Text style={styles.headerSubtitle}>Monthly Payslip • {MONTHS[slip.month]} {slip.year}</Text>}
-        </View>
+  const header = (
+    <View style={styles.header}>
+      <TouchableOpacity
+        onPress={() => router.back()}
+        style={styles.backBtn}
+        activeOpacity={0.75}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+      >
+        <MaterialCommunityIcons name="arrow-left" size={20} color={Colors.textPrimary} />
+      </TouchableOpacity>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.headerTitle} accessibilityRole="header">Salary Breakdown</Text>
+        {!!subtitle && <Text style={styles.headerSubtitle}>{subtitle}</Text>}
       </View>
+    </View>
+  );
 
-      {isLoading || !slip ? (
+  if (!validId || (slipQ.isError && !slip)) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        {header}
+        <View style={styles.errorWrap}>
+          <EmptyState
+            icon="file-alert-outline"
+            title={validId ? 'Could not load this salary slip' : 'Salary slip not found'}
+            subtitle={
+              validId
+                ? 'Check your connection and try again. If it keeps failing, please contact HR.'
+                : 'Go back to your salary slips and open one from the list.'
+            }
+          />
+          {validId && (
+            <TouchableOpacity style={styles.retryBtn} onPress={() => { void slipQ.refetch(); void breakdownQ.refetch(); }} accessibilityRole="button" accessibilityLabel="Try again">
+              <MaterialCommunityIcons name="refresh" size={16} color="#fff" />
+              <Text style={styles.retryText}>Try again</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (slipQ.isLoading || !slip) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+        {header}
         <View style={styles.pad}>
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
         </View>
-      ) : (
-        <ScrollView contentContainerStyle={styles.pad} showsVerticalScrollIndicator={false}>
-          {/* ─── Net pay hero ─── */}
+      </SafeAreaView>
+    );
+  }
+
+  const production = breakdown ? breakdown.kind !== 'staff' : slip.employmentType === 'production';
+  const payroll = breakdown?.payroll ?? null;
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      {header}
+      <ScrollView
+        contentContainerStyle={styles.pad}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={slipQ.isRefetching || breakdownQ.isRefetching}
+            onRefresh={() => { void slipQ.refetch(); void breakdownQ.refetch(); }}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
+        }
+      >
+        {/* ─── Net pay hero ─── */}
+        <Reveal index={0}>
           <View style={styles.netCard}>
             <View style={styles.netTopRow}>
-              <Text style={styles.netLabel}>NET TAKE-HOME PAY</Text>
-              <Badge
-                label={slip.emailedAt ? 'Emailed & Verified' : 'Generated'}
-                variant={slip.emailedAt ? 'paid' : 'generated'}
-              />
+              <Text style={styles.netLabel}>FINAL PAYABLE SALARY</Text>
+              <Badge label={slip.emailedAt ? 'Emailed' : 'Generated'} variant={slip.emailedAt ? 'paid' : 'generated'} />
             </View>
-            <Text style={[styles.netValue, TabularNums]}>{currency(slip.netSalary)}</Text>
-          </View>
-
-          {/* ─── Identity ─── */}
-          <View style={styles.idCard}>
-            <View style={styles.idAvatar}>
-              <Text style={styles.idAvatarText}>{slip.employeeName?.[0] ?? '?'}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.idName}>{slip.employeeName}</Text>
-                <Text style={styles.idCode}>{slip.employeeCode}</Text>
+            <Text style={[styles.netValue, TabularNums]}>{formatInr(slip.netSalary)}</Text>
+            {!!payroll && (
+              <View style={styles.paidRow}>
+                <MaterialCommunityIcons
+                  name={payroll.status === 'paid' ? 'check-circle' : 'clock-outline'}
+                  size={14}
+                  color="rgba(255,255,255,0.9)"
+                />
+                <Text style={styles.paidText}>{payroll.statusLabel || (payroll.status === 'paid' ? 'Paid' : 'Not paid yet')}</Text>
               </View>
-              <Text style={styles.idMeta}>{slip.departmentName ?? '—'}</Text>
-            </View>
+            )}
+            {!!breakdown && breakdown.attendanceLoss != null && (
+              <Text style={styles.netHint}>
+                {breakdown.attendanceLoss > 0
+                  ? `Attendance cost you ${formatInr(breakdown.attendanceLoss)} this period.`
+                  : 'You lost nothing to attendance this period.'}
+              </Text>
+            )}
           </View>
+        </Reveal>
 
-          {/* ─── Attendance factor ─── */}
-          <Text style={styles.sectionLabel}>MUSTER ROLL & ATTENDANCE</Text>
-          <View style={styles.statsGrid}>
-            {[
-              { label: 'Total Days', value: slip.workingDays },
-              { label: 'Present', value: slip.presentDays, color: Colors.statusGreen },
-              { label: 'Absent', value: slip.absentDays, color: Colors.statusRed },
-              { label: 'Late-In', value: slip.lateDays, color: Colors.statusYellow },
-            ].map(({ label, value, color }) => (
-              <View key={label} style={styles.statCell}>
-                <Text style={[styles.statNum, TabularNums, color && { color }]}>{value}</Text>
-                <Text style={styles.statLabel}>{label}</Text>
-              </View>
-            ))}
+        {/* ─── Identity ─── */}
+        <View style={styles.idCard}>
+          <View style={styles.idAvatar}>
+            <Text style={styles.idAvatarText}>{slip.employeeName?.[0] ?? '?'}</Text>
           </View>
-
-          {/* ─── Gross / Deductions summary chips ─── */}
-          <View style={styles.chipsRow}>
-            <View style={[styles.chip, styles.chipGreen]}>
-              <MaterialCommunityIcons name="arrow-down-bold-circle-outline" size={13} color={Colors.statusGreen} />
-              <Text style={[styles.chipLabel, { color: Colors.statusGreen }]}>Gross Earnings</Text>
-              <Text style={[styles.chipValue, TabularNums, { color: Colors.statusGreen }]}>{currency(totalEarnings)}</Text>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Text style={styles.idName}>{slip.employeeName}</Text>
+              <Text style={styles.idCode}>{slip.employeeCode}</Text>
             </View>
-            <View style={[styles.chip, styles.chipRed]}>
-              <MaterialCommunityIcons name="arrow-up-bold-circle-outline" size={13} color={Colors.statusRed} />
-              <Text style={[styles.chipLabel, { color: Colors.statusRed }]}>Deductions</Text>
-              <Text style={[styles.chipValue, TabularNums, { color: Colors.statusRed }]}>{currency(slip.totalDeductions)}</Text>
-            </View>
+            <Text style={styles.idMeta}>
+              {[slip.departmentName, slip.slipNumber].filter(Boolean).join(' · ') || '—'}
+            </Text>
           </View>
+        </View>
 
-          {/* ─── Earnings ─── */}
+        {/* ─── The waterfall ─── */}
+        <Reveal index={1}>
+          <WaterfallCard
+            breakdown={breakdown}
+            loading={breakdownQ.isLoading}
+            failed={breakdownQ.isError && !breakdown}
+            onRetry={() => breakdownQ.refetch()}
+          />
+        </Reveal>
+
+        {/* ─── HR changes after the slip ─── */}
+        {!!payroll && payroll.hrChanged && (
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
-              <View style={[styles.sectionIcon, { backgroundColor: Colors.badgeGreenBg }]}>
-                <MaterialCommunityIcons name="plus" size={14} color={Colors.statusGreen} />
+              <View style={[styles.sectionIcon, { backgroundColor: Colors.badgeBlueBg }]}>
+                <MaterialCommunityIcons name="account-edit-outline" size={14} color={Colors.badgeBlueText} />
               </View>
-              <Text style={styles.sectionTitle}>Earnings Breakdown</Text>
+              <Text style={styles.sectionTitle}>Changed by HR after this slip</Text>
             </View>
-            <Row label="Basic Salary" value={currency(slip.basic)} />
-            <Row label="House Rent Allowance (HRA)" value={currency(slip.hra)} />
-            <Row label="Other Allowances" value={currency(slip.allowances)} />
-            <Row label="Gross Total Earnings" value={currency(totalEarnings)} highlight />
+            <Text style={styles.sectionNote}>
+              HR updated your payroll after the slip was made. The slip above stays as it was printed; this is what the
+              payroll shows now. Ask HR if anything is unclear.
+            </Text>
+            {!!payroll.bonus && <Row label="Bonus added by HR" value={`+ ${formatInr(payroll.bonus)}`} tone="green" />}
+            {!!payroll.deductionChange && (
+              <Row
+                label="Change to deductions"
+                value={`${payroll.deductionChange > 0 ? '- ' : '+ '}${formatInr(Math.abs(payroll.deductionChange))}`}
+                tone={payroll.deductionChange > 0 ? 'red' : 'green'}
+              />
+            )}
+            <Row label="Amount on the payroll now" value={formatInr(payroll.net)} highlight />
           </View>
+        )}
 
-          {/* ─── Deductions ─── */}
+        {/* ─── Attendance behind the pay ─── */}
+        <Text style={styles.sectionLabel}>ATTENDANCE BEHIND THIS PAY</Text>
+        <AttendanceGrid slip={slip} breakdown={breakdown} production={production} />
+
+        {/* ─── Earnings components ─── */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={[styles.sectionIcon, { backgroundColor: Colors.badgeGreenBg }]}>
+              <MaterialCommunityIcons name="plus" size={14} color={Colors.statusGreen} />
+            </View>
+            <Text style={styles.sectionTitle}>Earnings on the slip</Text>
+          </View>
+          {production ? (
+            <Row label="Pay for shifts worked" value={formatInr(slip.grossSalary ?? slip.basic)} />
+          ) : (
+            <>
+              <Row label="Basic Salary" value={formatInr(slip.basic)} />
+              <Row label="House Rent Allowance (HRA)" value={formatInr(slip.hra)} />
+              <Row label="Other Allowances" value={formatInr(slip.allowances)} />
+              <Row label="Salary earned" sub="Basic + HRA + Other Allowances" value={formatInr(slip.grossSalary ?? slip.basic + slip.hra + slip.allowances)} highlight />
+            </>
+          )}
+          {!!slip.otAmount && <Row label="Overtime pay" value={`+ ${formatInr(slip.otAmount)}`} tone="green" />}
+          {!!slip.incentives && <Row label="Incentives" value={`+ ${formatInr(slip.incentives)}`} tone="green" />}
+          {!!slip.bonuses && <Row label="Bonus" value={`+ ${formatInr(slip.bonuses)}`} tone="green" />}
+        </View>
+
+        {/* ─── Deductions (from the slip itself when the breakdown could not be loaded) ─── */}
+        {!breakdown && !breakdownQ.isLoading && (
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
               <View style={[styles.sectionIcon, { backgroundColor: Colors.badgeRedBg }]}>
@@ -170,49 +279,175 @@ export default function SalarySlipDetail() {
               </View>
               <Text style={styles.sectionTitle}>Deductions & Recoveries</Text>
             </View>
-            <Row label="Provident Fund (PF)" sub="Employee share" value={currency(slip.pfDeduction)} />
-            <Row label="Employee State Insurance (ESI)" value={currency(slip.esiDeduction)} />
-            <Row label="Advance Salary Recovery" value={currency(slip.advanceDeduction)} />
-            <Row label="Other Deductions" value={currency(slip.otherDeductions)} />
-            <Row label="Total Deductions" value={currency(slip.totalDeductions)} highlight />
+            <Row label="Provident Fund (PF)" value={formatInr(slip.pfDeduction)} />
+            <Row label="Employee State Insurance (ESI)" value={formatInr(slip.esiDeduction)} />
+            {!!slip.tdsDeduction && <Row label="Income tax (TDS)" value={formatInr(slip.tdsDeduction)} />}
+            <Row label="Advance Salary Recovery" value={formatInr(slip.advanceDeduction)} />
+            <Row label="Other Deductions" sub="Late and permission deductions" value={formatInr(slip.otherDeductions)} />
+            <Row label="Total Deductions" value={formatInr(slip.totalDeductions)} highlight />
           </View>
+        )}
 
-          {/* ─── Final calculation bar ─── */}
-          <View style={styles.calcBar}>
-            <View style={styles.calcIconWrap}>
-              <MaterialCommunityIcons name="calculator-variant-outline" size={18} color="#fff" />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.calcLabel}>Gross {currency(totalEarnings)} − Deductions {currency(slip.totalDeductions)}</Text>
-              <Text style={styles.calcHint}>Final Disbursement</Text>
-            </View>
-            <Text style={[styles.calcValue, TabularNums]}>{currency(slip.netSalary)}</Text>
-          </View>
+        <View style={styles.verifyBox}>
+          <MaterialCommunityIcons name="shield-check-outline" size={16} color={Colors.textMuted} />
+          <Text style={styles.verifyText}>
+            Every figure on this page is what the UKTextiles payroll stored for this slip. If something looks wrong,
+            please contact HR.
+          </Text>
+        </View>
 
-          <View style={styles.verifyBox}>
-            <MaterialCommunityIcons name="shield-check-outline" size={16} color={Colors.textMuted} />
-            <Text style={styles.verifyText}>
-              This is a digitally generated payslip from the UKTextiles Payroll System. No physical signature required.
-            </Text>
-          </View>
-
-          {/* ─── Download / Share ─── */}
-          <TouchableOpacity
-            style={[styles.downloadBtn, downloading && styles.downloadBtnDisabled]}
-            onPress={handleDownload}
-            disabled={downloading}
-            activeOpacity={0.85}
-          >
-            {downloading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <MaterialCommunityIcons name="download-outline" size={18} color="#fff" />
-            )}
-            <Text style={styles.downloadText}>{downloading ? 'Preparing PDF…' : 'Download / Share PDF'}</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      )}
+        {/* ─── Download / Share ─── */}
+        <TouchableOpacity
+          style={[styles.downloadBtn, downloading && styles.downloadBtnDisabled]}
+          onPress={handleDownload}
+          disabled={downloading}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Download or share the salary slip PDF"
+        >
+          {downloading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <MaterialCommunityIcons name="download-outline" size={18} color="#fff" />
+          )}
+          <Text style={styles.downloadText}>{downloading ? 'Preparing PDF…' : 'Download / Share PDF'}</Text>
+        </TouchableOpacity>
+      </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  From the allocated salary to the final payable salary
+// ─────────────────────────────────────────────────────────────────────────────
+
+function WaterfallCard({
+  breakdown,
+  loading,
+  failed,
+  onRetry,
+}: {
+  breakdown: SalaryPeriod | undefined;
+  loading: boolean;
+  failed: boolean;
+  onRetry: () => void;
+}) {
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  if (loading) {
+    return (
+      <View style={styles.section}>
+        <Skeleton height={18} width="60%" style={{ marginBottom: 14 }} />
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} height={34} style={{ marginBottom: 10 }} />
+        ))}
+      </View>
+    );
+  }
+  if (failed || !breakdown) {
+    return (
+      <View style={styles.inlineError}>
+        <MaterialCommunityIcons name="chart-waterfall" size={18} color={Colors.statusRed} />
+        <Text style={styles.inlineErrorText}>The step-by-step breakdown could not be loaded. The slip below is complete.</Text>
+        <TouchableOpacity onPress={onRetry} style={styles.inlineRetry} accessibilityRole="button" accessibilityLabel="Try loading the breakdown again">
+          <Text style={styles.inlineRetryText}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const rows = waterfallRows(breakdown.steps);
+  const color = (r: WaterfallRow) =>
+    r.tone === 'loss' ? Colors.statusRed : r.tone === 'gain' ? Colors.statusGreen : r.tone === 'result' ? Colors.primary : Colors.textMuted;
+
+  return (
+    <View style={styles.section}>
+      <View style={styles.sectionHeaderRow}>
+        <View style={[styles.sectionIcon, { backgroundColor: Colors.primaryFixed }]}>
+          <MaterialCommunityIcons name="chart-waterfall" size={14} color={Colors.primary} />
+        </View>
+        <Text style={styles.sectionTitle}>How your pay was worked out</Text>
+      </View>
+      {rows.map((r, i) => {
+        const strong = r.op === 'start' || r.op === 'subtotal' || r.op === 'total';
+        return (
+          <View
+            key={`${r.key}-${i}`}
+            style={[styles.wfRow, r.op === 'total' && styles.wfTotal]}
+            accessible
+            accessibilityLabel={`${r.label}: ${r.amountText}. ${r.note}`}
+          >
+            <View style={styles.wfTop}>
+              <Text style={[styles.wfLabel, strong && styles.wfLabelStrong]}>{r.label}</Text>
+              <Text style={[styles.wfAmount, TabularNums, { color: r.amount == null ? Colors.textMuted : r.op === 'minus' && !r.amount ? Colors.textMuted : color(r) }, strong && styles.wfAmountStrong]}>
+                {r.amountText}
+              </Text>
+            </View>
+            <View style={styles.wfTrack}>
+              {r.to > r.from && (
+                <MotiView
+                  from={{ opacity: 0, scaleX: 0.6 }}
+                  animate={{ opacity: 1, scaleX: 1 }}
+                  transition={{ type: 'timing', duration: 380, delay: Math.min(i, 10) * 45 }}
+                  style={[
+                    styles.wfBar,
+                    { left: `${r.from * 100}%`, width: `${(r.to - r.from) * 100}%`, backgroundColor: color(r) },
+                    r.tone === 'base' && { backgroundColor: Colors.bgSurfaceHighest },
+                  ]}
+                />
+              )}
+            </View>
+            {!!r.note && <Text style={styles.wfNote}>{r.note}</Text>}
+          </View>
+        );
+      })}
+      {!breakdown.reconciles && (
+        <View style={styles.warnBox}>
+          <MaterialCommunityIcons name="alert-outline" size={15} color={Colors.badgeYellowText} />
+          <Text style={styles.warnText}>
+            These lines do not add up exactly to the net pay on this older slip. Please ask HR to explain the difference.
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function AttendanceGrid({ slip, breakdown, production }: { slip: SalarySlip; breakdown: SalaryPeriod | undefined; production: boolean }) {
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const c = breakdown?.counts;
+  const cells: { label: string; value: string; color?: string }[] = production
+    ? [
+        { label: 'Days in period', value: formatCount(c?.totalDays ?? slip.workingDays) },
+        { label: 'Days worked', value: formatCount(c?.daysWorked ?? null) },
+        { label: 'Absent', value: formatCount(c?.absentDays ?? slip.absentDays), color: Colors.statusRed },
+        { label: 'Shifts earned', value: formatCount(c?.totalShifts ?? slip.presentDays), color: Colors.statusGreen },
+        { label: 'Late days', value: formatCount(c?.lateInDays ?? slip.lateDays), color: Colors.statusYellow },
+        { label: 'Rate / shift', value: c?.ratePerShift != null ? formatInr(c.ratePerShift) : '—' },
+      ]
+    : [
+        { label: 'Working days', value: formatCount(c?.workingDays ?? slip.workingDays) },
+        { label: 'Days paid', value: formatCount(c?.paidDays ?? null), color: Colors.statusGreen },
+        { label: 'Absent', value: formatCount(c?.absentDays ?? slip.absentDays), color: Colors.statusRed },
+        { label: 'Half days', value: formatCount(c?.halfDays ?? null) },
+        { label: 'Late marks', value: formatCount(c?.lateMarks ?? slip.lateDays), color: Colors.statusYellow },
+        { label: 'Permissions', value: formatCount(c?.permissionsApproved ?? null) },
+        { label: 'Paid leave', value: formatCount(c?.paidLeaveDays ?? slip.paidLeaveDays ?? null) },
+        { label: 'Unpaid leave', value: formatCount(c?.unpaidLeaveDays ?? slip.unpaidLeaveDays ?? null) },
+      ];
+  return (
+    <View style={styles.statsGrid}>
+      {cells.map(({ label, value, color }) => (
+        <View key={label} style={styles.statCell} accessible accessibilityLabel={`${label}: ${value}`}>
+          <Text style={[styles.statNum, TabularNums, color && value !== '—' ? { color } : null]} numberOfLines={1} adjustsFontSizeToFit>
+            {value}
+          </Text>
+          <Text style={styles.statLabel}>{label}</Text>
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -234,6 +469,23 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   headerSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 1 },
 
   pad: { padding: Spacing.base, paddingBottom: 40, gap: 12 },
+  errorWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 24 },
+  retryBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 7,
+    backgroundColor: Colors.primary, borderRadius: BorderRadius.full,
+    paddingHorizontal: 20, paddingVertical: 12, minHeight: 44,
+  },
+  retryText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  inlineError: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.badgeRedBg, borderRadius: BorderRadius.lg, padding: 12,
+  },
+  inlineErrorText: { flex: 1, color: Colors.textPrimary, fontSize: 12.5, lineHeight: 18 },
+  inlineRetry: {
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: BorderRadius.full,
+    backgroundColor: Colors.bgCard, minHeight: 36, justifyContent: 'center',
+  },
+  inlineRetryText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
 
   netCard: {
     backgroundColor: Colors.primary,
@@ -245,6 +497,9 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   netTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   netLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 10.5, fontWeight: '800', letterSpacing: 0.6 },
   netValue: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 30, letterSpacing: -0.4 },
+  paidRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  paidText: { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '700' },
+  netHint: { color: 'rgba(255,255,255,0.85)', fontSize: 12, lineHeight: 17 },
 
   idCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -261,26 +516,21 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   idMeta: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
 
   sectionLabel: { color: Colors.textMuted, fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginTop: 4 },
-  statsGrid: { flexDirection: 'row', gap: 8 },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   statCell: {
-    flex: 1,
+    flexBasis: '22%',
+    flexGrow: 1,
     backgroundColor: Colors.bgCard,
     borderRadius: BorderRadius.lg,
     borderWidth: 1, borderColor: Colors.border,
     paddingVertical: 12,
+    paddingHorizontal: 4,
     alignItems: 'center',
     gap: 2,
     ...cardShadow,
   },
-  statNum: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+  statNum: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 17 },
   statLabel: { color: Colors.textMuted, fontSize: 9.5, fontWeight: '700', textAlign: 'center' },
-
-  chipsRow: { flexDirection: 'row', gap: 8 },
-  chip: { flex: 1, borderRadius: BorderRadius.lg, padding: 12, gap: 2 },
-  chipGreen: { backgroundColor: Colors.badgeGreenBg },
-  chipRed: { backgroundColor: Colors.badgeRedBg },
-  chipLabel: { fontSize: 10.5, fontWeight: '700' },
-  chipValue: { fontFamily: FontFamily.displayBold, fontSize: 16 },
 
   section: {
     backgroundColor: Colors.bgCard,
@@ -293,6 +543,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   sectionIcon: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   sectionTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 14 },
+  sectionNote: { color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginBottom: 4 },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -306,16 +557,21 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   rowValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '600' },
   rowHighlight: { color: Colors.textPrimary, fontWeight: '800', fontSize: 14 },
 
-  calcBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 12,
-    backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.xl,
-    padding: 14,
+  wfRow: { paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: Colors.outlineVariant, gap: 5 },
+  wfTotal: { borderBottomWidth: 0, backgroundColor: Colors.primaryFixed, borderRadius: BorderRadius.md, paddingHorizontal: 10, marginTop: 6 },
+  wfTop: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 },
+  wfLabel: { flex: 1, color: Colors.textPrimary, fontSize: 13 },
+  wfLabelStrong: { fontFamily: FontFamily.bodySemibold },
+  wfAmount: { fontSize: 13, fontWeight: '700' },
+  wfAmountStrong: { fontSize: 14.5, fontWeight: '800' },
+  wfTrack: { height: 6, borderRadius: 3, backgroundColor: Colors.bgSurfaceLow, overflow: 'hidden' },
+  wfBar: { position: 'absolute', top: 0, bottom: 0, borderRadius: 3 },
+  wfNote: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
+  warnBox: {
+    flexDirection: 'row', gap: 8, alignItems: 'flex-start',
+    backgroundColor: Colors.badgeYellowBg, borderRadius: BorderRadius.md, padding: 10, marginTop: 10,
   },
-  calcIconWrap: { width: 34, height: 34, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
-  calcLabel: { color: '#fff', fontSize: 11, fontWeight: '600' },
-  calcHint: { color: 'rgba(255,255,255,0.7)', fontSize: 10, marginTop: 1 },
-  calcValue: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 18 },
+  warnText: { flex: 1, color: Colors.badgeYellowText, fontSize: 12, lineHeight: 17 },
 
   verifyBox: {
     flexDirection: 'row', gap: 8,
@@ -331,6 +587,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 15,
+    minHeight: 48,
     borderRadius: BorderRadius.full,
     backgroundColor: Colors.primary,
   },

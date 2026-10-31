@@ -17,7 +17,13 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format, getDaysInMonth } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useQueryClient } from '@tanstack/react-query';
+import { HomeClock, useCalendarNow } from '../../src/components/home/HomeClock';
+import { AttentionStrip } from '../../src/components/home/AttentionStrip';
+import { LastSalaryCard } from '../../src/components/home/LastSalaryCard';
+import { calendarDaysUntil, greetingFor, inDaysText, parseLocalDate } from '../../src/lib/homeAttention';
 import { useAuth } from '../../src/hooks/useAuth';
+import { useConfirmSignOut } from '../../src/hooks/useSignOut';
 import { useDashboard } from '../../src/hooks/useDashboard';
 import { useAppNotifications } from '../../src/hooks/useAppNotifications';
 import { useLiveFeed } from '../../src/hooks/useHomeSummary';
@@ -93,8 +99,11 @@ export default function HomeScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
-  const { user, logout } = useAuth();
-  const now = new Date();
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+  // Changes only on a new day or a new greeting period: the live minute is HomeClock's own state, so Home no longer
+  // re-renders (tile grid, animations and all) every second.
+  const now = useCalendarNow();
   const { data, isLoading, refetch, isRefetching } = useDashboard(user?.employeeId ?? null);
   const { data: notifs } = useAppNotifications(user?.employeeId ?? null);
   const { data: liveFeed } = useLiveFeed();
@@ -105,7 +114,6 @@ export default function HomeScreen() {
   const { data: shift } = useShift(user?.employeeId ?? null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showAllActions, setShowAllActions] = useState(false);
-  const [clock, setClock] = useState(new Date());
   const visibleActions = showAllActions ? QUICK_ACTIONS : QUICK_ACTIONS.slice(0, 6);
   const unreadCount = notifs?.filter(n => !n.isRead).length ?? 0;
 
@@ -119,11 +127,6 @@ export default function HomeScreen() {
   const actionsRef = useRef<any>(null);
   const refFor = (key: typeof TOUR_STEPS[number]['key']) =>
     key === 'profile' ? profileRef : key === 'attend' ? attendRef : actionsRef;
-
-  useEffect(() => {
-    const id = setInterval(() => setClock(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     if (isLoading) return;
@@ -153,25 +156,39 @@ export default function HomeScreen() {
     else setTourStep((s) => s + 1);
   };
 
-  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const todayStr = format(now, 'yyyy-MM-dd');
   const myTodayPunches = myAttendance?.records.find(r => r.date === todayStr)?.punches ?? [];
   const punchedInToday = myTodayPunches.length > 0;
   const dayOfMonth = now.getDate();
   const daysInMonth = getDaysInMonth(now);
   const nextHoliday = data?.upcomingHolidays?.[0] ?? null;
-  const daysUntilHoliday = nextHoliday
-    ? Math.max(0, Math.round((new Date(nextHoliday.date).getTime() - Date.now()) / 86400000))
-    : 0;
+  // The holiday date is a plain "yyyy-MM-dd": read it as a LOCAL day (new Date() read it as UTC, so late in the evening
+  // tomorrow's holiday showed "Today").
+  const holidayDate = nextHoliday ? parseLocalDate(nextHoliday.date) : null;
+  const daysUntilHoliday = nextHoliday ? calendarDaysUntil(nextHoliday.date, now) ?? 0 : 0;
+
+  // Pull-to-refresh refreshes everything Home shows, not just the month card.
+  const onRefresh = () => {
+    void refetch();
+    for (const key of [
+      ['attendance', user?.employeeId ?? null],
+      ['shift'],
+      ['my-pending-requests'],
+      ['outpass-requests'],
+      ['geo-punch-status'],
+      ['my-advances', 'eligibility'],
+      ['casual-leave-eligibility'],
+      ['salary-insights'],
+    ]) {
+      void queryClient.invalidateQueries({ queryKey: key });
+    }
+  };
   const floorLiveText = liveFeed && liveFeed.length > 0
     ? `${liveFeed[0].event === 'in' ? 'Checked in' : 'Checked out'} at ${liveFeed[0].time}`
     : null;
 
-  const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: logout },
-    ]);
-  };
+  // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
+  const handleLogout = useConfirmSignOut();
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -181,7 +198,7 @@ export default function HomeScreen() {
         style={styles.scroll}
         contentContainerStyle={styles.content}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
+          <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
         showsVerticalScrollIndicator={false}
       >
@@ -208,6 +225,8 @@ export default function HomeScreen() {
             style={styles.avatarBtn}
             onPress={() => router.push('/(tabs)/profile')}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="My Profile"
           >
             <MaterialCommunityIcons name="account" size={18} color="#fff" />
           </TouchableOpacity>
@@ -217,13 +236,13 @@ export default function HomeScreen() {
         <Text style={styles.dateText}>{format(now, 'EEE, d MMM yyyy')}</Text>
         <View style={styles.greetingRow}>
           <Text style={styles.greeting} numberOfLines={1}>
-            {getGreeting()}, {user?.name?.split(' ')[0] || 'Employee'}
+            {greetingFor(now.getHours())}, {user?.name?.split(' ')[0] || 'Employee'}
           </Text>
           <View style={[styles.statusDot, punchedInToday && styles.statusDotOn]} />
         </View>
         <View style={styles.shiftPill}>
           <MaterialCommunityIcons name="clock-outline" size={13} color={Colors.categoryOnDuty} />
-          <Text style={styles.shiftPillTime}>{format(clock, 'hh:mm a')}</Text>
+          <HomeClock style={styles.shiftPillTime} />
           <Text style={styles.shiftPillDot}>·</Text>
           <Text style={styles.shiftPillText} numberOfLines={1}>
             {shift ? `Shift ${shift.shiftName} (${shift.startTime}–${shift.endTime})` : 'No shift assigned'}
@@ -231,7 +250,14 @@ export default function HomeScreen() {
         </View>
 
         {/* ─── Profile card ─── */}
-        <TouchableOpacity ref={profileRef} style={styles.profileCard} onPress={() => router.push('/(tabs)/profile')} activeOpacity={0.85}>
+        <TouchableOpacity
+          ref={profileRef}
+          style={styles.profileCard}
+          onPress={() => router.push('/(tabs)/profile')}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={`${emp?.name ?? user?.name ?? 'My profile'}${emp?.employeeCode ? `, ${emp.employeeCode}` : ''}. Open profile`}
+        >
           <View style={styles.profileDeco} />
           <Avatar uri={emp?.photoUrl} name={emp?.name ?? user?.name} size={44} borderColor={Colors.border} />
           <View style={{ flex: 1 }}>
@@ -245,7 +271,13 @@ export default function HomeScreen() {
               {emp?.employeeCode} • {emp?.designationTitle}
             </Text>
           </View>
-          <TouchableOpacity style={styles.profileQrBtn} onPress={() => router.push('/idcard')} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.profileQrBtn}
+            onPress={() => router.push('/idcard')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Digital ID Card"
+          >
             <MaterialCommunityIcons name="qrcode" size={20} color={Colors.primary} />
           </TouchableOpacity>
         </TouchableOpacity>
@@ -320,6 +352,9 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/* ─── Needs your attention (renders nothing when nothing is waiting) ─── */}
+        <AttentionStrip employeeId={user?.employeeId ?? null} employmentType={emp?.employmentType} now={now} />
+
         {/* ─── Quick Actions ─── */}
         <View ref={actionsRef} style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
@@ -377,16 +412,17 @@ export default function HomeScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.holidayName} numberOfLines={1}>{nextHoliday.name}</Text>
               <Text style={styles.holidaySub} numberOfLines={1}>
-                {format(new Date(nextHoliday.date), 'EEE, dd MMM yyyy')} • {nextHoliday.type ?? 'Holiday'}
+                {holidayDate ? format(holidayDate, 'EEE, dd MMM yyyy') : nextHoliday.date} • {nextHoliday.type ?? 'Holiday'}
               </Text>
             </View>
             <View style={styles.holidayPill}>
-              <Text style={styles.holidayPillText}>
-                {daysUntilHoliday === 0 ? 'Today' : `In ${daysUntilHoliday} day${daysUntilHoliday === 1 ? '' : 's'}`}
-              </Text>
+              <Text style={styles.holidayPillText}>{inDaysText(daysUntilHoliday)}</Text>
             </View>
           </View>
         )}
+
+        {/* ─── Last salary (amounts hidden until the eye is tapped; nothing before the first slip) ─── */}
+        {!isLoading && <LastSalaryCard />}
 
         {isLoading && (
           <>
@@ -424,13 +460,6 @@ export default function HomeScreen() {
       />
     </SafeAreaView>
   );
-}
-
-function getGreeting() {
-  const h = new Date().getHours();
-  if (h < 12) return 'Good Morning';
-  if (h < 17) return 'Good Afternoon';
-  return 'Good Evening';
 }
 
 const makeStyles = (Colors: Palette) => StyleSheet.create({

@@ -7,6 +7,11 @@
  *  - Requests that get no answer, or a 502/503/504, mark the server offline.
  *  - Any successful response marks it online again.
  *  - Dismissing the banner hides it for this outage only: it comes back for the next one.
+ *
+ * This is the SERVER half of the connection banner. Whether the phone itself has internet is
+ * src/lib/networkStatus.ts; while the phone is offline (or reconnecting) the banner shows that
+ * instead, and "Can't reach the server" is left for internet-on-but-server-down (see
+ * `bannerView` in src/lib/networkBanner.ts).
  */
 
 export interface ServerStatus {

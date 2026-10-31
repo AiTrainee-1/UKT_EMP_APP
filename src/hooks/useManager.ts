@@ -1,7 +1,18 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import type { MissingPunchSlot } from './useRequests';
 import type { ApprovalProgress } from '../lib/approval';
+import {
+  CATEGORY_WIRE,
+  nextPageParam,
+  normalizeCategoryCounts,
+  normalizeHistoryPage,
+  normalizeItem,
+  type ApprovalCategory,
+  type ApprovalStatus,
+  type CategoryCounts,
+  type HistoryPage,
+} from '../lib/approvalsHistory';
 
 // Every request the Department Head sees carries `approval` (absent on an older backend): where it is in HR's approval
 // pipeline, who it waits for, and whether the Department Head may approve (canAct.hod) or reject (canReject.hod) it now.
@@ -19,8 +30,10 @@ export interface ManagerProfile {
   /** Holiday / Sunday work compensation claims (the HR User Management switch "Can approve compensation"). Absent on an
    *  older backend, which reads as "cannot": the tab stays hidden. */
   canApproveCompensation?: boolean;
-  /** The server's own total. It also counts On-Duty requests, which this app has no tab for, so the Approvals badge is NOT
-   *  this number: see approvalsBadgeCount() in src/lib/approvalBadge.ts. */
+  /** On-Duty requests (the HR User Management switch "Can approve On-Duty"). */
+  canApproveOnDuty?: boolean;
+  /** The server's own total, On-Duty included. The Approvals badge is approvalsBadgeCount() in src/lib/approvalBadge.ts:
+   *  the same sum over the categories the tab shows (equal to this on a current backend). */
   pendingApprovalsCount: number;
   pendingLeavesCount?: number;
   pendingPermissionsCount?: number;
@@ -31,7 +44,7 @@ export interface ManagerProfile {
   pendingMissingPunchCount?: number;
   /** Gate outpass requests waiting for this head (inside `pendingApprovalsCount`). */
   pendingOutpassCount?: number;
-  /** On-Duty requests waiting for this head. Sent, but this app has no On-Duty approvals tab, so nothing reads it. */
+  /** On-Duty requests waiting for this head (the Approvals tab's On-Duty category). */
   pendingOnDutyCount?: number;
   /** Claims waiting for this head: already inside `pendingApprovalsCount`. */
   pendingCompensationCount?: number;
@@ -58,6 +71,8 @@ export interface TeamLeaveRequest {
   employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
   leaveType?: string;
   leaveTypeName?: string;
+  /** "Sick Leave" / "Emergency" / "Personal" / "Other Reasons" picked in the apps; blank on older requests. */
+  reasonCategoryLabel?: string;
   startDate: string;
   endDate: string;
   totalDays?: number;
@@ -117,6 +132,9 @@ export interface TeamCasualLeaveRequest {
   employeeCode?: string;
   employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
   date: string;
+  /** "full" | "first_half" | "second_half" (backend casual_leave_views.py); older servers send nothing = full. */
+  portion?: string;
+  portionLabel?: string;
   reason: string;
   status: string;
   createdAt?: string;
@@ -187,22 +205,110 @@ export interface PendingRequests {
   missingPunchRequests: TeamMissingPunchRequest[];
   outpassRequests: TeamOutpassRequest[];
   holidayWorkClaims: TeamHolidayWorkClaim[];
+  /** On-Duty requests waiting for this head (each with `destination`, `createdAt`, `approval`, ...). */
+  onDutySessions: Record<string, any>[];
 }
 
+/** What a signed-in employee who is not a Department Head reads as. */
+const NOT_A_MANAGER: ManagerProfile = { isManager: false, canSubmitLeave: true, pendingApprovalsCount: 0 };
+
+/**
+ * GET /manager/me. A failed call is an ERROR, not "not a head": React Query then keeps the last good answer, so one
+ * dropped 30 s poll (offline for a moment, a slow server) no longer hides the Approvals tab for a head and brings it back
+ * on the next poll (the flicker the analysis found). Only a 404 - a server without the endpoint - means "not a head".
+ * Before the first answer `data` is undefined, which every reader already treats as "not known yet / not a head".
+ */
 export function useManagerProfile(enabled = true) {
   return useQuery({
     queryKey: ['manager-profile'],
     queryFn: async (): Promise<ManagerProfile> => {
       try {
         const res = await api.get('/manager/me');
-        return res.data;
-      } catch {
-        return { isManager: false, canSubmitLeave: true, pendingApprovalsCount: 0 };
+        return res.data ?? NOT_A_MANAGER;
+      } catch (err: any) {
+        if (err?.response?.status === 404) return NOT_A_MANAGER;
+        throw err;
       }
     },
     enabled,
     staleTime: 1000 * 30,
     refetchInterval: 30000,
+    retry: 2,
+  });
+}
+
+// ── The Approvals tab's Pending / Approved / Rejected lists (backend/api/mobile_approvals_views.py) ─────────────────
+
+/** Every query of the history lists and their counts starts with this key: a decision invalidates all of them. */
+export const MANAGER_REQUESTS_KEY = ['manager-requests'] as const;
+
+/** After a decision: the old pending list, the head's counts (tab badge) and every history list / count. */
+export function invalidateApprovals(queryClient: QueryClient) {
+  queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+  queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+  queryClient.invalidateQueries({ queryKey: MANAGER_REQUESTS_KEY });
+}
+
+/**
+ * Pending / Approved / Rejected numbers per category (GET /manager/requests/summary). `null` = the server has no
+ * history endpoint yet (an older backend answers 404): the screen then falls back to the pending list alone.
+ */
+export function useApprovalCounts(enabled = true) {
+  return useQuery({
+    queryKey: [...MANAGER_REQUESTS_KEY, 'summary'],
+    queryFn: async (): Promise<CategoryCounts | null> => {
+      try {
+        const res = await api.get('/manager/requests/summary');
+        return normalizeCategoryCounts(res.data);
+      } catch (err: any) {
+        if (err?.response?.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled,
+    staleTime: 1000 * 15,
+    refetchInterval: 30000,
+  });
+}
+
+export const APPROVALS_PAGE_SIZE = 20;
+
+/**
+ * One category's list in one status, 20 at a time, optionally narrowed to an employee name / code
+ * (GET /manager/requests). Items are the same shapes as usePendingRequests' lists, plus `historyStatus` and `outcome`.
+ * While only the search text changes the previous rows stay on screen (no skeleton flash per keystroke); switching
+ * category or status never shows another list's rows.
+ */
+export function useApprovalHistory(
+  category: ApprovalCategory,
+  status: ApprovalStatus,
+  search: string,
+  enabled = true,
+) {
+  return useInfiniteQuery({
+    queryKey: [...MANAGER_REQUESTS_KEY, 'list', category, status, search],
+    initialPageParam: 1,
+    queryFn: async ({ pageParam }): Promise<HistoryPage> => {
+      const res = await api.get('/manager/requests', {
+        params: {
+          category: CATEGORY_WIRE[category],
+          status,
+          search: search || undefined,
+          page: pageParam,
+          page_size: APPROVALS_PAGE_SIZE,
+        },
+      });
+      const page = normalizeHistoryPage(res.data, pageParam);
+      return { ...page, items: page.items.map((item) => normalizeItem(category, item)) };
+    },
+    getNextPageParam: (last) => nextPageParam(last),
+    placeholderData: (previous, previousQuery) => {
+      const key = previousQuery?.queryKey as readonly unknown[] | undefined;
+      return key && key[2] === category && key[3] === status ? previous : undefined;
+    },
+    enabled,
+    // The pending list is what the head has to act on: keep it as fresh as the badge. History changes rarely.
+    refetchInterval: status === 'pending' ? 30000 : false,
   });
 }
 
@@ -227,6 +333,7 @@ export function usePendingRequests(enabled = true) {
         outpassRequests: raw.outpassRequests ?? [],
         // Additive: an older backend sends none.
         holidayWorkClaims: Array.isArray(raw.holidayWorkClaims) ? raw.holidayWorkClaims : [],
+        onDutySessions: Array.isArray(raw.onDutySessions) ? raw.onDutySessions : [],
       };
     },
     enabled,
@@ -249,10 +356,7 @@ export function useApproveLeave() {
       const res = await api.patch(`/manager/leave-requests/${id}/status`, { status, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
   });
 }
 
@@ -271,10 +375,7 @@ export function useApprovePermission() {
       const res = await api.patch(`/manager/permissions/${id}/status`, { status, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
   });
 }
 
@@ -293,10 +394,7 @@ export function useResignationAction() {
       const res = await api.patch(`/manager/resignations/${id}/action`, { action, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
   });
 }
 
@@ -307,10 +405,7 @@ export function useApproveCasualLeave() {
       const res = await api.patch(`/manager/casual-leaves/${id}/status`, { status, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
   });
 }
 
@@ -321,10 +416,7 @@ export function useApproveAttendance() {
       const res = await api.patch(`/manager/attendance-requests/${id}/status`, { status, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
   });
 }
 
@@ -335,10 +427,7 @@ export function useApproveOutpass() {
       const res = await api.patch(`/manager/outpass-requests/${id}/status`, { status, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
   });
 }
 
@@ -356,12 +445,10 @@ export function useApproveHolidayWork() {
       const res = await api.patch(`/manager/holiday-work/${id}/status`, { status, comment });
       return res.data as TeamHolidayWorkClaim;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
-      queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
-    },
+    onSuccess: () => invalidateApprovals(queryClient),
     onError: () => {
       queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
+      queryClient.invalidateQueries({ queryKey: MANAGER_REQUESTS_KEY });
     },
   });
 }
@@ -373,8 +460,25 @@ export function useApproveMissingPunch() {
       const res = await api.patch(`/manager/missing-punch-requests/${id}/status`, { status, comment });
       return res.data;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['pending-requests'] });
+    onSuccess: () => invalidateApprovals(queryClient),
+  });
+}
+
+/**
+ * PATCH /manager/on-duty-sessions/{id}/status {status, comment}: the Department Head's decision on an On-Duty request.
+ * Under HR's pipeline an approval may be final (the session starts, every punch recorded under it becomes attendance and
+ * a gate pass is issued) or pass it on to HR; a rejection is final and voids the punches. The reply is the session with
+ * its `approval` block, so the toast can say which.
+ */
+export function useApproveOnDuty() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, status, comment }: { id: number; status: 'approved' | 'rejected'; comment?: string }) => {
+      const res = await api.patch(`/manager/on-duty-sessions/${id}/status`, { status, comment });
+      return res.data;
+    },
+    onSuccess: () => invalidateApprovals(queryClient),
+    onError: () => {
       queryClient.invalidateQueries({ queryKey: ['manager-profile'] });
     },
   });

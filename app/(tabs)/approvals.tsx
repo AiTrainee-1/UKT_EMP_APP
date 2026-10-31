@@ -1,1002 +1,323 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
-  TextInput,
-  Platform,
-  StatusBar,
-} from 'react-native';
+// The Department Head's Approvals tab. Each category (Leave, Permission, Casual Leave, Attendance, Missing Punch, On-Duty,
+// Outpass, Compensation, Resignations - all but the first two behind HR's per-person switches) has three lists:
+//   Pending  - waiting for this head's decision now (the list the tab always had; Approve / Reject in the sheet),
+//   Approved - finally approved, or approved by this head's step and now with HR,
+//   Rejected - finally rejected, by whoever,
+// with who decided each one shown prominently ("Approved by you", "Rejected by HR (Meena) · 31 Oct, 10:05 AM"), read from
+// the approval trail.
+// Server: backend/api/mobile_approvals_views.py (GET /manager/requests + /summary). Decisions still go through the
+// unchanged PATCH /manager/.../status endpoints. An older backend without the history endpoint gets the old pending list
+// (searchable on the phone) and a note on Approved / Rejected.
+// Pieces: src/components/approvals/*, wording and rules: src/lib/approvalsHistory.ts + approvalsItems.ts.
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, RefreshControl, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { router } from 'expo-router';
-import { MotiView } from 'moti';
-import { format } from 'date-fns';
+import { useLocalSearchParams } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 
 import {
+  useApprovalCounts,
+  useApprovalHistory,
+  useManagerProfile,
   usePendingRequests,
-  useApproveLeave,
-  useApprovePermission,
-  useResignationAction,
-  useApproveCasualLeave,
-  useApproveAttendance,
-  useApproveMissingPunch,
-  useApproveOutpass,
-  useApproveHolidayWork,
-  TeamLeaveRequest,
-  TeamPermissionRequest,
-  TeamResignationRequest,
-  TeamCasualLeaveRequest,
-  TeamAttendanceRequest,
-  TeamMissingPunchRequest,
-  TeamOutpassRequest,
-  TeamHolidayWorkClaim,
 } from '../../src/hooks/useManager';
-import { PUNCH_SLOT_LABEL } from '../../src/hooks/useRequests';
-import {
-  DEFAULT_PERMISSION_MONTHLY_LIMIT,
-  formatPermissionDuration,
-  permissionOutcome,
-  permissionTypeLabel,
-  type PermissionBadgeVariant,
-} from '../../src/lib/permissions';
-import { useManagerProfile } from '../../src/hooks/useManager';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
-import { shownApprovalTabs } from '../../src/lib/approvalBadge';
+import { approvalsBadgeCount, shownApprovalTabs } from '../../src/lib/approvalBadge';
+import { approvalErrorMessage, hodTakesPart } from '../../src/lib/approval';
 import {
-  approvalErrorMessage,
-  decisionMessage,
-  hodCanAct,
-  hodCanReject,
-  hodTakesPart,
-  waitingTarget,
-  type ApprovalProgress,
-  type WorkflowKey,
-} from '../../src/lib/approval';
+  CATEGORY_LABEL,
+  CATEGORY_WORKFLOW,
+  LEGACY_LIST_KEY,
+  categoryFromWire,
+  countsFromProfile,
+  emptyCopy,
+  legacyPendingCounts,
+  matchesSearch,
+  statusFromParam,
+  visibleCategories,
+  type ApprovalCategory,
+  type ApprovalStatus,
+  type StatusCounts,
+} from '../../src/lib/approvalsHistory';
+import { ApprovalsHeader } from '../../src/components/approvals/ApprovalsHeader';
+import { CategoryRail } from '../../src/components/approvals/CategoryRail';
+import { StatusSwitcher } from '../../src/components/approvals/StatusSwitcher';
+import { ApprovalSearchBar } from '../../src/components/approvals/ApprovalSearchBar';
+import { ApprovalCard } from '../../src/components/approvals/ApprovalCard';
+import { DecisionSheet } from '../../src/components/approvals/DecisionSheet';
 import {
-  claimCreditedMessage,
-  claimDateLabel,
-  claimDayLabel,
-  claimTypeLabel,
-  shiftsLabel,
-} from '../../src/lib/compensation';
-import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
-import { BottomSheet } from '../../src/components/ui/BottomSheet';
-import { Badge } from '../../src/components/ui/Badge';
-import { EmptyState } from '../../src/components/ui/EmptyState';
-import { SkeletonCard } from '../../src/components/ui/Skeleton';
+  ApprovalEmpty,
+  ApprovalError,
+  ApprovalNotice,
+  ApprovalSkeletons,
+  ListFooter,
+} from '../../src/components/approvals/ListStates';
+import { useApprovalDecision } from '../../src/components/approvals/useApprovalDecision';
+import type { ApprovalItem, SelectedApproval } from '../../src/components/approvals/types';
+import { Reveal } from '../../src/components/Reveal';
 import { Toast } from '../../src/components/ui/Toast';
-import { Colors } from '../../src/constants/colors';
-import { UKTLogo } from '../../src/components/UKTLogo';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
-import { BorderRadius } from '../../src/constants/theme';
-import { FontFamily } from '../../src/constants/typography';
 
-type Tab = 'leave' | 'permission' | 'resignation' | 'casualLeave' | 'attendance' | 'missingPunch' | 'outpass' | 'holidayWork';
-type GenericItem = TeamLeaveRequest | TeamPermissionRequest | TeamCasualLeaveRequest | TeamAttendanceRequest | TeamMissingPunchRequest | TeamOutpassRequest | TeamHolidayWorkClaim;
-type SelectedRequest =
-  | { kind: 'leave'; item: TeamLeaveRequest }
-  | { kind: 'permission'; item: TeamPermissionRequest }
-  | { kind: 'resignation'; item: TeamResignationRequest }
-  | { kind: 'casualLeave'; item: TeamCasualLeaveRequest }
-  | { kind: 'attendance'; item: TeamAttendanceRequest }
-  | { kind: 'missingPunch'; item: TeamMissingPunchRequest }
-  | { kind: 'outpass'; item: TeamOutpassRequest }
-  | { kind: 'holidayWork'; item: TeamHolidayWorkClaim };
-
-function empName(item: GenericItem): string {
-  return item.employeeName || item.employee?.name || '—';
-}
-function empCode(item: GenericItem): string {
-  return item.employeeCode || item.employee?.code || item.employee?.employeeCode || '—';
-}
-function leaveType(item: TeamLeaveRequest): string {
-  return item.leaveType || item.leaveTypeName || '—';
-}
-// Morning Late-In / Evening Early-Out / Middle One-Hour Permission. The raw `type` is the legacy
-// wire spelling ("Late In", ...) and is never shown.
-function permType(item: TeamPermissionRequest): string {
-  return permissionTypeLabel({
-    type: item.type ?? item.permissionType,
-    typeKey: item.typeKey,
-    typeLabel: item.typeLabel,
-  });
-}
-// The badge on a card: for a permission it is the outcome (Pending here, since this list only
-// carries requests awaiting a decision); everything else is simply Pending.
-function itemBadge(tab: Tab, item: GenericItem): { label: string; variant: PermissionBadgeVariant } {
-  if (tab === 'permission') {
-    const o = permissionOutcome(item as TeamPermissionRequest);
-    return { label: o.label, variant: o.badge };
-  }
-  return { label: 'Pending', variant: 'pending' };
-}
-function totalDays(item: TeamLeaveRequest): string | null {
-  const d = item.totalDays ?? item.days;
-  return d ? `${d} day(s)` : null;
-}
-function appliedOn(item: GenericItem): string {
-  const raw = (item as any).appliedOn || item.createdAt;
-  if (!raw) return '—';
-  try { return format(new Date(raw), 'dd MMM yyyy'); } catch { return raw; }
-}
-function fmtDate(str: string | null | undefined): string {
-  if (!str) return '—';
-  try { return format(new Date(str), 'dd MMM yyyy'); } catch { return str; }
+/** `value`, once it has stopped changing for `ms` (the search box asks the server after the typing pauses). */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return settled;
 }
 
-const makeTabMeta = (Colors: Palette): Record<Tab, { label: string; icon: string; iconOutline: string; color?: string; bg?: string }> => ({
-  leave: { label: 'Leave', icon: 'umbrella', iconOutline: 'umbrella-outline' },
-  permission: { label: 'Permission', icon: 'hand-wave', iconOutline: 'hand-wave-outline' },
-  resignation: { label: 'Resignations', icon: 'file-sign', iconOutline: 'file-outline', color: Colors.badgeRedText, bg: Colors.badgeRedBg },
-  casualLeave: { label: 'Casual Leave', icon: 'calendar-star', iconOutline: 'calendar-star', color: Colors.secondary, bg: Colors.secondaryFixed },
-  attendance: { label: 'Attendance', icon: 'calendar-edit', iconOutline: 'calendar-edit', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
-  missingPunch: { label: 'Missing Punch', icon: 'fingerprint', iconOutline: 'fingerprint', color: Colors.categoryPunch, bg: Colors.badgeLeaveBg },
-  outpass: { label: 'Outpass', icon: 'exit-run', iconOutline: 'exit-run', color: Colors.primary, bg: Colors.primaryFixed },
-  // Holiday / Sunday work compensation claims HR raised for the team.
-  holidayWork: { label: 'Compensation', icon: 'briefcase-clock', iconOutline: 'briefcase-clock-outline', color: Colors.categoryDocs, bg: Colors.badgeGreenBg },
-});
-
-// Which of HR's approval pipelines (Approval Workflow Control) each tab's requests follow.
-const TAB_WORKFLOW: Record<Tab, WorkflowKey> = {
-  leave: 'leave',
-  permission: 'permission',
-  resignation: 'resignation',
-  casualLeave: 'casualLeave',
-  attendance: 'attendanceCorrection',
-  missingPunch: 'missingPunch',
-  outpass: 'outpass',
-  holidayWork: 'holidayWork',
-};
-
-// The lists hold only what this Department Head can decide, so this is only seen when a row went stale.
-function cannotDecideNote(approval: ApprovalProgress | null | undefined): string {
-  const target = waitingTarget(approval);
-  return target
-    ? `This request is waiting for ${target}, so you can't decide it right now.`
-    : 'This request has already been decided.';
-}
-
-function itemTypeLabel(tab: Tab, item: GenericItem): string {
-  if (tab === 'leave') return leaveType(item as TeamLeaveRequest);
-  if (tab === 'permission') return permType(item as TeamPermissionRequest);
-  if (tab === 'casualLeave') return 'Casual Leave';
-  if (tab === 'attendance') {
-    const req = (item as TeamAttendanceRequest).requestedStatus;
-    return req ? `Mark as ${req}` : 'Attendance Override';
-  }
-  if (tab === 'missingPunch') {
-    const p = item as TeamMissingPunchRequest;
-    return p.punchSlot ? PUNCH_SLOT_LABEL[p.punchSlot] : (p.punchType === 'IN' ? 'Check-In' : 'Check-Out');
-  }
-  if (tab === 'outpass') return (item as TeamOutpassRequest).destination;
-  if (tab === 'holidayWork') return claimTypeLabel(item as TeamHolidayWorkClaim);
-  return '—';
-}
-
-function itemDateLabel(tab: Tab, item: GenericItem): string {
-  if (tab === 'leave') {
-    const l = item as TeamLeaveRequest;
-    const days = totalDays(l);
-    return `${format(new Date(l.startDate + 'T00:00:00'), 'dd MMM')}`
-      + (l.startDate !== l.endDate
-        ? ` → ${format(new Date(l.endDate + 'T00:00:00'), 'dd MMM yyyy')}`
-        : ` ${format(new Date(l.startDate + 'T00:00:00'), 'yyyy')}`)
-      + (days ? ` · ${days}` : '');
-  }
-  if (tab === 'permission') {
-    const p = item as TeamPermissionRequest;
-    return `${format(new Date(p.date + 'T00:00:00'), 'dd MMM yyyy')} · ${p.time}`;
-  }
-  if (tab === 'missingPunch') {
-    const p = item as TeamMissingPunchRequest;
-    return `${format(new Date(p.date + 'T00:00:00'), 'dd MMM yyyy')} · ${p.punchTime}`;
-  }
-  if (tab === 'casualLeave' || tab === 'attendance') {
-    const d = (item as any).date;
-    return d ? format(new Date(d + 'T00:00:00'), 'dd MMM yyyy') : '—';
-  }
-  if (tab === 'outpass') return appliedOn(item);
-  if (tab === 'holidayWork') return claimDateLabel(item as TeamHolidayWorkClaim);
-  return '—';
+/** "Now", moved on every minute, so "Waiting 3 hours" stays true while the tab is open. */
+function useMinuteClock(): [Date, () => void] {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return [now, () => setNow(new Date())];
 }
 
 export default function ApprovalsScreen() {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const TAB_META = makeTabMeta(Colors);
+  const queryClient = useQueryClient();
 
+  const params = useLocalSearchParams<{ category?: string; status?: string }>();
   const { user } = useAuth();
-  const { data: manager } = useManagerProfile(!!user);
+  const signedIn = !!user;
+  const { data: manager } = useManagerProfile(signedIn);
   const { data: approvalSummary } = useApprovalSummary();
 
-  const [tab, setTab] = useState<Tab>('leave');
-  const [selected, setSelected] = useState<SelectedRequest | null>(null);
+  const [category, setCategory] = useState<ApprovalCategory>(() => categoryFromWire(params.category) ?? 'leave');
+  const [status, setStatus] = useState<ApprovalStatus>(() => statusFromParam(params.status) ?? 'pending');
+  const [searchText, setSearchText] = useState('');
+  const search = useDebounced(searchText.trim(), 300);
+  const [selected, setSelected] = useState<SelectedApproval | null>(null);
   const [comment, setComment] = useState('');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
-    message: '', type: 'success', visible: false,
+    message: '',
+    type: 'success',
+    visible: false,
   });
+  const [refreshing, setRefreshing] = useState(false);
+  const [now, tick] = useMinuteClock();
 
-  const { data, isLoading, refetch, isRefetching } = usePendingRequests();
-  const approveLeave = useApproveLeave();
-  const approvePermission = useApprovePermission();
-  const resignationAction = useResignationAction();
-  const approveCasualLeave = useApproveCasualLeave();
-  const approveAttendance = useApproveAttendance();
-  const approveMissingPunch = useApproveMissingPunch();
-  const approveOutpass = useApproveOutpass();
-  const approveHolidayWork = useApproveHolidayWork();
+  // A link may name the list to open (?category=casual_leave&status=approved).
+  useEffect(() => {
+    const c = categoryFromWire(params.category);
+    if (c) setCategory(c);
+    const s = statusFromParam(params.status);
+    if (s) setStatus(s);
+  }, [params.category, params.status]);
 
-  // Which tabs this head sees: ONE definition shared with the Approvals badge on the tab bar (src/lib/approvalBadge.ts), so
-  // the number on the icon is always the sum of the tabs listed here.
-  //  * Outpass reuses the Permissions capability -see backend/api/manager_views.py::manager_update_outpass_status, which
-  //    deliberately shares can_approve_permissions rather than a new flag.
-  //  * Holiday / Sunday work claims: the per-person switch "Can approve compensation". An older backend does not send it,
-  //    and then there are no claims either, so the tab stays hidden.
-  const shown = shownApprovalTabs(manager);
-  const canApproveResignations = shown.resignation;
-  const canApproveCasualLeave = shown.casualLeave;
-  const canApproveAttendance = shown.attendance;
-  const canApproveMissingPunch = shown.missingPunch;
-  const canApproveOutpass = shown.outpass;
-  const canApproveCompensation = shown.holidayWork;
+  // Which categories this head sees: ONE definition shared with the Approvals badge on the tab bar (approvalBadge.ts).
+  const categories = useMemo(() => visibleCategories(shownApprovalTabs(manager)), [manager]);
+  // A category can disappear while it is open: HR switched the head's approval switch off, and the profile refetch that
+  // follows a refused decision (or the 30 s poll) no longer lists it. Fall back to Leave instead of an unlisted list.
+  const categoryKeys = categories.join(',');
+  useEffect(() => {
+    if (manager && !categoryKeys.split(',').includes(category)) setCategory('leave');
+  }, [manager, categoryKeys, category]);
 
+  // ── data ──
+  const countsQuery = useApprovalCounts(signedIn);
+  // null = the server has no history endpoint (an older backend): the old pending list stands in.
+  const legacy = countsQuery.data === null;
+  const listQuery = useApprovalHistory(category, status, search, signedIn && !legacy);
+  const legacyQuery = usePendingRequests(signedIn && legacy);
+
+  const items: ApprovalItem[] = useMemo(() => {
+    if (legacy) {
+      if (status !== 'pending') return [];
+      const list = (legacyQuery.data as Record<string, unknown> | undefined)?.[LEGACY_LIST_KEY[category]];
+      return (Array.isArray(list) ? (list as ApprovalItem[]) : []).filter((i) => matchesSearch(i, search));
+    }
+    return listQuery.data?.pages.flatMap((p) => p.items as ApprovalItem[]) ?? [];
+  }, [legacy, status, legacyQuery.data, category, search, listQuery.data]);
+
+  const categoryCounts = useMemo(
+    () =>
+      countsQuery.data ??
+      (legacy ? legacyPendingCounts(legacyQuery.data as Record<string, unknown> | undefined) : countsFromProfile(manager as any)),
+    [countsQuery.data, legacy, legacyQuery.data, manager],
+  );
+  // The open list's own reply carries its category's numbers too, fresher than the 30 s summary.
+  const statusCounts: Partial<StatusCounts> | null = legacy
+    ? (categoryCounts[category] ?? null)
+    : (listQuery.data?.pages[0]?.counts ?? countsQuery.data?.[category] ?? null);
+
+  const active = legacy ? legacyQuery : listQuery;
+  const loading = active.isLoading;
+  const loadError = active.isError && !items.length;
+  const staleError = active.isError && items.length > 0;
+
+  // ── actions ──
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type, visible: true });
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
   };
+  const closeSheet = () => {
+    setSelected(null);
+    setComment('');
+  };
+  const { decide, busy } = useApprovalDecision();
 
-  const closeSheet = () => { setSelected(null); setComment(''); };
+  const refreshAll = useCallback(async () => {
+    tick();
+    await Promise.allSettled([
+      legacy ? legacyQuery.refetch() : listQuery.refetch(),
+      countsQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['manager-profile'] }),
+    ]);
+  }, [legacy, legacyQuery, listQuery, countsQuery, queryClient, tick]);
 
-  // The server's own text says why a decision was refused (not this Department Head's turn any more, HR changed the
-  // pipeline, already decided ...). A refusal means what is on screen is out of date: refresh it and drop the sheet.
-  // A network or server failure (no answer, 5xx) says nothing about the request, so the sheet stays for another try.
-  const failDecision = (err: any) => {
-    showToast(approvalErrorMessage(err, 'Action failed. Please try again.'), 'error');
-    if ([400, 403, 404, 409].includes(err?.response?.status)) {
-      refetch();
+  const onDecide = async (decision: 'approved' | 'rejected') => {
+    if (!selected) return;
+    const result = await decide(selected, decision, comment);
+    if (result.ok) {
+      showToast(result.message, result.tone);
+      closeSheet();
+      return;
+    }
+    showToast(result.message, 'error');
+    // A refusal means what is on screen is out of date: refresh it and drop the sheet. A network or server failure says
+    // nothing about the request, so the sheet stays for another try.
+    if (result.refused) {
+      void refreshAll();
       closeSheet();
     }
   };
 
-  const handleGenericAction = async (status: 'approved' | 'rejected') => {
-    if (!selected || selected.kind === 'resignation') return;
+  const onRefresh = async () => {
+    setRefreshing(true);
     try {
-      let result: any;
-      if (selected.kind === 'leave') {
-        result = await approveLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      } else if (selected.kind === 'permission') {
-        result = await approvePermission.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      } else if (selected.kind === 'casualLeave') {
-        result = await approveCasualLeave.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      } else if (selected.kind === 'missingPunch') {
-        result = await approveMissingPunch.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      } else if (selected.kind === 'outpass') {
-        result = await approveOutpass.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      } else if (selected.kind === 'holidayWork') {
-        result = await approveHolidayWork.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      } else {
-        result = await approveAttendance.mutateAsync({ id: selected.item.id, status, comment: comment || undefined });
-      }
-      showToast(
-        status === 'approved'
-          // A compensation claim is decided by the head alone: its approval is final, and says what it added to whom.
-          ? (selected.kind === 'holidayWork' && result?.credited
-              ? claimCreditedMessage({ ...selected.item, ...result })
-              // Worded from the request the server sent back. Without its `approval` (an older backend, whose pipeline is
-              // fixed) it is the old two-stage wording.
-              : decisionMessage('approved', result?.approval)
-                ?? (selected.kind === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.'))
-          : 'Request rejected.',
-        status === 'approved' ? 'success' : 'error',
-      );
-      closeSheet();
-    } catch (err) {
-      failDecision(err);
+      await refreshAll();
+    } finally {
+      setRefreshing(false);
     }
   };
 
-  const handleResignationAction = async (action: 'approve' | 'reject') => {
-    if (!selected || selected.kind !== 'resignation') return;
-    try {
-      const result = await resignationAction.mutateAsync({ id: selected.item.id, action, comment: comment || undefined });
-      showToast(
-        action === 'approve'
-          ? (decisionMessage('approved', result?.approval, 'Resignation') ?? 'Resignation forwarded to HR.')
-          : 'Resignation rejected.',
-        action === 'approve' ? 'success' : 'error',
-      );
-      closeSheet();
-    } catch (err) {
-      failDecision(err);
-    }
+  const changeCategory = (c: ApprovalCategory) => {
+    setCategory(c);
+    setSearchText('');
   };
 
-  // What the open sheet may offer: the pipeline's answer, or (older backend) everything, as the lists are pre-filtered.
-  const sheetCanApprove = hodCanAct(selected?.item.approval);
-  const sheetCanReject = hodCanReject(selected?.item.approval);
+  const label = CATEGORY_LABEL[category];
+  const empty = emptyCopy(category, status, {
+    search,
+    hodInPipeline: hodTakesPart(approvalSummary?.[CATEGORY_WORKFLOW[category]]),
+  });
 
-  const selectFor = (t: Tab, item: any): SelectedRequest => ({ kind: t, item } as SelectedRequest);
-
-  const isPending = approveLeave.isPending || approvePermission.isPending || resignationAction.isPending
-    || approveCasualLeave.isPending || approveAttendance.isPending || approveMissingPunch.isPending
-    || approveOutpass.isPending || approveHolidayWork.isPending;
-
-  const leaveList = data?.leaveRequests ?? [];
-  const permList = data?.permissionRequests ?? [];
-  const resignList = data?.resignations ?? [];
-  const casualLeaveList = data?.casualLeaves ?? [];
-  const attendanceList = data?.attendanceRequests ?? [];
-  const missingPunchList = data?.missingPunchRequests ?? [];
-  const outpassList = data?.outpassRequests ?? [];
-  const holidayWorkList = data?.holidayWorkClaims ?? [];
-
-  const TABS: { key: Tab; icon: string; iconOutline: string; label: string; count: number }[] = [
-    { key: 'leave', ...TAB_META.leave, count: leaveList.length },
-    { key: 'permission', ...TAB_META.permission, count: permList.length },
-    ...(canApproveCasualLeave
-      ? [{ key: 'casualLeave' as Tab, ...TAB_META.casualLeave, count: casualLeaveList.length }]
-      : []),
-    ...(canApproveAttendance
-      ? [{ key: 'attendance' as Tab, ...TAB_META.attendance, count: attendanceList.length }]
-      : []),
-    ...(canApproveMissingPunch
-      ? [{ key: 'missingPunch' as Tab, ...TAB_META.missingPunch, count: missingPunchList.length }]
-      : []),
-    ...(canApproveOutpass
-      ? [{ key: 'outpass' as Tab, ...TAB_META.outpass, count: outpassList.length }]
-      : []),
-    ...(canApproveCompensation
-      ? [{ key: 'holidayWork' as Tab, ...TAB_META.holidayWork, count: holidayWorkList.length }]
-      : []),
-    ...(canApproveResignations
-      ? [{ key: 'resignation' as Tab, ...TAB_META.resignation, count: resignList.length }]
-      : []),
-  ];
-
-  // A tab can disappear while it is open: HR switched the head's approval switch off, and the profile refetch that follows a
-  // refused decision (or the 30 s poll) no longer lists it. Fall back to the first tab instead of an unselected, empty list.
-  const tabKeys = TABS.map((t) => t.key).join(',');
-  useEffect(() => {
-    if (!tabKeys.split(',').includes(tab)) setTab('leave');
-  }, [tabKeys, tab]);
-
-  const activeList: any[] =
-    tab === 'leave' ? leaveList
-    : tab === 'permission' ? permList
-    : tab === 'casualLeave' ? casualLeaveList
-    : tab === 'attendance' ? attendanceList
-    : tab === 'missingPunch' ? missingPunchList
-    : tab === 'outpass' ? outpassList
-    : tab === 'holidayWork' ? holidayWorkList
-    : resignList;
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <ApprovalSearchBar
+        value={searchText}
+        onChange={setSearchText}
+        placeholder={`Search ${label.toLowerCase()} by name or code`}
+      />
+      <View style={styles.notices}>
+        {legacy && status !== 'pending' && (
+          <ApprovalNotice
+            icon="update"
+            text="Approved and rejected history needs the latest server update. Your pending requests are below."
+          />
+        )}
+        {staleError && (
+          <ApprovalNotice
+            icon="wifi-alert"
+            tone="warn"
+            text="Couldn't refresh just now. Showing what was loaded before - pull down to try again."
+          />
+        )}
+      </View>
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle="dark-content" />
+      <ApprovalsHeader pendingTotal={manager ? approvalsBadgeCount(manager) : null} />
 
-      {/* Top bar */}
-      <View style={styles.topBar}>
-        <UKTLogo size={28} />
-        <View style={styles.brandTextWrap}>
-          <Text style={styles.brandName}>UKTEXTILES</Text>
-          <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
-        </View>
-        <View style={{ flex: 1 }} />
-        <TouchableOpacity style={styles.avatarBtn} onPress={() => router.push('/(tabs)/profile')} activeOpacity={0.85}>
-          <MaterialCommunityIcons name="account" size={18} color="#fff" />
-        </TouchableOpacity>
-      </View>
-      <View style={styles.pageTitleRow}>
-        <Text style={styles.title}>Approvals</Text>
-        <Text style={styles.subtitle}>Review pending requests</Text>
+      <View style={styles.controls}>
+        <CategoryRail categories={categories} value={category} counts={categoryCounts} onChange={changeCategory} />
+        <StatusSwitcher value={status} counts={statusCounts} onChange={setStatus} />
       </View>
 
-      {/* Per-category pending counts */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.statsRow}
-        contentContainerStyle={styles.statsRowContent}
-      >
-        {TABS.map((t) => (
-          <TouchableOpacity
-            key={t.key}
-            style={[styles.statCard, tab === t.key && styles.statCardActive]}
-            onPress={() => setTab(t.key)}
-            activeOpacity={0.8}
-          >
-            <View style={[styles.statIcon, tab === t.key && styles.statIconActive]}>
-              <MaterialCommunityIcons
-                name={(tab === t.key ? t.icon : t.iconOutline) as any}
-                size={16}
-                color={tab === t.key ? '#fff' : Colors.primary}
-              />
-            </View>
-            <Text style={styles.statCount}>{t.count}</Text>
-            <Text style={styles.statLabel}>{t.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* List */}
       <FlatList
-        data={activeList}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={[styles.list, !activeList.length && styles.listCenter]}
+        data={items}
+        keyExtractor={(item) => `${category}-${item.id}`}
+        contentContainerStyle={[styles.list, !items.length && styles.listGrow]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        ListHeaderComponent={listHeader}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={Colors.primary}
+            colors={[Colors.primary]}
+          />
         }
+        onEndReachedThreshold={0.4}
+        onEndReached={() => {
+          if (!legacy && listQuery.hasNextPage && !listQuery.isFetchingNextPage) void listQuery.fetchNextPage();
+        }}
         ListEmptyComponent={
-          isLoading ? (
-            <View style={{ gap: 12 }}>{Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}</View>
-          ) : (
-            <EmptyState
-              icon="check-circle-outline"
-              title="All caught up!"
-              subtitle={
-                hodTakesPart(approvalSummary?.[TAB_WORKFLOW[tab]])
-                  ? `No pending ${TAB_META[tab].label.toLowerCase()} requests`
-                  : 'These requests go to HR only, so none come to you.'
-              }
+          loading ? (
+            <ApprovalSkeletons />
+          ) : loadError ? (
+            <ApprovalError
+              message={approvalErrorMessage(active.error, 'Check your connection and try again.')}
+              onRetry={() => void refreshAll()}
+              retrying={active.isFetching}
             />
+          ) : legacy && status !== 'pending' ? undefined : (
+            <ApprovalEmpty copy={empty} />
           )
         }
-        renderItem={({ item, index }) => {
-          if (tab === 'resignation') {
-            const r = item as TeamResignationRequest;
-            const canApprove = hodCanAct(r.approval);
-            const canReject = hodCanReject(r.approval);
-            return (
-              <MotiView
-                from={{ opacity: 0, translateY: 10 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ type: 'timing', duration: 260, delay: Math.min(index, 8) * 50 }}
-              >
-              <TouchableOpacity
-                style={styles.card}
-                onPress={() => setSelected({ kind: 'resignation', item: r })}
-                activeOpacity={0.85}
-              >
-                <View style={styles.cardTop}>
-                  <View style={styles.empRow}>
-                    <LinearGradient colors={['#C62828', '#E11D48']} style={styles.avatar}>
-                      <Text style={styles.avatarText}>{r.employeeName?.[0]?.toUpperCase() ?? '?'}</Text>
-                    </LinearGradient>
-                    <View>
-                      <Text style={styles.empName}>{r.employeeName}</Text>
-                      <Text style={styles.empCode}>{r.employeeCode} · {r.departmentName}</Text>
-                    </View>
-                  </View>
-                  <Badge label="Pending" variant="pending" />
-                </View>
-
-                <View style={styles.requestInfo}>
-                  <View style={[styles.requestTypeChip, { backgroundColor: Colors.badgeRedBg }]}>
-                    <Text style={[styles.requestType, { color: Colors.badgeRedText }]}>Resignation</Text>
-                  </View>
-                  <Text style={styles.requestDate}>
-                    Submitted {fmtDate(r.createdAt)}
-                    {r.lastWorkingDate ? ` · Last day ${fmtDate(r.lastWorkingDate)}` : ''}
-                  </Text>
-                </View>
-
-                <WaitingChip approval={r.approval} />
-
-                {r.reason && (
-                  <Text style={styles.reason} numberOfLines={2}>"{r.reason}"</Text>
-                )}
-
-                {(canApprove || canReject) && (
-                  <View style={styles.quickActions}>
-                    {canApprove && (
-                      <TouchableOpacity
-                        style={styles.approveBtn}
-                        onPress={() => { setSelected({ kind: 'resignation', item: r }); }}
-                      >
-                        <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
-                        <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
-                      </TouchableOpacity>
-                    )}
-                    {canReject && (
-                      <TouchableOpacity
-                        style={styles.rejectBtn}
-                        onPress={() => { setSelected({ kind: 'resignation', item: r }); }}
-                      >
-                        <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
-                        <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-              </TouchableOpacity>
-              </MotiView>
-            );
-          }
-
-          const genericItem = item as GenericItem;
-          const name = empName(genericItem);
-          const initial = name[0]?.toUpperCase() ?? '?';
-          const meta = TAB_META[tab];
-          const badge = itemBadge(tab, genericItem);
-          const canApprove = hodCanAct(genericItem.approval);
-          const canReject = hodCanReject(genericItem.approval);
-          return (
-            <MotiView
-              from={{ opacity: 0, translateY: 10 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ type: 'timing', duration: 260, delay: Math.min(index, 8) * 50 }}
-            >
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => setSelected(selectFor(tab, genericItem))}
-              activeOpacity={0.85}
-            >
-              <View style={styles.cardTop}>
-                <View style={styles.empRow}>
-                  <LinearGradient colors={Colors.gradientPrimary} style={styles.avatar}>
-                    <Text style={styles.avatarText}>{initial}</Text>
-                  </LinearGradient>
-                  <View>
-                    <Text style={styles.empName}>{name}</Text>
-                    <Text style={styles.empCode}>{empCode(genericItem)}</Text>
-                  </View>
-                </View>
-                <Badge label={badge.label} variant={badge.variant} />
-              </View>
-
-              <View style={styles.requestInfo}>
-                <View style={[styles.requestTypeChip, meta.bg ? { backgroundColor: meta.bg } : null]}>
-                  <Text style={[styles.requestType, meta.color ? { color: meta.color } : null]}>
-                    {itemTypeLabel(tab, genericItem)}
-                  </Text>
-                </View>
-                <Text style={styles.requestDate}>{itemDateLabel(tab, genericItem)}</Text>
-              </View>
-
-              <WaitingChip approval={genericItem.approval} />
-
-              {genericItem.reason && (
-                <Text style={styles.reason} numberOfLines={2}>"{genericItem.reason}"</Text>
-              )}
-
-              {(canApprove || canReject) && (
-                <View style={styles.quickActions}>
-                  {canApprove && (
-                    <TouchableOpacity
-                      style={styles.approveBtn}
-                      onPress={() => setSelected(selectFor(tab, genericItem))}
-                    >
-                      <MaterialCommunityIcons name="check" size={14} color={Colors.statusGreen} />
-                      <Text style={[styles.quickBtnText, { color: Colors.statusGreen }]}>Approve</Text>
-                    </TouchableOpacity>
-                  )}
-                  {canReject && (
-                    <TouchableOpacity
-                      style={styles.rejectBtn}
-                      onPress={() => setSelected(selectFor(tab, genericItem))}
-                    >
-                      <MaterialCommunityIcons name="close" size={14} color={Colors.statusRed} />
-                      <Text style={[styles.quickBtnText, { color: Colors.statusRed }]}>Reject</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-            </TouchableOpacity>
-            </MotiView>
-          );
-        }}
+        ListFooterComponent={
+          <ListFooter
+            loading={!legacy && listQuery.isFetchingNextPage}
+            done={!legacy && !listQuery.hasNextPage}
+            count={items.length}
+          />
+        }
+        renderItem={({ item, index }) => (
+          <Reveal index={index}>
+            <ApprovalCard
+              category={category}
+              status={status}
+              item={item}
+              now={now}
+              onOpen={() => setSelected({ category, status, item })}
+            />
+          </Reveal>
+        )}
       />
 
-      {/* Detail Sheet — Leave / Permission / Casual Leave / Attendance / Missing Punch / Outpass / Compensation */}
-      <BottomSheet
-        visible={!!selected && ['leave', 'permission', 'casualLeave', 'attendance', 'missingPunch', 'outpass', 'holidayWork'].includes(selected.kind)}
+      <DecisionSheet
+        selected={selected}
+        comment={comment}
+        onCommentChange={setComment}
+        onDecide={onDecide}
+        busy={busy}
         onClose={closeSheet}
-        title={selected && selected.kind !== 'resignation' ? `${TAB_META[selected.kind].label} Request` : ''}
-      >
-        {selected && selected.kind !== 'resignation' && (
-          <View>
-            <View style={styles.sheetEmpRow}>
-              <LinearGradient colors={Colors.gradientPrimary} style={styles.sheetAvatar}>
-                <Text style={styles.sheetAvatarText}>{empName(selected.item)[0]?.toUpperCase() ?? '?'}</Text>
-              </LinearGradient>
-              <View>
-                <Text style={styles.sheetEmpName}>{empName(selected.item)}</Text>
-                <Text style={styles.sheetEmpCode}>{empCode(selected.item)}</Text>
-              </View>
-            </View>
-
-            {([
-              [selected.kind === 'outpass' ? 'Destination' : 'Type', itemTypeLabel(selected.kind, selected.item)],
-              selected.kind === 'leave'
-                ? ['From', format(new Date((selected.item as TeamLeaveRequest).startDate + 'T00:00:00'), 'dd MMM yyyy')]
-                : selected.kind === 'outpass'
-                ? null
-                : [selected.kind === 'holidayWork' ? 'Work date' : 'Date', itemDateLabel(selected.kind, selected.item).split(' · ')[0]],
-              selected.kind === 'holidayWork'
-                ? ['Day', claimDayLabel(selected.item as TeamHolidayWorkClaim)]
-                : null,
-              selected.kind === 'holidayWork' && shiftsLabel((selected.item as TeamHolidayWorkClaim).shifts)
-                ? ['Shifts claimed', shiftsLabel((selected.item as TeamHolidayWorkClaim).shifts)!]
-                : null,
-              selected.kind === 'holidayWork' && (selected.item as TeamHolidayWorkClaim).requestedBy
-                ? ['Raised by', `${(selected.item as TeamHolidayWorkClaim).requestedBy} (HR)`]
-                : null,
-              selected.kind === 'leave'
-                ? ['To', format(new Date((selected.item as TeamLeaveRequest).endDate + 'T00:00:00'), 'dd MMM yyyy')]
-                : selected.kind === 'permission'
-                ? ['Time', (selected.item as TeamPermissionRequest).time]
-                : null,
-              selected.kind === 'permission' && formatPermissionDuration((selected.item as TeamPermissionRequest).durationMinutes)
-                ? ['Duration', formatPermissionDuration((selected.item as TeamPermissionRequest).durationMinutes)!]
-                : null,
-              selected.kind === 'permission' && (selected.item as TeamPermissionRequest).statusLabel
-                ? ['Status', (selected.item as TeamPermissionRequest).statusLabel!]
-                : null,
-              selected.kind === 'leave' && totalDays(selected.item as TeamLeaveRequest)
-                ? ['Days', totalDays(selected.item as TeamLeaveRequest)!]
-                : null,
-              ['Reason', selected.item.reason],
-              [selected.kind === 'holidayWork' ? 'Raised on' : 'Applied', appliedOn(selected.item)],
-            ] as ([string, string] | null)[]).filter((x): x is [string, string] => x !== null).map(([label, value]) => (
-              <View key={label} style={styles.sheetRow}>
-                <Text style={styles.sheetLabel}>{label}</Text>
-                <Text style={styles.sheetValue} numberOfLines={3}>{value}</Text>
-              </View>
-            ))}
-
-            {/* Only when the server speaks the monthly-limit rules (capStatus/statusLabel are new). */}
-            {selected.kind === 'permission'
-              && ((selected.item as TeamPermissionRequest).capStatus != null || (selected.item as TeamPermissionRequest).statusLabel != null)
-              && (
-              <Text style={styles.sheetHint}>
-                Only the first {(selected.item as TeamPermissionRequest).monthlyLimit ?? DEFAULT_PERMISSION_MONTHLY_LIMIT}{' '}
-                approved permissions an employee has in a month are Allowed. Approving one beyond that makes it
-                Overdue / Excess: it will not protect the day and counts toward late deductions.
-              </Text>
-            )}
-
-            {selected.kind === 'holidayWork' && (
-              <Text style={styles.sheetHint}>
-                Approving adds {shiftsLabel((selected.item as TeamHolidayWorkClaim).shifts) ?? 'the claimed shifts'} to{' '}
-                {empName(selected.item)}'s compensation balance. Rejecting is final and adds nothing.
-              </Text>
-            )}
-
-            <WaitingChip approval={selected.item.approval} style={styles.sheetTrail} />
-            <ApprovalTrail approval={selected.item.approval} style={styles.sheetTrail} />
-
-            {sheetCanApprove || sheetCanReject ? (
-              <>
-                <Text style={styles.commentLabel}>Comment (optional)</Text>
-                <TextInput
-                  style={styles.commentInput}
-                  placeholder="Add a comment…"
-                  placeholderTextColor={Colors.outline}
-                  selectionColor={Colors.primary}
-                  cursorColor={Colors.primary}
-                  value={comment}
-                  onChangeText={setComment}
-                  multiline
-                  numberOfLines={2}
-                />
-
-                <View style={styles.sheetActions}>
-                  {sheetCanApprove && (
-                    <TouchableOpacity
-                      style={styles.sheetApproveBtn}
-                      onPress={() => handleGenericAction('approved')}
-                      disabled={isPending}
-                    >
-                      <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                      <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
-                    </TouchableOpacity>
-                  )}
-                  {sheetCanReject && (
-                    <TouchableOpacity
-                      style={styles.sheetRejectBtn}
-                      onPress={() => handleGenericAction('rejected')}
-                      disabled={isPending}
-                    >
-                      <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
-                      <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </>
-            ) : (
-              <Text style={styles.sheetHint}>{cannotDecideNote(selected.item.approval)}</Text>
-            )}
-          </View>
-        )}
-      </BottomSheet>
-
-      {/* Detail Sheet — Resignation */}
-      <BottomSheet
-        visible={!!selected && selected.kind === 'resignation'}
-        onClose={closeSheet}
-        title="Resignation Request"
-      >
-        {selected?.kind === 'resignation' && (() => {
-          const r = selected.item;
-          return (
-            <View>
-              <View style={styles.sheetEmpRow}>
-                <LinearGradient colors={['#C62828', '#E11D48']} style={styles.sheetAvatar}>
-                  <Text style={styles.sheetAvatarText}>{r.employeeName?.[0]?.toUpperCase() ?? '?'}</Text>
-                </LinearGradient>
-                <View>
-                  <Text style={styles.sheetEmpName}>{r.employeeName}</Text>
-                  <Text style={styles.sheetEmpCode}>{r.employeeCode} · {r.departmentName}</Text>
-                </View>
-              </View>
-
-              {[
-                ['Reason', r.reason],
-                ['Last Working Day', fmtDate(r.lastWorkingDate)],
-                ['Submitted', fmtDate(r.createdAt)],
-              ].map(([label, value]) => (
-                <View key={label} style={styles.sheetRow}>
-                  <Text style={styles.sheetLabel}>{label}</Text>
-                  <Text style={styles.sheetValue} numberOfLines={3}>{value}</Text>
-                </View>
-              ))}
-
-              {/* Survey answers */}
-              {[r.surveyQ1Answer, r.surveyQ2Answer, r.surveyQ3Answer].some(Boolean) && (
-                <Text style={[styles.commentLabel, { marginTop: 10 }]}>Survey Answers</Text>
-              )}
-              {[
-                { q: 'Primary reason for leaving', a: r.surveyQ1Answer },
-                { q: 'Would you recommend us?', a: r.surveyQ2Answer },
-                { q: 'What could we have done differently?', a: r.surveyQ3Answer },
-              ].filter(({ a }) => a).map(({ q, a }) => (
-                <View key={q} style={[styles.sheetRow, { flexDirection: 'column', gap: 3, alignItems: 'flex-start' }]}>
-                  <Text style={[styles.sheetLabel, { fontSize: 11 }]}>{q}</Text>
-                  <Text style={[styles.sheetValue, { textAlign: 'left', flex: undefined }]}>{a}</Text>
-                </View>
-              ))}
-
-              <WaitingChip approval={r.approval} style={styles.sheetTrail} />
-              <ApprovalTrail approval={r.approval} style={styles.sheetTrail} />
-
-              {sheetCanApprove || sheetCanReject ? (
-                <>
-                  <Text style={styles.commentLabel}>Comment (optional)</Text>
-                  <TextInput
-                    style={styles.commentInput}
-                    placeholder="Add a comment…"
-                    placeholderTextColor={Colors.outline}
-                    selectionColor={Colors.primary}
-                    cursorColor={Colors.primary}
-                    value={comment}
-                    onChangeText={setComment}
-                    multiline
-                    numberOfLines={2}
-                  />
-
-                  <View style={styles.sheetActions}>
-                    {sheetCanApprove && (
-                      <TouchableOpacity
-                        style={styles.sheetApproveBtn}
-                        onPress={() => handleResignationAction('approve')}
-                        disabled={isPending}
-                      >
-                        <MaterialCommunityIcons name="check-circle" size={18} color={Colors.statusGreen} />
-                        <Text style={[styles.sheetActionText, { color: Colors.statusGreen }]}>Approve</Text>
-                      </TouchableOpacity>
-                    )}
-                    {sheetCanReject && (
-                      <TouchableOpacity
-                        style={styles.sheetRejectBtn}
-                        onPress={() => handleResignationAction('reject')}
-                        disabled={isPending}
-                      >
-                        <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
-                        <Text style={[styles.sheetActionText, { color: Colors.statusRed }]}>Reject</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </>
-              ) : (
-                <Text style={styles.sheetHint}>{cannotDecideNote(r.approval)}</Text>
-              )}
-            </View>
-          );
-        })()}
-      </BottomSheet>
+      />
 
       <Toast {...toast} />
     </SafeAreaView>
   );
 }
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.bgLight },
-  topBar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10 },
-  brandTextWrap: { gap: 1 },
-  brandName: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 13, letterSpacing: 0.2 },
-  brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
-  avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
-
-  pageTitleRow: { paddingHorizontal: 16, paddingTop: 4 },
-  title: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 22 },
-  subtitle: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
-
-  statsRow: {
-    marginTop: 12,
-    marginBottom: 14,
-  },
-  statsRowContent: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  statCard: {
-    width: 84,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    paddingVertical: 12,
-    alignItems: 'center',
-    gap: 4,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  statCardActive: { borderColor: Colors.primary },
-  statIcon: {
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: Colors.primaryFixed,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  statIconActive: { backgroundColor: Colors.primary },
-  statCount: { color: Colors.textPrimary, fontSize: 18, fontWeight: '900' },
-  statLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700', textAlign: 'center' },
-
-  list: { paddingHorizontal: 16, paddingBottom: 32, gap: 10 },
-  listCenter: { flex: 1 },
-
-  card: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 16,
-    gap: 10,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  empRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: '#fff', fontFamily: FontFamily.headlineSemibold, fontSize: 16 },
-  empName: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
-  empCode: { color: Colors.textMuted, fontSize: 11, marginTop: 1 },
-
-  requestInfo: { gap: 4 },
-  requestTypeChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.primaryFixed,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.full,
-  },
-  requestType: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
-  requestDate: { color: Colors.textMuted, fontSize: 12 },
-  reason: { color: Colors.textSecondary, fontSize: 12, fontStyle: 'italic' },
-
-  quickActions: { flexDirection: 'row', gap: 10 },
-  approveBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingVertical: 8,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.badgeGreenBg,
-  },
-  rejectBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 5,
-    paddingVertical: 8,
-    borderRadius: BorderRadius.lg,
-    backgroundColor: Colors.badgeRedBg,
-  },
-  quickBtnText: { fontSize: 12, fontWeight: '700' },
-
-  // Sheet
-  sheetEmpRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.outlineVariant,
-  },
-  sheetAvatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  sheetAvatarText: { color: '#fff', fontWeight: '800', fontSize: 18 },
-  sheetEmpName: { color: Colors.textPrimary, fontSize: 16, fontWeight: '700' },
-  sheetEmpCode: { color: Colors.textMuted, fontSize: 12 },
-  sheetRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.outlineVariant,
-  },
-  sheetLabel: { color: Colors.textMuted, fontSize: 13, flex: 1 },
-  sheetValue: { color: Colors.textPrimary, fontSize: 13, fontWeight: '600', flex: 2, textAlign: 'right' },
-  sheetHint: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, marginTop: 12 },
-  sheetTrail: { marginTop: 12 },
-  commentLabel: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 14,
-    marginBottom: 6,
-    letterSpacing: 0.3,
-  },
-  commentInput: {
-    backgroundColor: Colors.bgInput,
-    borderWidth: 1.5,
-    borderColor: Colors.outlineVariant,
-    borderRadius: BorderRadius.md,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: Colors.textPrimary,
-    fontSize: 14,
-    minHeight: 60,
-    textAlignVertical: 'top',
-    marginBottom: 16,
-  },
-  sheetActions: { flexDirection: 'row', gap: 10 },
-  sheetApproveBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.badgeGreenBg,
-    borderWidth: 1.5,
-    borderColor: Colors.clayGreen,
-  },
-  sheetRejectBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.badgeRedBg,
-    borderWidth: 1.5,
-    borderColor: Colors.clayRed,
-  },
-  sheetActionText: { fontSize: 14, fontWeight: '800' },
-});
+const makeStyles = (Colors: Palette) =>
+  StyleSheet.create({
+    safe: { flex: 1, backgroundColor: Colors.bgLight },
+    controls: { gap: 12, marginTop: 12, marginBottom: 4 },
+    listHeader: { gap: 10, marginBottom: 10, marginHorizontal: -16, paddingTop: 8 },
+    notices: { marginHorizontal: 16 },
+    list: { paddingHorizontal: 16, paddingBottom: 32, gap: 10 },
+    listGrow: { flexGrow: 1 },
+  });
