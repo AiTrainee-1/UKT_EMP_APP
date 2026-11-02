@@ -19,9 +19,29 @@ export function journeyChip(j: Pick<JourneyListItem, 'status' | 'endReason' | 'a
   return { label: 'Completed', tone: 'green' };
 }
 
-/** The line under a finished journey's chip ("All 4 punches were recorded"); empty when the reason says nothing more. */
-export function endNote(j: Pick<JourneyListItem, 'status' | 'endReason'>): string {
-  return j.status === 'ended' ? endReasonLabel(j.endReason) : '';
+/** The line under a finished journey's chip ("All 4 punches were recorded"); empty when the reason says nothing more.
+ *  `own` false words it for someone else reading the journey (see journeyViewer). */
+export function endNote(j: Pick<JourneyListItem, 'status' | 'endReason'>, own = true): string {
+  return j.status === 'ended' ? endReasonLabel(j.endReason, own) : '';
+}
+
+export interface JourneyViewer {
+  /** The signed-in employee recorded this journey (true when the server does not say whose it is: an older backend
+   *  only ever served the employee their own). */
+  own: boolean;
+  /** Whose journey it is, for a viewer who is not its owner ("Asha Kumar"); null for the owner. */
+  ownerName: string | null;
+}
+
+/** Who is reading a journey: its owner, or a Department Head who opened a team member's route from Approvals (the server
+ *  lets the head in for the people whose On-Duty requests their Approvals list). */
+export function journeyViewer(
+  track: Pick<JourneyListItem, 'employeeId' | 'employeeName'> | null | undefined,
+  myEmployeeId: number | null | undefined,
+): JourneyViewer {
+  const owner = track?.employeeId ?? null;
+  const own = owner == null || myEmployeeId == null || owner === myEmployeeId;
+  return { own, ownerName: own ? null : track?.employeeName?.trim() || 'Team member' };
 }
 
 export interface LiveStatus {
@@ -31,17 +51,32 @@ export interface LiveStatus {
   tone: Tone;
 }
 
-/** What a journey in progress is doing right now, from the server's `state`. */
-export function liveStatus(state: string | null | undefined): LiveStatus {
+/** What a journey in progress is doing right now, from the server's `state`. `own` false: the hints describe the
+ *  employee's phone instead of telling the reader what to do (a Department Head reading a team member's route). */
+export function liveStatus(state: string | null | undefined, own = true): LiveStatus {
   switch (state) {
     case 'moving':
       return { label: 'Moving', hint: '', tone: 'green' };
     case 'stationary':
-      return { label: 'Still', hint: 'You are staying in one place (a break is being recorded).', tone: 'amber' };
+      return {
+        label: 'Still',
+        hint: own ? 'You are staying in one place (a break is being recorded).' : 'Staying in one place (a break is being recorded).',
+        tone: 'amber',
+      };
     case 'offline':
-      return { label: 'Offline', hint: 'No location has reached the office for a while. It uploads when your phone has internet.', tone: 'grey' };
+      return {
+        label: 'Offline',
+        hint: `No location has reached the office for a while. It uploads when ${own ? 'your' : "the employee's"} phone has internet.`,
+        tone: 'grey',
+      };
     case 'location_off':
-      return { label: 'Location off', hint: "Turn on Location in your phone's quick settings. Nothing is recorded while it is off.", tone: 'red' };
+      return {
+        label: 'Location off',
+        hint: own
+          ? "Turn on Location in your phone's quick settings. Nothing is recorded while it is off."
+          : "Location is switched off on the employee's phone. Nothing is recorded while it is off.",
+        tone: 'red',
+      };
     case 'waiting_first_fix':
       return { label: 'Starting', hint: 'Waiting for the first location.', tone: 'blue' };
     default:

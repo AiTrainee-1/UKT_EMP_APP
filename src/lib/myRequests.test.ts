@@ -5,13 +5,16 @@ import {
   istDateOf,
   missingPunchViewOptions,
   monthSections,
+  onDutyDay,
   onDutyGroup,
   onDutyRowLabel,
   onDutyViewOptions,
   outpassDay,
+  outpassPassDay,
   outpassViewOptions,
   permissionViewOptions,
   permissionsUsedThisMonth,
+  teaBreakDay,
 } from './myRequests.ts'
 import { rowsForView, viewCounts } from './requestViews.ts'
 
@@ -120,4 +123,17 @@ test('month headings keep the order and name each month', () => {
 test('every view has its own empty wording', () => {
   assert.equal(emptyViewText('month', 'outpasses', 'taken this month').title, 'No outpasses taken this month')
   assert.equal(emptyViewText('waiting', 'requests', 'x').title, 'No requests waiting')
+})
+
+test('the day each record is for, as the month switcher reads it (India time)', () => {
+  // outpass: the day the employee went out, else the day it was asked (not the approval day)
+  assert.equal(outpassPassDay({ status: 'approved', createdAt: '2026-09-30T04:00:00Z', approvedAt: '2026-10-01T05:00:00Z', exitedAt: '2026-09-30T19:00:00Z' }), '2026-10-01')
+  assert.equal(outpassPassDay({ status: 'approved', createdAt: '2026-09-30T18:20:00Z', approvedAt: '2026-09-30T18:40:00Z' }), '2026-09-30')
+  assert.equal(outpassPassDay({ status: 'pending', createdAt: '2026-09-30T18:40:00Z' }), '2026-10-01') // 00:10 IST
+  // on-duty: the session date, else the India day it was sent
+  assert.equal(onDutyDay({ status: 'active', date: '2026-10-05', createdAt: '2026-10-04T19:00:00Z' }), '2026-10-05')
+  assert.equal(onDutyDay({ status: 'active', date: null, createdAt: '2026-10-04T19:00:00Z' }), '2026-10-05')
+  // tea break: the India day the employee went out
+  assert.equal(teaBreakDay({ outAt: '2026-09-30T19:00:00+00:00' }), '2026-10-01')
+  assert.equal(teaBreakDay({ outAt: null }), null)
 })

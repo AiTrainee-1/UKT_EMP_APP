@@ -13,6 +13,7 @@ import {
   itemBadge,
   itemDateLabel,
   itemTypeLabel,
+  onDutyJourneyId,
   onDutyPunchLine,
   onDutyPunches,
 } from './approvalsItems.ts'
@@ -101,4 +102,17 @@ test('On-Duty: where, which day, the punches', () => {
   assert.equal(clock12('00:30'), '12:30 AM')
   assert.equal(clock12('12:00'), '12:00 PM')
   assert.equal(clock12(null), '—')
+})
+
+test('On-Duty: the recorded route of the day, for "View route"', () => {
+  assert.equal(onDutyJourneyId({ journeyId: 42 }), 42)
+  assert.equal(onDutyJourneyId({ journeyId: '42' }), 42)
+  // nothing recorded, an older server that does not say, or junk: no button
+  assert.equal(onDutyJourneyId({ journeyId: null }), null)
+  assert.equal(onDutyJourneyId({}), null)
+  assert.equal(onDutyJourneyId(null), null)
+  assert.equal(onDutyJourneyId({ journeyId: 0 }), null)
+  assert.equal(onDutyJourneyId({ journeyId: -3 }), null)
+  assert.equal(onDutyJourneyId({ journeyId: 1.5 }), null)
+  assert.equal(onDutyJourneyId({ journeyId: 'abc' }), null)
 })

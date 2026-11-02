@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Linking,
+  type ScrollViewInstance,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -28,6 +29,9 @@ import { useShift } from '../../src/hooks/useShift';
 import { useFamily, RELATION_LABEL } from '../../src/hooks/useFamily';
 import { useLocalProfilePhoto } from '../../src/hooks/useLocalProfilePhoto';
 import { useMyResignation } from '../../src/hooks/useResignation';
+import { useRouteRequest } from '../../src/hooks/useFocusItem';
+import { readWordParam } from '../../src/lib/focusItem';
+import { FocusFrame } from '../../src/components/focus/FocusFrame';
 import { trailRows, trailWorthShowing, waitingTarget } from '../../src/lib/approval';
 import { ExpandableCard, DetailBox, DetailRow } from '../../src/components/ui/ExpandableCard';
 import { SideDrawer } from '../../src/components/SideDrawer';
@@ -97,7 +101,17 @@ export default function ProfileScreen() {
   const { data: emp, isLoading } = useEmployee(user?.employeeId ?? null);
   const { data: shift } = useShift(user?.employeeId ?? null);
   const { data: dependents } = useFamily(user?.employeeId ?? null);
-  const { data: resignation } = useMyResignation(user?.employeeId ?? null);
+  const { data: resignation, refetch: refetchResignation } = useMyResignation(user?.employeeId ?? null);
+  // A notification about the employee's resignation opens this tab with ?section=resignation (src/lib/notificationTarget.ts):
+  // ask the server where it stands, scroll to the "Resignation & Exit" row (which says so; a tap shows the details) and pulse
+  // it once.
+  const sectionRequest = useRouteRequest('section', readWordParam);
+  const resignationFocus = sectionRequest?.value === 'resignation' ? sectionRequest.nonce : 0;
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  useEffect(() => {
+    if (resignationFocus) void refetchResignation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resignationFocus]);
   const localPhoto = useLocalProfilePhoto(user?.employeeId ?? null);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
@@ -253,6 +267,7 @@ export default function ProfileScreen() {
       <StatusBar barStyle="light-content" />
 
       <Animated.ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
@@ -503,16 +518,18 @@ export default function ProfileScreen() {
 
               <View style={styles.actionDivider} />
 
-              <TouchableOpacity style={styles.actionRow} onPress={handleResignationPress} activeOpacity={0.75}>
-                <View style={styles.actionIcon}>
-                  <MaterialCommunityIcons name="file-account-outline" size={20} color={Colors.primary} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.actionLabel}>Resignation & Exit</Text>
-                  <Text style={styles.actionSub}>{resignationSubtitle()}</Text>
-                </View>
-                <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.outline} />
-              </TouchableOpacity>
+              <FocusFrame active={resignationFocus > 0} pulseKey={resignationFocus} scrollRef={scrollRef} radius={BorderRadius.md}>
+                <TouchableOpacity style={styles.actionRow} onPress={handleResignationPress} activeOpacity={0.75}>
+                  <View style={styles.actionIcon}>
+                    <MaterialCommunityIcons name="file-account-outline" size={20} color={Colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.actionLabel}>Resignation & Exit</Text>
+                    <Text style={styles.actionSub}>{resignationSubtitle()}</Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={20} color={Colors.outline} />
+                </TouchableOpacity>
+              </FocusFrame>
             </View>
 
             <TouchableOpacity style={styles.signOutBtn} onPress={handleLogout} activeOpacity={0.85}>

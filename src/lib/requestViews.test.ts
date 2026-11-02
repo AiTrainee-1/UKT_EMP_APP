@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { defaultView, rowsForView, statusGroup, viewCounts, yearMonthOf, type ViewOptions } from './requestViews.ts'
+import {
+  defaultView,
+  inMonthScope,
+  monthEmptyText,
+  monthForRow,
+  rowsForView,
+  rowsInScope,
+  scopeToRow,
+  statusGroup,
+  viewCounts,
+  waitingInOtherMonths,
+  yearMonthOf,
+  type ViewOptions,
+} from './requestViews.ts'
 
 type Row = { id: number; status: string; date: string; createdAt: string }
 const today = new Date(2026, 9, 31) // 31 Oct 2026
@@ -53,4 +66,82 @@ test('yearMonthOf reads only the date part', () => {
   assert.deepEqual(yearMonthOf('2026-10-07T23:59:00-08:00'), [2026, 10])
   assert.equal(yearMonthOf('07/10/2026'), null)
   assert.equal(yearMonthOf(undefined), null)
+})
+
+// ── the month switcher (`scope`, 2026-11-02) ───────────────────────────────
+
+type Leave = { id: number; status: string; start: string; end: string | null }
+const leaves: Leave[] = [
+  { id: 1, status: 'pending', start: '2026-09-30', end: '2026-10-02' }, // spans September and October
+  { id: 2, status: 'approved', start: '2026-09-12', end: '2026-09-12' },
+  { id: 3, status: 'rejected', start: '2026-09-20', end: null },
+  { id: 4, status: 'approved', start: '2026-10-07', end: '2026-10-08' },
+  { id: 5, status: 'pending', start: '2026-11-02', end: '2026-11-02' },
+  { id: 6, status: 'mystery', start: '2026-09-01', end: '2026-09-01' },
+]
+const scoped = (year: number, month: number): ViewOptions<Leave> => ({
+  statusOf: (r) => r.status,
+  today,
+  scope: { year, month, daysOf: (r) => [r.start, r.end] },
+})
+
+test('a scoped screen only works with the rows of its month (a range counts in every month it touches)', () => {
+  assert.deepEqual(rowsInScope(leaves, scoped(2026, 9)).map((r) => r.id), [1, 2, 3, 6])
+  assert.deepEqual(rowsInScope(leaves, scoped(2026, 10)).map((r) => r.id), [1, 4])
+  assert.deepEqual(rowsInScope(leaves, scoped(2026, 11)).map((r) => r.id), [5])
+  assert.deepEqual(rowsInScope(leaves, scoped(2026, 8)).map((r) => r.id), [])
+  assert.ok(inMonthScope(leaves[0], scoped(2026, 10).scope!))
+})
+
+test('inside the month: the status views follow the status, the month view lists every row of the month', () => {
+  const sep = scoped(2026, 9)
+  assert.deepEqual(rowsForView(leaves, 'waiting', sep).map((r) => r.id), [1])
+  assert.deepEqual(rowsForView(leaves, 'approved', sep).map((r) => r.id), [2])
+  assert.deepEqual(rowsForView(leaves, 'rejected', sep).map((r) => r.id), [3])
+  // every row of September, whatever its status (an unknown status included)
+  assert.deepEqual(rowsForView(leaves, 'month', sep).map((r) => r.id), [1, 2, 3, 6])
+  assert.deepEqual(viewCounts(leaves, sep), { waiting: 1, month: 4, approved: 1, rejected: 1 })
+  assert.deepEqual(viewCounts(leaves, scoped(2026, 10)), { waiting: 1, month: 2, approved: 1, rejected: 0 })
+  assert.deepEqual(viewCounts(leaves, scoped(2026, 3)), { waiting: 0, month: 0, approved: 0, rejected: 0 })
+  assert.equal(defaultView(viewCounts(leaves, scoped(2026, 10))), 'waiting')
+})
+
+test('the scope wins over the old "this month" rule, which is still used without one', () => {
+  const both: ViewOptions<Leave> = { ...scoped(2026, 9), month: { dateOf: (r) => r.start, kind: 'taken' } }
+  assert.deepEqual(rowsForView(leaves, 'month', both).map((r) => r.id), [1, 2, 3, 6])
+  const noMonthRule: ViewOptions<Leave> = { statusOf: (r) => r.status, today }
+  assert.deepEqual(rowsForView(leaves, 'month', noMonthRule), [])
+  assert.deepEqual(rowsForView(leaves, 'waiting', noMonthRule).map((r) => r.id), [1, 5])
+})
+
+test('the month a focused row needs, and which views list it there', () => {
+  const nov = scoped(2026, 11)
+  assert.deepEqual(monthForRow(leaves[1], nov), { year: 2026, month: 9 })
+  // a range that touches the month on screen keeps it
+  assert.deepEqual(monthForRow(leaves[0], scoped(2026, 10)), { year: 2026, month: 10 })
+  assert.deepEqual(monthForRow(leaves[0], nov), { year: 2026, month: 9 })
+  assert.equal(monthForRow(leaves[1], { statusOf: (r) => r.status }), null)
+  const moved = scopeToRow(leaves[1], nov)
+  assert.deepEqual([moved.scope?.year, moved.scope?.month], [2026, 9])
+  assert.deepEqual(rowsForView([leaves[1]], 'approved', moved).map((r) => r.id), [2])
+  // without a switcher nothing moves
+  const plain: ViewOptions<Leave> = { statusOf: (r) => r.status }
+  assert.equal(scopeToRow(leaves[1], plain), plain)
+})
+
+test('waiting rows of other months are counted, with the latest month that has one', () => {
+  assert.deepEqual(waitingInOtherMonths(leaves, scoped(2026, 11)), { count: 1, month: { year: 2026, month: 10 } })
+  assert.deepEqual(waitingInOtherMonths(leaves, scoped(2026, 10)), { count: 1, month: { year: 2026, month: 11 } })
+  assert.deepEqual(waitingInOtherMonths(leaves, scoped(2026, 8)), { count: 2, month: { year: 2026, month: 11 } })
+  assert.deepEqual(waitingInOtherMonths(leaves, { statusOf: (r) => r.status }), { count: 0, month: null })
+})
+
+test('empty states name the month', () => {
+  const sep = { year: 2026, month: 9 }
+  assert.deepEqual(monthEmptyText('waiting', 'leave requests', sep, 0, today).title, 'No leave requests in September 2026')
+  assert.match(monthEmptyText('waiting', 'leave requests', sep, 0, today).subtitle, /another month/)
+  assert.match(monthEmptyText('month', 'leave requests', { year: 2026, month: 10 }, 0, today).subtitle, /this month/)
+  assert.equal(monthEmptyText('waiting', 'leave requests', sep, 3, today).title, 'Nothing waiting in September 2026')
+  assert.equal(monthEmptyText('approved', 'leave requests', sep, 3, today).title, 'Nothing approved in September 2026')
+  assert.equal(monthEmptyText('rejected', 'leave requests', sep, 3, today).title, 'Nothing rejected in September 2026')
 })

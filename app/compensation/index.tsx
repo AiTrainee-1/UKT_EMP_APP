@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Platform,
+  type ScrollViewInstance,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,6 +21,9 @@ import { ContactBlockCard } from '../../src/components/support/ContactBlockCard'
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { Skeleton, SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Reveal } from '../../src/components/Reveal';
+import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
+import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
+import { idFromKey } from '../../src/lib/focusItem';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
@@ -64,7 +68,7 @@ export default function CompensationScreen() {
   const [tab, setTab] = useState<Tab>('mine');
   const [year, setYear] = useState<number | null>(null);
   const [filter, setFilter] = useState<SourceFilter>('all');
-  const { data, isLoading, refetch, isRefetching } = useEmployeeCompensation();
+  const { data, isLoading, refetch, isRefetching, isFetching } = useEmployeeCompensation();
   // The whole year (every kind, HR's marked), staff only: asked only once the 90-day reply says this is a staff member.
   const history = useCompensationHistory(year, data?.isStaff === true);
 
@@ -75,6 +79,27 @@ export default function CompensationScreen() {
     () => (history.data ? groupByMonth(history.data.items, history.data.otPayByMonth, filter) : []),
     [history.data, filter],
   );
+
+  // A notification's View opens this screen with ?focus=<holiday / Sunday work claim id> (src/lib/notificationTarget.ts):
+  // My Compensation opens (with a filter that shows it), the page scrolls to the claim's row "hw-<id>" and it pulses once
+  // (src/hooks/useFocusItem.ts). Looked for in the year on screen, or in the 90-day list when the year did not load.
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const focus = useFocusItem<HistoryItem | CompensationItem, SourceFilter>({
+    request: useFocusParam(),
+    rows: history.data ? history.data.items : history.isError ? data?.items : undefined,
+    idOf: (it) => idFromKey(it.key, 'hw') ?? -1,
+    views: {
+      order: ['all'],
+      current: filter,
+      set: setFilter,
+      has: (it, f) => f === 'all' || ('source' in it && it.source === f),
+    },
+    reveal: () => setTab('mine'),
+    refresh: () => Promise.all([refetch(), data?.isStaff ? history.refetch() : undefined]),
+    fetching: isFetching || history.isFetching,
+    ready: !!data,
+    scrollRef,
+  });
 
   const statusColors = (tone: StatusTone) => {
     switch (tone) {
@@ -205,64 +230,65 @@ export default function CompensationScreen() {
     const date = formatLongDate(item.date);
     const earlier = earlierRecordLabel(item);
     return (
-      <View
-        key={item.key}
-        style={[styles.itemCard, { borderLeftColor: tone.solid }]}
-        accessible
-        accessibilityLabel={`${tone.label}${date ? `, ${date}` : ''}. ${item.title}. ${item.statusLabel}.${hrMark ? ` ${hrMark.sourceLabel}.` : ''}${earlier ? ` ${earlier}.` : ''}`}
-      >
-        <View style={styles.itemTop}>
-          <View style={[styles.kindChip, { backgroundColor: isDark ? tone.softDark : tone.softLight }]}>
-            <MaterialCommunityIcons name={tone.icon as any} size={13} color={isDark ? tone.inkDark : tone.inkLight} />
-            <Text style={[styles.kindChipText, { color: isDark ? tone.inkDark : tone.inkLight }]} numberOfLines={1}>{tone.label}</Text>
+      <FocusFrame key={item.key} {...focus.frame(idFromKey(item.key, 'hw') ?? -1)}>
+        <View
+          style={[styles.itemCard, { borderLeftColor: tone.solid }]}
+          accessible
+          accessibilityLabel={`${tone.label}${date ? `, ${date}` : ''}. ${item.title}. ${item.statusLabel}.${hrMark ? ` ${hrMark.sourceLabel}.` : ''}${earlier ? ` ${earlier}.` : ''}`}
+        >
+          <View style={styles.itemTop}>
+            <View style={[styles.kindChip, { backgroundColor: isDark ? tone.softDark : tone.softLight }]}>
+              <MaterialCommunityIcons name={tone.icon as any} size={13} color={isDark ? tone.inkDark : tone.inkLight} />
+              <Text style={[styles.kindChipText, { color: isDark ? tone.inkDark : tone.inkLight }]} numberOfLines={1}>{tone.label}</Text>
+            </View>
+            {!!item.statusLabel && (
+              <View style={[styles.statusChip, { backgroundColor: sc.bg }]}>
+                <Text style={[styles.statusChipText, { color: sc.fg }]} numberOfLines={2}>{item.statusLabel}</Text>
+              </View>
+            )}
           </View>
-          {!!item.statusLabel && (
-            <View style={[styles.statusChip, { backgroundColor: sc.bg }]}>
-              <Text style={[styles.statusChipText, { color: sc.fg }]} numberOfLines={2}>{item.statusLabel}</Text>
+          {(!!hrMark || !!earlier) && (
+            <View style={styles.markRow}>
+              {!!hrMark && (
+                <View style={[styles.sourceChip, hrMark.givenByHr ? styles.sourceChipHr : styles.sourceChipAuto]}>
+                  <MaterialCommunityIcons
+                    name={hrMark.givenByHr ? 'account-tie-outline' : 'robot-outline'}
+                    size={12}
+                    color={hrMark.givenByHr ? Colors.primary : Colors.textMuted}
+                  />
+                  <Text style={[styles.sourceChipText, { color: hrMark.givenByHr ? Colors.primary : Colors.textMuted }]}>
+                    {hrMark.sourceLabel}
+                  </Text>
+                </View>
+              )}
+              {!!earlier && (
+                <View style={styles.earlierChip} testID="compensation-earlier-record">
+                  <MaterialCommunityIcons name="history" size={12} color={Colors.textMuted} />
+                  <Text style={styles.earlierChipText}>{earlier}</Text>
+                </View>
+              )}
+            </View>
+          )}
+          <Text style={styles.itemTitle}>{item.title}</Text>
+          {!!date && (
+            <View style={styles.dateRow}>
+              <MaterialCommunityIcons name="calendar-month-outline" size={13} color={Colors.textMuted} />
+              <Text style={styles.dateText}>{date}</Text>
+            </View>
+          )}
+          {!!item.detail && <Text style={styles.itemDetail}>{item.detail}</Text>}
+          {facts.length > 0 && (
+            <View style={styles.factRow}>
+              {facts.map((f) => (
+                <View key={`${f.icon}:${f.text}`} style={styles.factChip}>
+                  <MaterialCommunityIcons name={f.icon as any} size={12} color={Colors.textMuted} />
+                  <Text style={[styles.factText, TabularNums]}>{f.text}</Text>
+                </View>
+              ))}
             </View>
           )}
         </View>
-        {(!!hrMark || !!earlier) && (
-          <View style={styles.markRow}>
-            {!!hrMark && (
-              <View style={[styles.sourceChip, hrMark.givenByHr ? styles.sourceChipHr : styles.sourceChipAuto]}>
-                <MaterialCommunityIcons
-                  name={hrMark.givenByHr ? 'account-tie-outline' : 'robot-outline'}
-                  size={12}
-                  color={hrMark.givenByHr ? Colors.primary : Colors.textMuted}
-                />
-                <Text style={[styles.sourceChipText, { color: hrMark.givenByHr ? Colors.primary : Colors.textMuted }]}>
-                  {hrMark.sourceLabel}
-                </Text>
-              </View>
-            )}
-            {!!earlier && (
-              <View style={styles.earlierChip} testID="compensation-earlier-record">
-                <MaterialCommunityIcons name="history" size={12} color={Colors.textMuted} />
-                <Text style={styles.earlierChipText}>{earlier}</Text>
-              </View>
-            )}
-          </View>
-        )}
-        <Text style={styles.itemTitle}>{item.title}</Text>
-        {!!date && (
-          <View style={styles.dateRow}>
-            <MaterialCommunityIcons name="calendar-month-outline" size={13} color={Colors.textMuted} />
-            <Text style={styles.dateText}>{date}</Text>
-          </View>
-        )}
-        {!!item.detail && <Text style={styles.itemDetail}>{item.detail}</Text>}
-        {facts.length > 0 && (
-          <View style={styles.factRow}>
-            {facts.map((f) => (
-              <View key={`${f.icon}:${f.text}`} style={styles.factChip}>
-                <MaterialCommunityIcons name={f.icon as any} size={12} color={Colors.textMuted} />
-                <Text style={[styles.factText, TabularNums]}>{f.text}</Text>
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
+      </FocusFrame>
     );
   };
 
@@ -442,6 +468,7 @@ export default function CompensationScreen() {
       {tab === 'mine' ? (
         <ScrollView
           key="mine"
+          ref={scrollRef}
           contentContainerStyle={styles.pad}
           showsVerticalScrollIndicator={false}
           refreshControl={refresh}
@@ -483,6 +510,9 @@ export default function CompensationScreen() {
 
           {!!today && allowanceBanner(today, 'today')}
           {!!tomorrow && allowanceBanner(tomorrow, 'tomorrow')}
+          {focus.missing && (
+            <FocusMissingNote text="That compensation is no longer in this list" onDismiss={focus.dismissMissing} />
+          )}
 
           {!data.enabled.master ? (
             <View style={styles.noteBox}>

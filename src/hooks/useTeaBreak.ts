@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
 // See backend/api/tea_break_views.py. A permanent, no-approval, per-employee
@@ -22,6 +22,8 @@ export interface TeaBreakStatus {
   outAt: string | null;
   allowedMinutes: number;
   recent: TeaBreakLogItem[];
+  /** 'YYYY-MM' when the server applied ?month= (recent = that month's breaks). */
+  month?: string;
 }
 
 // The QR token itself barely changes (it's a long-lived, employee-identifying
@@ -40,14 +42,21 @@ export function useTeaBreakQrToken(employeeId: number | null) {
 
 // Polled while the screen is open so a gate scan (out or back in) shows up
 // here without the employee needing to pull-to-refresh.
-export function useTeaBreakStatus(employeeId: number | null) {
+//
+// `month` ('YYYY-MM', the month switcher, 2026-11-02): `recent` is then every
+// break of that month instead of the latest 10 (`month` is echoed back by a
+// server that knows the filter; an older one ignores it and the caller filters
+// the latest 10 itself). onBreak / outAt are about right now either way. The
+// previous month's answer stays on screen while another month loads.
+export function useTeaBreakStatus(employeeId: number | null, month?: string) {
   return useQuery({
-    queryKey: ['tea-break-status', employeeId],
+    queryKey: month ? ['tea-break-status', employeeId, month] : ['tea-break-status', employeeId],
     queryFn: async (): Promise<TeaBreakStatus> => {
-      const res = await api.get('/tea-break/my-status');
+      const res = await api.get('/tea-break/my-status', month ? { params: { month } } : undefined);
       return res.data as TeaBreakStatus;
     },
     enabled: !!employeeId,
     refetchInterval: 15000,
+    placeholderData: keepPreviousData,
   });
 }

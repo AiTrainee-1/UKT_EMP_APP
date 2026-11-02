@@ -6,9 +6,18 @@ import type { ApprovalProgress } from '../lib/approval';
 import {
   asPortion,
   asStatus,
+  readBalance,
+  readHistory,
+  readMonthsUsage,
+  readRule,
+  type CLBalance,
+  type CLHistory,
   type CLLeft,
+  type CLMonthUsage,
   type CLPart,
   type CLPortion,
+  type CLRule,
+  type CLSource,
   type ShiftHalves,
 } from '../lib/casualLeave';
 
@@ -26,6 +35,10 @@ export interface CasualLeaveRequest {
   reviewedBy?: string | null;
   reviewComment?: string | null;
   reviewedAt?: string | null;
+  /** "hr_edit" when an HR attendance edit gave it (2026-11-02); "employee" otherwise and on an older backend. */
+  source: CLSource;
+  /** The HR attendance edit that gave it, when it did. */
+  hrEditRequestId?: number | null;
 }
 
 /** One month the employee may still apply casual leave for (the previous month only while the grace days are open, then
@@ -43,6 +56,12 @@ export interface CLEligibilityMonth {
   usedParts: CLPart[];
   /** Which half of which date is already asked for. */
   usedHalves: { date: string; portion: CLPortion }[];
+  /** Added 2026-11-02 (yearly balance); absent on an older server = the one-a-month rule. */
+  rule?: CLRule;
+  /** The yearly days still free for the month's year (null under the old rule). */
+  remaining?: number | null;
+  /** Dates already taken as a full day. */
+  usedFullDates?: string[];
 }
 
 export interface CLEligibility {
@@ -60,6 +79,12 @@ export interface CLEligibility {
   shift?: ShiftHalves | null;
   /** 'yyyy-MM' of this device's clock when the answer was fetched: the month the answer is about. */
   fetchedMonth?: string;
+  /** The yearly balance (2026-11-02): 12 - approved - waiting days. Absent on an older server (then the one-a-month words). */
+  balance?: CLBalance | null;
+  /** The rule today's requests follow. */
+  rule?: CLRule;
+  /** The year month by month, every part (HR proposals that still wait included). */
+  monthsUsage?: CLMonthUsage[];
 }
 
 /** 'yyyy-MM' of a date, in the device's time (the same clock the request window uses). */
@@ -88,6 +113,9 @@ function readMonths(raw: unknown): CLEligibilityMonth[] | undefined {
         left,
         usedParts: readParts(m.usedParts),
         usedHalves: readParts(m.usedHalves).map(({ date, portion }) => ({ date, portion })),
+        rule: readRule(m.rule),
+        remaining: typeof m.remaining === 'number' && Number.isFinite(m.remaining) ? m.remaining : null,
+        usedFullDates: Array.isArray(m.usedFullDates) ? m.usedFullDates.filter((d: unknown) => typeof d === 'string') : [],
       };
     });
 }
@@ -125,6 +153,8 @@ export function useCasualLeaves(employeeId: number | null, params?: { status?: s
         reviewedBy: r.reviewedBy ?? null,
         reviewComment: r.reviewComment ?? null,
         reviewedAt: r.reviewedAt ?? null,
+        source: r.source === 'hr_edit' ? 'hr_edit' : 'employee',
+        hrEditRequestId: typeof r.hrEditRequestId === 'number' ? r.hrEditRequestId : null,
       }));
     },
     enabled: !!employeeId,
@@ -155,6 +185,9 @@ export function useCLEligibility(employeeId: number | null) {
         months: readMonths(res.data?.months),
         shift: readShift(res.data?.shift),
         fetchedMonth: monthKey(new Date()),
+        balance: readBalance(res.data?.balance),
+        rule: readRule(res.data?.rule),
+        monthsUsage: readMonthsUsage(res.data?.monthsUsage),
       };
     },
     enabled: !!employeeId,
@@ -177,6 +210,26 @@ export function useCLEligibility(employeeId: number | null) {
   return query;
 }
 
+/**
+ * GET /casual-leaves/history?year= (2026-11-02): the year's balance as a running story ("12 → 11 on 05 Nov: Casual Leave
+ * approved ..."). `null` when the server does not have it (an older one answers 404): the screen then shows nothing.
+ */
+export function useCLHistory(employeeId: number | null, year: number) {
+  return useQuery({
+    queryKey: ['casual-leave-history', employeeId, year],
+    queryFn: async (): Promise<CLHistory | null> => {
+      try {
+        const res = await api.get('/casual-leaves/history', { params: { year } });
+        return readHistory(res.data);
+      } catch (err: any) {
+        if (err?.response?.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: !!employeeId,
+  });
+}
+
 export function useApplyCasualLeave(employeeId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -190,6 +243,7 @@ export function useApplyCasualLeave(employeeId: number | null) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['casual-leaves', employeeId] });
       queryClient.invalidateQueries({ queryKey: ['casual-leave-eligibility', employeeId] });
+      queryClient.invalidateQueries({ queryKey: ['casual-leave-history', employeeId] });
     },
   });
 }

@@ -1,5 +1,5 @@
 // Run with `npm test` (Node's built-in test runner; Node 22.18+ / 24 runs .ts directly).
-// Asserts ALL 83 shared vectors against the rule, so this app, the web apps and the backend cannot drift apart.
+// Asserts ALL 137 shared vectors against the rule, so this app, the web apps and the backend cannot drift apart.
 // TypeScript 6 no longer loads @types/* on its own, and the app itself needs no Node typings: only the tests do.
 /// <reference types="node" />
 import test from 'node:test'
@@ -23,16 +23,16 @@ const at = (day: string, h = 13, min = 30, s = 0, ms = 0) => {
   return new Date(y, m - 1, d, h, min, s, ms)
 }
 
-test('the vector set is complete (22 windows + 47 dates + 14 ranges = 83)', () => {
-  assert.equal(V.windows.length, 22)
-  assert.equal(V.dates.length, 47)
-  assert.equal(V.ranges.length, 14)
-  assert.equal(V.windows.length + V.dates.length + V.ranges.length, 83)
+test('the vector set is complete (34 windows + 80 dates + 23 ranges = 137)', () => {
+  assert.equal(V.windows.length, 34)
+  assert.equal(V.dates.length, 80)
+  assert.equal(V.ranges.length, 23)
+  assert.equal(V.windows.length + V.dates.length + V.ranges.length, 137)
 })
 
 test('GRACE_DAYS matches the vectors', () => {
   assert.equal(GRACE_DAYS, V.graceDays)
-  assert.equal(GRACE_DAYS, 2)
+  assert.equal(GRACE_DAYS, 5)
 })
 
 for (const v of V.windows) {
@@ -81,8 +81,8 @@ test('the time of day never moves the window (00:00:00 and 23:59:59.999 give the
 })
 
 test('"now" is an argument: the same module answers differently for a different day (no start-up capture)', () => {
-  assert.equal(getRequestWindow(at('2026-10-02')).min, '2026-09-01')
-  assert.equal(getRequestWindow(at('2026-10-03')).min, '2026-10-01')
+  assert.equal(getRequestWindow(at('2026-10-05')).min, '2026-09-01')
+  assert.equal(getRequestWindow(at('2026-10-06')).min, '2026-10-01')
   assert.equal(getRequestWindow(at('2026-11-01')).min, '2026-10-01')
   assert.equal(getRequestWindow(at('2026-11-30')).max, '2026-11-30')
   // The rule must not read the clock itself.

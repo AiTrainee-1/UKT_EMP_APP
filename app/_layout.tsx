@@ -14,7 +14,6 @@ import { Colors } from '../src/constants/colors';
 import { useMyResignation } from '../src/hooks/useResignation';
 import { registerPushToken, retryPushRegistrationIfNeeded } from '../src/hooks/usePushToken';
 import { useEmployee } from '../src/hooks/useEmployee';
-import type { ManagerProfile } from '../src/hooks/useManager';
 import { startLiveTracking, stopLiveTracking, useGeoPunchStatus } from '../src/hooks/useGeoAttendance';
 import { ensureTracking, stopTrackingForSignOut } from '../src/tracking/actions';
 import { useTrackingLifecycle, useTrackingState } from '../src/tracking/useTracking';
@@ -29,7 +28,7 @@ LogBox.ignoreLogs(['SafeAreaView has been deprecated', '[Reanimated] Dependencie
 import { UpdatePrompt } from '../src/components/UpdatePrompt';
 import { ServerStatusBanner } from '../src/components/support/ServerStatusBanner';
 import { prefetchSupportContact } from '../src/hooks/useSupportContact';
-import { notificationRoute, pushNotificationType } from '../src/lib/compensation';
+import { pushTapHref } from '../src/lib/notificationTarget';
 import * as Location from 'expo-location';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFonts } from 'expo-font';
@@ -258,13 +257,9 @@ function NotificationTapHandler() {
   const client = useQueryClient();
   useNotificationObserver(
     (notification) => {
-      // A compensation push (`data.type`, see backend/api/signals.py) opens the Compensation screen, a "holiday_work" one (a
-      // claim waits for the Department Head) opens the Approvals tab; every other one opens the Notifications list, as before.
-      // Whether this person is still a head is read from the profile if the tab bar has already fetched it (cold start: unknown,
-      // and only a head is ever sent a "holiday_work" push).
-      const manager = client.getQueryData<ManagerProfile>(['manager-profile']);
-      const target = notificationRoute(pushNotificationType(notification), manager) ?? '/(tabs)/notifications';
-      router.push(target as Href);
+      // Every tapped push opens the Notifications list (owner, 2026-11-02), scrolled to that notification and pulsed once:
+      // `data.notificationId` (backend/api/signals.py) -> `?highlight=<id>`. Its View button then opens the page it is about.
+      router.push(pushTapHref(notification) as Href);
     },
     // a push that arrives while the app is open also lands in the Notifications list (and the unread count) straight away
     () => {

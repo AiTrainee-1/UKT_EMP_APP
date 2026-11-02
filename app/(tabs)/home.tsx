@@ -18,17 +18,17 @@ import { format, getDaysInMonth } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
-import { HomeClock, useCalendarNow } from '../../src/components/home/HomeClock';
+import { useCalendarNow } from '../../src/components/home/HomeClock';
 import { AttentionStrip } from '../../src/components/home/AttentionStrip';
 import { LastSalaryCard } from '../../src/components/home/LastSalaryCard';
+import { TodayPanel } from '../../src/components/home/TodayPanel';
 import { calendarDaysUntil, greetingFor, inDaysText, parseLocalDate } from '../../src/lib/homeAttention';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useConfirmSignOut } from '../../src/hooks/useSignOut';
 import { useDashboard } from '../../src/hooks/useDashboard';
 import { useAppNotifications } from '../../src/hooks/useAppNotifications';
-import { useLiveFeed } from '../../src/hooks/useHomeSummary';
 import { useEmployee } from '../../src/hooks/useEmployee';
-import { showsForEmployee } from '../../src/lib/employmentType';
+import { showsForEmployee, type EmploymentGate } from '../../src/lib/employmentType';
 import { useAttendance } from '../../src/hooks/useAttendance';
 import { useShift } from '../../src/hooks/useShift';
 import { SlideToPunch } from '../../src/components/SlideToPunch';
@@ -82,16 +82,16 @@ const makeQuickActions = (Colors: Palette) => ([
   { label: 'Resignation', icon: 'file-sign', route: '/resignation/warning' as const, iconColor: Colors.categoryDestructive, bg: Colors.badgeRedBg },
 ]);
 
-// Tiles only a staff employee gets (compensation is for staff only). Listed once the profile has said 'staff': a production
-// employee never sees the tile flash up while the profile loads (src/lib/employmentType.ts).
-const STAFF_ONLY_ROUTES: ReadonlySet<string> = new Set(['/compensation']);
-
-const PUNCH_SLOTS = [
-  { key: 'in', label: 'In (GPS)' },
-  { key: 'lunchOut', label: 'Lunch Out' },
-  { key: 'lunchIn', label: 'Lunch In' },
-  { key: 'eveningOut', label: 'Evening Out' },
-] as const;
+// Tiles only a staff employee gets (src/lib/employmentType.ts):
+//  - Compensation is for staff only and is listed once the profile has said 'staff' (a production employee never sees it
+//    flash up while the profile loads);
+//  - Apply Leave and Permission are hidden from a production employee, the same `staffOnly` rule as the side drawer's
+//    Leave / Permissions entries (shown while the profile is still loading).
+const TILE_GATES: Readonly<Record<string, EmploymentGate>> = {
+  '/compensation': { staffProfileOnly: true },
+  '/(tabs)/leave': { staffOnly: true },
+  '/requests': { staffOnly: true },
+};
 
 export default function HomeScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -101,17 +101,15 @@ export default function HomeScreen() {
 
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  // Changes only on a new day or a new greeting period: the live minute is HomeClock's own state, so Home no longer
-  // re-renders (tile grid, animations and all) every second.
+  // Changes only on a new day or a new greeting period: the live minute is TodayPanel's own state (useMinuteNow), so Home
+  // does not re-render (tile grid, animations and all) every minute.
   const now = useCalendarNow();
   const { data, isLoading, refetch, isRefetching } = useDashboard(user?.employeeId ?? null);
   const { data: notifs } = useAppNotifications(user?.employeeId ?? null);
-  const { data: liveFeed } = useLiveFeed();
   const { data: emp } = useEmployee(user?.employeeId ?? null);
-  const QUICK_ACTIONS = makeQuickActions(Colors).filter((a) =>
-    showsForEmployee({ staffProfileOnly: STAFF_ONLY_ROUTES.has(a.route) }, emp?.employmentType));
-  const { data: myAttendance } = useAttendance(user?.employeeId ?? null, now.getMonth() + 1, now.getFullYear());
-  const { data: shift } = useShift(user?.employeeId ?? null);
+  const QUICK_ACTIONS = makeQuickActions(Colors).filter((a) => showsForEmployee(TILE_GATES[a.route] ?? {}, emp?.employmentType));
+  const { data: myAttendance, isLoading: attendanceLoading, isError: attendanceFailed } = useAttendance(user?.employeeId ?? null, now.getMonth() + 1, now.getFullYear());
+  const { data: shift, isLoading: shiftLoading } = useShift(user?.employeeId ?? null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [showAllActions, setShowAllActions] = useState(false);
   const visibleActions = showAllActions ? QUICK_ACTIONS : QUICK_ACTIONS.slice(0, 6);
@@ -183,10 +181,6 @@ export default function HomeScreen() {
       void queryClient.invalidateQueries({ queryKey: key });
     }
   };
-  const floorLiveText = liveFeed && liveFeed.length > 0
-    ? `${liveFeed[0].event === 'in' ? 'Checked in' : 'Checked out'} at ${liveFeed[0].time}`
-    : null;
-
   // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
   const handleLogout = useConfirmSignOut();
 
@@ -232,21 +226,17 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* ─── Date · Greeting + status dot · Shift pill ─── */}
+        {/* ─── Date · Greeting + status dot (the live time and the shift live in the "Right now" panel below) ─── */}
         <Text style={styles.dateText}>{format(now, 'EEE, d MMM yyyy')}</Text>
         <View style={styles.greetingRow}>
           <Text style={styles.greeting} numberOfLines={1}>
             {greetingFor(now.getHours())}, {user?.name?.split(' ')[0] || 'Employee'}
           </Text>
-          <View style={[styles.statusDot, punchedInToday && styles.statusDotOn]} />
-        </View>
-        <View style={styles.shiftPill}>
-          <MaterialCommunityIcons name="clock-outline" size={13} color={Colors.categoryOnDuty} />
-          <HomeClock style={styles.shiftPillTime} />
-          <Text style={styles.shiftPillDot}>·</Text>
-          <Text style={styles.shiftPillText} numberOfLines={1}>
-            {shift ? `Shift ${shift.shiftName} (${shift.startTime}–${shift.endTime})` : 'No shift assigned'}
-          </Text>
+          <View
+            style={[styles.statusDot, punchedInToday && styles.statusDotOn]}
+            accessible
+            accessibilityLabel={punchedInToday ? 'Punched in today' : 'Not punched in yet today'}
+          />
         </View>
 
         {/* ─── Profile card ─── */}
@@ -319,38 +309,15 @@ export default function HomeScreen() {
           )}
         </LinearGradient>
 
-        {/* ─── Today's Punches (fixed 4-slot tracker) ─── */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <MaterialCommunityIcons name="fingerprint" size={18} color={Colors.categoryPunch} />
-            <Text style={styles.cardTitle}>Today's Punches</Text>
-            <View style={{ flex: 1 }} />
-            <View style={[styles.statusPill, punchedInToday ? styles.statusPillOn : styles.statusPillOff]}>
-              <View style={[styles.statusPillDot, { backgroundColor: punchedInToday ? Colors.statusGreen : Colors.textMuted }]} />
-              <Text style={[styles.statusPillText, { color: punchedInToday ? Colors.statusGreen : Colors.textMuted }]}>
-                {punchedInToday ? 'Punched In' : 'Not Punched'}
-              </Text>
-            </View>
-          </View>
-          <View style={styles.punchGrid}>
-            {PUNCH_SLOTS.map((slot, i) => {
-              const p = myTodayPunches[i];
-              return (
-                <View key={slot.key} style={[styles.punchTile, !!p && styles.punchTileFilled]}>
-                  <MaterialCommunityIcons
-                    name={p ? 'check-circle' : 'circle-outline'}
-                    size={16}
-                    color={p ? Colors.statusGreen : Colors.outlineVariant}
-                  />
-                  <Text style={[styles.punchTime, TabularNums, !p && styles.punchTimeEmpty]}>
-                    {p ? p.time : '--:--'}
-                  </Text>
-                  <Text style={styles.punchSlotLabel}>{slot.label}</Text>
-                </View>
-              );
-            })}
-          </View>
-        </View>
+        {/* ─── Right now · Today's punches (clock, shift progress, the day as a bar, punches labelled by what they are) ─── */}
+        <TodayPanel
+          employeeId={user?.employeeId ?? null}
+          records={myAttendance?.records}
+          recordsLoading={attendanceLoading}
+          recordsFailed={attendanceFailed && !myAttendance}
+          shift={shift}
+          shiftLoading={shiftLoading}
+        />
 
         {/* ─── Needs your attention (renders nothing when nothing is waiting) ─── */}
         <AttentionStrip employeeId={user?.employeeId ?? null} employmentType={emp?.employmentType} now={now} />
@@ -394,15 +361,6 @@ export default function HomeScreen() {
           />
         </TouchableOpacity>
 
-        {/* ─── Floor Live ticker ─── */}
-        {floorLiveText && (
-          <View style={styles.floorLiveRow}>
-            <MaterialCommunityIcons name="access-point" size={14} color={Colors.primary} />
-            <Text style={styles.floorLiveLabel}>Floor Live:</Text>
-            <Text style={styles.floorLiveText} numberOfLines={1}>{floorLiveText}</Text>
-          </View>
-        )}
-
         {/* ─── Next holiday ─── */}
         {nextHoliday && (
           <View style={styles.holidayCard}>
@@ -441,7 +399,12 @@ export default function HomeScreen() {
         <Coachmark
           visible
           title={TOUR_STEPS[tourStep - 1].title}
-          body={TOUR_STEPS[tourStep - 1].body}
+          body={
+            // A production employee has no Apply Leave tile: the tour does not promise one.
+            TOUR_STEPS[tourStep - 1].key === 'actions' && emp?.employmentType === 'production'
+              ? 'Jump straight to On-Duty, outpass, salary slips and more — tap "Show all" to see everything available to you.'
+              : TOUR_STEPS[tourStep - 1].body
+          }
           step={tourStep}
           total={TOUR_STEPS.length}
           anchor={anchor}
@@ -486,24 +449,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Date / greeting / shift
+  // Date / greeting
   dateText: { color: Colors.textMuted, fontSize: 12, marginBottom: 4 },
-  greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  greetingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
   greeting: { flexShrink: 1, color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 22, letterSpacing: -0.3 },
   statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.outlineVariant },
   statusDotOn: { backgroundColor: Colors.statusGreen },
-  shiftPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.primaryFixed,
-    borderRadius: BorderRadius.full,
-    paddingHorizontal: 12, paddingVertical: 6,
-    marginBottom: 16,
-    maxWidth: '100%',
-  },
-  shiftPillTime: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 12, ...TabularNums },
-  shiftPillDot: { color: Colors.textMuted, fontSize: 12 },
-  shiftPillText: { color: Colors.textSecondary, fontSize: 12, flexShrink: 1 },
 
   // Profile card
   profileCard: {
@@ -567,41 +518,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   attendNum: { color: '#fff', fontFamily: FontFamily.displayBold, fontSize: 20, ...TabularNums },
   attendLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 10, fontWeight: '600', textAlign: 'center' },
 
-  // Shared white card
-  card: {
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1, borderColor: Colors.border,
-    padding: 14,
-    marginBottom: 20,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 },
-  cardTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 15 },
-  statusPill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 4 },
-  statusPillOn: { backgroundColor: Colors.badgeGreenBg },
-  statusPillOff: { backgroundColor: Colors.bgSurfaceLow },
-  statusPillDot: { width: 6, height: 6, borderRadius: 3 },
-  statusPillText: { fontSize: 10, fontWeight: '700' },
-
-  // Punch grid (4 fixed slots)
-  punchGrid: { flexDirection: 'row', gap: 8 },
-  punchTile: {
-    flex: 1,
-    backgroundColor: Colors.bgSurfaceLow,
-    borderRadius: BorderRadius.md,
-    paddingVertical: 10,
-    alignItems: 'center',
-    gap: 3,
-  },
-  punchTileFilled: { backgroundColor: Colors.primaryFixed },
-  punchTime: { color: Colors.textPrimary, fontSize: 11, fontWeight: '800' },
-  punchTimeEmpty: { color: Colors.textMuted, fontWeight: '600' },
-  punchSlotLabel: { color: Colors.textMuted, fontSize: 9, fontWeight: '600', textAlign: 'center' },
-
   // Section header
   sectionRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 },
   sectionTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 17 },
@@ -640,18 +556,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     marginBottom: 18,
   },
   showAllBtnText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
-
-  // Floor live
-  floorLiveRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingHorizontal: 14, paddingVertical: 12,
-    marginBottom: 14,
-  },
-  floorLiveLabel: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12 },
-  floorLiveText: { flex: 1, color: Colors.textSecondary, fontSize: 12 },
 
   // Holiday
   holidayCard: {

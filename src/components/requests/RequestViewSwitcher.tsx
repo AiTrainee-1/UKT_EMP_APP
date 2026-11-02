@@ -8,30 +8,40 @@ import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import { FontFamily } from '../../constants/typography';
 import { REQUEST_VIEWS, type RequestView } from '../../lib/requestViews';
+import { monthViewLabel, type CalMonth } from '../../lib/monthSwitch';
 
 /**
  * The four views every request screen offers (Waiting / This month / Approved / Rejected) as a row of count cards.
  * The chosen card lifts and fills with its colour; counts come from viewCounts() in src/lib/requestViews.ts.
  * `labels` lets a screen say what "This month" means there ("Taken this month", "Sent this month").
+ * `month`: the screen's month switcher (2026-11-02) - the second card then reads "This month" for the current month and
+ * "All in Sep" for any other (a `labels.month` still wins).
  */
 export function RequestViewSwitcher({
   value,
   counts,
   onChange,
   labels,
+  month,
   testID = 'request-views',
 }: {
   value: RequestView;
   counts: Record<RequestView, number>;
   onChange: (view: RequestView) => void;
   labels?: Partial<Record<RequestView, string>>;
+  month?: CalMonth | null;
   testID?: string;
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const meta: Record<RequestView, { label: string; icon: string; color: string; bg: string }> = {
     waiting: { label: 'Waiting', icon: 'timer-sand', color: Colors.statusYellow, bg: Colors.badgeYellowBg },
-    month: { label: 'This month', icon: 'calendar-month-outline', color: Colors.primary, bg: Colors.primaryFixed },
+    month: {
+      label: month ? monthViewLabel(month, new Date()) : 'This month',
+      icon: 'calendar-month-outline',
+      color: Colors.primary,
+      bg: Colors.primaryFixed,
+    },
     approved: { label: 'Approved', icon: 'check-circle-outline', color: Colors.statusGreen, bg: Colors.badgeGreenBg },
     rejected: { label: 'Rejected', icon: 'close-circle-outline', color: Colors.statusRed, bg: Colors.badgeRedBg },
   };

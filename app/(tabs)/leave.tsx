@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   RefreshControl,
   StatusBar,
   Alert,
+  type ScrollViewInstance,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
@@ -28,11 +29,27 @@ import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { approvalErrorMessage, workflowOff } from '../../src/lib/approval';
 import { checkRequestDate } from '../../src/lib/requestWindow';
 import { isoToLocalDate, rangeFieldErrors, requestPickerLimits } from '../../src/lib/requestWindowForm';
-import { defaultView, rowsForView, viewCounts, type RequestView, type ViewOptions } from '../../src/lib/requestViews';
-import { asPortion, asStatus, monthCardState, monthKeyOf, yearMonths, yearTotals } from '../../src/lib/casualLeave';
-import { PLAIN_LEAVE_TYPE, REASON_CATEGORIES, leaveDayForMonth, type ReasonCategory } from '../../src/lib/leaveForm';
+import {
+  defaultView,
+  monthEmptyText,
+  monthForRow,
+  rowsForView,
+  viewCounts,
+  waitingInOtherMonths,
+  type RequestView,
+  type ViewOptions,
+} from '../../src/lib/requestViews';
+import { currentMonth, laterMonth, latestMonthOf, monthOf } from '../../src/lib/monthSwitch';
+import { useSelectedMonth } from '../../src/hooks/useSelectedMonth';
+import { REQUEST_FOCUS_ORDER, requestViewHasInItsMonth } from '../../src/lib/focusItem';
+import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
+import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
+import { asPortion, asStatus, clCardState, isYearly, monthKeyOf, showBalance, yearMonths, yearTotals } from '../../src/lib/casualLeave';
+import { PLAIN_LEAVE_TYPE, REASON_CATEGORIES, type ReasonCategory } from '../../src/lib/leaveForm';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
+import { WaitingElsewhereNote } from '../../src/components/requests/WaitingElsewhereNote';
+import { MonthSwitcher } from '../../src/components/MonthSwitcher';
 import { ClEntryCard } from '../../src/components/casualLeave/ClEntryCard';
 import { LoadError } from '../../src/components/casualLeave/LoadError';
 import { LeaveCard } from '../../src/components/LeaveCard';
@@ -71,12 +88,8 @@ const makeDefaults = (today: string): FormData => ({
   reason: '',
 });
 
-const VIEW_EMPTY: Record<RequestView, { title: string; subtitle: string }> = {
-  waiting: { title: 'Nothing waiting', subtitle: 'Leave you ask for waits here until it is approved or rejected.' },
-  month: { title: 'No leave taken this month', subtitle: 'Approved leave for days of this month shows here.' },
-  approved: { title: 'Nothing approved yet', subtitle: 'Your approved leave shows here.' },
-  rejected: { title: 'Nothing rejected', subtitle: 'Leave that was not approved shows here.' },
-};
+/** The day(s) a leave request is for: its range (a leave from 30 Sep to 2 Oct shows in both months). */
+const leaveDays = (r: LeaveRequest) => [r.startDate, r.endDate] as const;
 
 export default function LeaveScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -122,9 +135,20 @@ export default function LeaveScreen() {
   const clTotals = useMemo(() => yearTotals(clRows, thisYear), [clRows, thisYear]);
   const clMonthsList = clEligibility.data?.months;
   const clThisMonth = clMonthsList?.find((m) => m.month === monthKeyOf(new Date())) ?? clMonthsList?.[clMonthsList.length - 1];
+  // Under the yearly balance (2026-11-02) the card says what is left of the year's 12 and draws the balance bar; an older
+  // server (no balance) keeps the one-a-month words and the month dials.
+  const clBalance = clEligibility.data?.balance ?? null;
+  const clYearly = isYearly({ balance: clBalance, rule: clEligibility.data?.rule });
   const clState = clEligibility.data
-    ? monthCardState(clThisMonth, { eligible: clEligibility.data.eligible, reason: clEligibility.data.reason })
+    ? clCardState({
+        balance: clBalance,
+        rule: clEligibility.data.rule,
+        month: clThisMonth,
+        eligible: clEligibility.data.eligible,
+        reason: clEligibility.data.reason,
+      })
     : null;
+  const clBalanceShown = showBalance({ balance: clBalance, eligible: clEligibility.data?.eligible, months: clMonthsList });
 
   // HR can switch a kind of request off (Approval Workflow Control). Only a hint that may be a minute old: the server
   // refuses a new request either way and its message is shown (see onSubmit).
@@ -135,16 +159,38 @@ export default function LeaveScreen() {
     .filter((h) => new Date(h.date) >= new Date(todayStr))
     .sort((a, b) => a.date.localeCompare(b.date))[0];
 
-  // The four views: Waiting / Taken this month (approved leave on a day of this month) / Approved / Rejected.
+  // The month switcher (owner 2026-11-02): the four views list and count only the leave of the month on screen, by the
+  // days each leave is FOR (a range overlapping the month counts). Waiting / This month (every leave of the month) /
+  // Approved / Rejected. The month opens on the current one; the › arrow stops there, unless a leave lies in a later month.
   const allRequests = requests ?? [];
-  const today = new Date();
+  const [month, setMonth] = useSelectedMonth();
+  const maxMonth = laterMonth(currentMonth(), latestMonthOf(allRequests, leaveDays) ?? currentMonth());
   const viewOpts: ViewOptions<LeaveRequest> = {
     statusOf: (r) => r.status,
-    month: { dateOf: (r) => leaveDayForMonth(r.startDate, r.endDate, today), kind: 'taken' },
+    scope: { ...month, daysOf: leaveDays },
   };
   const counts = viewCounts(allRequests, viewOpts);
   const activeView = view ?? defaultView(counts);
   const shown = rowsForView(allRequests, activeView, viewOpts);
+  const elsewhere = waitingInOtherMonths(allRequests, viewOpts);
+  const empty = monthEmptyText(activeView, 'leave requests', month, counts.month);
+
+  // A notification's View opens this tab with ?focus=<leave request id> (src/lib/notificationTarget.ts): the month of
+  // that leave opens first, then the view that holds it, the page scrolls to it and it pulses once (useFocusItem.ts).
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const focus = useFocusItem<LeaveRequest, RequestView>({
+    request: useFocusParam(),
+    rows: requests,
+    idOf: (r) => r.id,
+    views: { order: REQUEST_FOCUS_ORDER, current: activeView, set: setView, has: (r, v) => requestViewHasInItsMonth(r, v, viewOpts) },
+    reveal: (r) => {
+      const m = monthForRow(r, viewOpts);
+      if (m) setMonth(m);
+    },
+    refresh: () => requestsQuery.refetch(),
+    fetching: reqFetching,
+    scrollRef,
+  });
 
   const { control, handleSubmit, reset, watch, setError, clearErrors, setValue, getValues, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -233,6 +279,8 @@ export default function LeaveScreen() {
         });
         closeSheet();
         setView('waiting');
+        // Show the month the new request is for, so it is right there under Waiting.
+        setMonth(monthOf(data.date) ?? currentMonth());
         setSuccessMsg('Your half-day leave request has been sent for approval.');
         setShowSuccess(true);
       } catch (err) {
@@ -265,6 +313,7 @@ export default function LeaveScreen() {
       await applyLeave.mutateAsync({ type: PLAIN_LEAVE_TYPE, reasonCategory, startDate, endDate, reason: data.reason });
       closeSheet();
       setView('waiting');
+      setMonth(monthOf(startDate) ?? currentMonth());
       setSuccessMsg('Your leave request has been sent for approval.');
       setShowSuccess(true);
     } catch (err) {
@@ -309,6 +358,7 @@ export default function LeaveScreen() {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl
@@ -350,18 +400,27 @@ export default function LeaveScreen() {
           failed={(clEligibility.isError && !clEligibility.data) || (clList.isError && !clList.data)}
           onPress={() => router.push('/casual-leave' as Href)}
           footer={<WorkflowOffNote workflow={approvalSummary?.casualLeave} />}
+          balance={clBalanceShown ? clBalance : null}
+          yearly={clYearly}
         />
 
         <Text style={styles.sectionTitle}>Your leave requests</Text>
+        <MonthSwitcher value={month} onChange={setMonth} max={maxMonth} style={styles.monthSwitch} testID="leave-month" />
         <View style={styles.switcherWrap}>
           <RequestViewSwitcher
             value={activeView}
             counts={counts}
             onChange={setView}
-            labels={{ month: 'Taken this month' }}
+            month={month}
             testID="leave-views"
           />
         </View>
+        <WaitingElsewhereNote
+          count={elsewhere.count}
+          month={elsewhere.month}
+          onShow={(m) => { setMonth(m); setView('waiting'); }}
+        />
+        {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
 
         {/* Leave Requests */}
         {reqFailed && !requests ? (
@@ -369,9 +428,13 @@ export default function LeaveScreen() {
         ) : reqLoading ? (
           Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
         ) : !shown.length ? (
-          <EmptyState icon="umbrella-outline" title={VIEW_EMPTY[activeView].title} subtitle={VIEW_EMPTY[activeView].subtitle} />
+          <EmptyState icon="umbrella-outline" title={empty.title} subtitle={empty.subtitle} />
         ) : (
-          shown.map((r, i) => <LeaveCard key={r.id} request={r} index={i} />)
+          shown.map((r, i) => (
+            <FocusFrame key={r.id} {...focus.frame(r.id)} bottomInset={10}>
+              <LeaveCard request={r} index={i} />
+            </FocusFrame>
+          ))
         )}
 
         {nextHoliday && (
@@ -595,6 +658,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   content: { paddingHorizontal: 16, paddingBottom: 100, gap: 4, paddingTop: 8 },
   sectionTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 16, marginTop: 4, marginBottom: 4 },
   switcherWrap: { marginHorizontal: -16, marginBottom: 8 },
+  monthSwitch: { marginTop: 4, marginBottom: 6 },
 
   holidayCard: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

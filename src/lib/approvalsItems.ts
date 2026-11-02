@@ -154,6 +154,15 @@ export function onDutyPunches(item: Item | null | undefined): OnDutyPunchRow[] {
   return Array.isArray(raw) ? raw.filter((p) => p && typeof p === 'object' && typeof p.id === 'number') : [];
 }
 
+/** The recorded route of an On-Duty request's day (`journeyId` on the GET /manager/requests and /manager/pending-requests
+ *  rows), or null when nothing was recorded or the server is too old to say. The head opens it with "View route"
+ *  (GET /tracking/journeys/<id> lets the employee's Department Head in). */
+export function onDutyJourneyId(item: Item | null | undefined): number | null {
+  const raw = item?.journeyId;
+  const id = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw) : NaN;
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
 /** "9:05 AM" from "09:05" (or the text as it came). */
 export function clock12(hhmm: unknown): string {
   const m = typeof hhmm === 'string' ? /^(\d{1,2}):(\d{2})/.exec(hhmm) : null;

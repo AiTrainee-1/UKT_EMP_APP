@@ -87,7 +87,7 @@ export default function NewPermissionRequestScreen() {
 
   const selectedType = PERMISSION_TYPE_OPTIONS.find((t) => t.wire === watch('type')) ?? PERMISSION_TYPE_OPTIONS[0];
 
-  // The server counts a permission in ITS OWN month, and on the 1st / 2nd the picked day can be in last month: so the
+  // The server counts a permission in ITS OWN month, and on the 1st to 5th the picked day can be in last month: so the
   // allowance card follows the picked day (this month while the date is empty) and says which month it is about.
   const picked = monthOfDate(watch('date'), now);
   const pickedMonthLabel = format(new Date(picked.year, picked.month - 1, 1), 'MMMM yyyy');

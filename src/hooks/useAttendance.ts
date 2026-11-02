@@ -1,12 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 import { readDayFlags } from '../lib/attendanceFlags';
+import { readHrEdit, type HrEdit } from '../lib/hrEdit';
 
 export interface AttendancePunch {
   time: string;
   type: 'IN' | 'OUT';
   source: string;
   sourceLabel: string;
+  /** A production night's closing punch made on the next calendar date (listed on the day the night began). */
+  nextDay?: boolean;
 }
 
 export interface AttendanceRecord {
@@ -61,6 +64,9 @@ export interface AttendanceRecord {
   punchCount?: number;
   source?: string;
   punches?: AttendancePunch[];
+  /** The latest HR attendance edit of the day (any stage), or null. Absent on an older backend (= not edited). The
+   *  calendar puts a "!" on the day and, once the edit is applied, the "Edited by HR" colour (src/lib/hrEdit.ts). */
+  hrEdit?: HrEdit | null;
 }
 
 export interface AttendanceSummary {
@@ -73,6 +79,9 @@ export interface AttendanceSummary {
   onLeave: number;
   halfShift: number;
   records: AttendanceRecord[];
+  /** HR edits on days the calendar draws as empty (a day still to come that is no holiday / Casual Leave): {date: edit}.
+   *  They still get their "!" (an HR edit is shown whatever its day). */
+  futureHrEdits: Record<string, HrEdit>;
 }
 
 // Backend returns the canonical per-day verdict from the same engine payroll
@@ -104,9 +113,16 @@ function isSundayIso(date: string): boolean {
 }
 
 function transformAttendance(raw: any): AttendanceSummary {
+  // Future days are empty cells, except a holiday / Sunday off / approved Casual Leave: those show ahead of time.
+  const shownAhead = (r: any) => r.status !== 'future' || !!r.dayKind || !!r.isCasualLeave;
+  const futureHrEdits: Record<string, HrEdit> = {};
+  for (const r of raw.records ?? []) {
+    if (shownAhead(r) || typeof r?.date !== 'string') continue;
+    const edit = readHrEdit(r.hrEdit);
+    if (edit) futureHrEdits[r.date] = edit;
+  }
   const records: AttendanceRecord[] = (raw.records ?? [])
-    // Future days are empty cells, except a holiday / Sunday off / approved Casual Leave: those show ahead of time.
-    .filter((r: any) => r.status !== 'future' || !!r.dayKind || !!r.isCasualLeave)
+    .filter(shownAhead)
     .map((r: any) => {
       let status = STATUS_MAP[r.status] ?? (r.present ? 'Present' : 'Absent');
       const dayKind: AttendanceRecord['dayKind'] = r.dayKind === 'holiday' || r.dayKind === 'weekly_off' ? r.dayKind : null;
@@ -159,6 +175,7 @@ function transformAttendance(raw: any): AttendanceSummary {
         punchCount: r.totalPunches ?? r.punchCount ?? undefined,
         source: r.source ?? undefined,
         punches: r.punches ?? undefined,
+        hrEdit: readHrEdit(r.hrEdit),
       };
     });
 
@@ -176,6 +193,7 @@ function transformAttendance(raw: any): AttendanceSummary {
     halfShift: s.halfShift ?? s.half_shift ?? raw.totalHalfShift
       ?? records.filter((r) => r.status === 'Half Day').length,
     records,
+    futureHrEdits,
   };
 }
 

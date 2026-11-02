@@ -1,4 +1,4 @@
-import React, { useState, useSyncExternalStore } from 'react';
+import React, { useRef, useState, useSyncExternalStore } from 'react';
 import {
   View,
   Text,
@@ -6,15 +6,12 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Platform,
   StatusBar,
-  Alert,
   Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { MotiView } from 'moti';
+import { router, type Href } from 'expo-router';
 import { formatDistanceToNow } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
@@ -28,7 +25,12 @@ import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Colors } from '../../src/constants/colors';
 import { UKTLogo } from '../../src/components/UKTLogo';
-import { notificationHint, notificationRoute } from '../../src/lib/compensation';
+import { viewActionFor, type TargetViewer } from '../../src/lib/notificationTarget';
+import { readFocusId } from '../../src/lib/focusItem';
+import { useFocusItem, useRouteRequest } from '../../src/hooks/useFocusItem';
+import { useEmployee } from '../../src/hooks/useEmployee';
+import { FocusMissingNote } from '../../src/components/focus/FocusFrame';
+import { NotificationCard } from '../../src/components/notifications/NotificationCard';
 import { describePushSetup, getPushSetup, subscribePushSetup } from '../../src/lib/pushStatus';
 import { registerPushToken } from '../../src/hooks/usePushToken';
 import { useManagerProfile } from '../../src/hooks/useManager';
@@ -86,39 +88,29 @@ function notifMeta(Colors: Palette, type?: string) {
   return makeNotifMeta(Colors)[type ?? ''] ?? makeDefaultNotifMeta(Colors);
 }
 
-function NotifIcon({ type }: { type?: string }) {
-  // `Colors` shadows the module import for this component's body, so both
-  // the stylesheet and any inline JSX colour follow the active theme.
-  const { C: Colors } = useTheme();
-  const styles = useThemedStyles(makeStyles);
-  const NOTIF_META = makeNotifMeta(Colors);
-  const DEFAULT_NOTIF_META = makeDefaultNotifMeta(Colors);
-
-  const cfg = notifMeta(Colors, type);
-  return (
-    <View style={[styles.notifIcon, { backgroundColor: cfg.bg }]}>
-      <MaterialCommunityIcons name={cfg.icon as any} size={20} color={cfg.color} />
-    </View>
-  );
-}
-
 export default function NotificationsScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const NOTIF_META = makeNotifMeta(Colors);
-  const DEFAULT_NOTIF_META = makeDefaultNotifMeta(Colors);
 
   const { user } = useAuth();
-  const { data, isLoading, refetch, isRefetching } = useAppNotifications(user?.employeeId ?? null);
+  const employeeId = user?.employeeId ?? null;
+  const { data, isLoading, refetch, isRefetching, isFetching } = useAppNotifications(employeeId);
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
-  // Only to decide where a "holiday_work" notice opens (the Approvals tab exists for a Department Head only). The same
-  // cached query the tab bar already holds: no extra request.
+  // Who is reading decides some View buttons (src/lib/notificationTarget.ts): an approver's one opens the Approvals tab,
+  // which only a Department Head has; Compensation is for staff. The same cached queries the tab bar and Home already
+  // hold: no extra request.
   const { data: manager } = useManagerProfile(!!user);
+  const { data: employee } = useEmployee(employeeId);
+  const viewer: TargetViewer = {
+    isManager: manager?.isManager ?? null,
+    isStaff: employee?.employmentType ? employee.employmentType === 'staff' : null,
+  };
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const listRef = useRef<FlatList<AppNotification>>(null);
   // Whether this phone can get notifications outside the app, and what is missing when it cannot (src/lib/pushStatus.ts).
   const pushSetup = useSyncExternalStore(subscribePushSetup, getPushSetup);
   const pushBanner = describePushSetup(pushSetup);
@@ -138,6 +130,34 @@ export default function NotificationsScreen() {
 
   const unreadCount = data?.filter(n => !n.isRead).length ?? 0;
   const visible = (data ?? []).filter((n) => filter === 'all' || !n.isRead);
+
+  // A tapped push opens this list with `?highlight=<id>` (app/_layout.tsx): ask the server again (the push may be newer
+  // than the list), show it under "All" if "Unread" hides it, scroll to it and pulse it once.
+  const highlight = useRouteRequest('highlight', readFocusId);
+  const focus = useFocusItem<AppNotification, 'all' | 'unread'>({
+    request: highlight,
+    rows: data,
+    idOf: (n) => n.id,
+    views: {
+      order: ['all', 'unread'],
+      current: filter,
+      set: setFilter,
+      has: (n, f) => f === 'all' || !n.isRead,
+    },
+    refresh: () => (employeeId ? refetch() : undefined),
+    ready: !!employeeId,
+    fetching: isFetching,
+    list: { ref: listRef, indexOf: (id) => visible.findIndex((n) => n.id === id) },
+  });
+
+  // View: marks it read, then opens the page it is about. Read: marks it read. Neither waits for the server.
+  const onRead = (item: AppNotification) => {
+    if (!item.isRead) markRead.mutate(item.id);
+  };
+  const onView = (item: AppNotification, href: string) => {
+    if (!item.isRead) markRead.mutate(item.id);
+    router.push(href as Href);
+  };
 
   // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
   const handleLogout = useConfirmSignOut();
@@ -181,6 +201,9 @@ export default function NotificationsScreen() {
             onPress={() => markAllRead.mutate()}
             disabled={markAllRead.isPending}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel="Mark all notifications as read"
+            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
           >
             <MaterialCommunityIcons name="check-all" size={14} color={Colors.primary} />
             <Text style={styles.markAllBtnText}>Read All</Text>
@@ -198,6 +221,9 @@ export default function NotificationsScreen() {
             style={[styles.filterChip, filter === f.key && styles.filterChipActive]}
             onPress={() => setFilter(f.key)}
             activeOpacity={0.8}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: filter === f.key }}
+            hitSlop={{ top: 6, bottom: 6 }}
           >
             <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextActive]}>
               {f.label} {f.count}
@@ -226,9 +252,20 @@ export default function NotificationsScreen() {
         </View>
       )}
 
+      {focus.missing && (
+        <FocusMissingNote
+          text="That notification is no longer in your list"
+          onDismiss={focus.dismissMissing}
+          style={styles.missingNote}
+        />
+      )}
+
       <FlatList
+        ref={listRef}
         data={visible}
         keyExtractor={n => String(n.id)}
+        onScrollToIndexFailed={focus.onScrollToIndexFailed}
+        extraData={[focus.activeId, markRead.isPending, markRead.variables, viewer.isManager, viewer.isStaff]}
         contentContainerStyle={[styles.list, !visible.length && styles.listCenter]}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
@@ -246,38 +283,23 @@ export default function NotificationsScreen() {
             />
           )
         }
-        renderItem={({ item, index }: { item: AppNotification; index: number }) => (
-          <MotiView
-            from={{ opacity: 0, translateY: 10 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={{ type: 'timing', duration: 260, delay: Math.min(index, 8) * 50 }}
-          >
-            <TouchableOpacity
-              style={[styles.card, { borderLeftColor: notifMeta(Colors, item.type).color, borderLeftWidth: 3 }, item.isRead && styles.cardRead]}
-              onPress={() => {
-                if (!item.isRead) markRead.mutate(item.id);
-                // A compensation notice opens the Compensation screen, a "waiting for your approval" one opens Approvals;
-                // the others only mark themselves read.
-                const target = notificationRoute(item.type, manager);
-                if (target) router.push(target as any);
-              }}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`${item.title || notifMeta(Colors, item.type).title}. ${item.message}`}
-              accessibilityHint={notificationHint(item.type, manager)}
-            >
-              <NotifIcon type={item.type} />
-              <View style={styles.cardBody}>
-                <Text style={[styles.cardTitle, item.isRead && styles.cardTitleRead]}>
-                  {item.title || notifMeta(Colors, item.type).title}
-                </Text>
-                <Text style={styles.cardMsg} numberOfLines={item.title ? 6 : 2}>{item.message}</Text>
-                <Text style={styles.cardTime}>{timeAgo(item.createdAt)}</Text>
-              </View>
-              {!item.isRead && <View style={styles.unreadDot} />}
-            </TouchableOpacity>
-          </MotiView>
-        )}
+        renderItem={({ item, index }: { item: AppNotification; index: number }) => {
+          // The server's `target` (or, from an older server, the type) decides the View button; none = nothing to open.
+          const view = viewActionFor(item, viewer);
+          return (
+            <NotificationCard
+              item={item}
+              index={index}
+              meta={notifMeta(Colors, item.type)}
+              timeText={timeAgo(item.createdAt)}
+              view={view}
+              reading={markRead.isPending && markRead.variables === item.id}
+              onRead={() => onRead(item)}
+              onView={() => view && onView(item, view.href)}
+              focus={focus.frame(item.id)}
+            />
+          );
+        }}
       />
 
       <SideDrawer
@@ -331,41 +353,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   pushBannerBtn: { backgroundColor: Colors.primary, borderRadius: BorderRadius.full, paddingHorizontal: 12, paddingVertical: 8 },
   pushBannerBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
+  missingNote: { marginHorizontal: 16 },
+
   list: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32, gap: 8 },
   listCenter: { flex: 1 },
-
-  card: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.xl,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 14,
-    ...Platform.select({
-      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-    }),
-  },
-  cardRead: { opacity: 0.7 },
-
-  notifIcon: {
-    width: 42, height: 42, borderRadius: 21,
-    alignItems: 'center', justifyContent: 'center',
-    flexShrink: 0,
-  },
-
-  cardBody: { flex: 1, gap: 3 },
-  cardTitle: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
-  cardTitleRead: { fontWeight: '600', color: Colors.textSecondary },
-  cardMsg: { color: Colors.textSecondary, fontSize: 13, lineHeight: 18 },
-  cardTime: { color: Colors.textMuted, fontSize: 11, marginTop: 2 },
-
-  unreadDot: {
-    width: 8, height: 8, borderRadius: 4,
-    backgroundColor: Colors.primary,
-    marginTop: 4,
-    flexShrink: 0,
-  },
 });

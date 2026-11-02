@@ -19,6 +19,8 @@ import { workflowOff, type ApprovalSummaryItem } from '../../lib/approval';
 import {
   CL_PORTIONS,
   PORTION_LABEL,
+  afterApplyText,
+  applyRuleText,
   firstAllowed,
   monthOfDate,
   portionChoices,
@@ -26,6 +28,7 @@ import {
   type CLPortion,
   type ShiftHalves,
 } from '../../lib/casualLeave';
+import { useReduceMotion } from '../../lib/motionPrefs';
 
 const PORTION_ICON: Record<CLPortion, string> = {
   full: 'weather-sunny',
@@ -37,6 +40,10 @@ const PORTION_ICON: Record<CLPortion, string> = {
  * Apply for Casual Leave: a date, Full day / First half / Second half (each explained in the employee's shift time when the
  * shift is known), and a reason. A part the month no longer allows is shown greyed with the reason. The server decides;
  * its refusal is shown inside the sheet (the toast would be hidden behind it).
+ *
+ * Under the yearly balance (2026-11-02) any number a month may be taken while the balance lasts: the choices follow the
+ * month's `remaining` / `usedHalves` / `usedFullDates` (casualLeave.portionChoices), and a line says what is left after
+ * this request ("Uses 1 day · 10 of 12 left after this"). An older server keeps the one-a-month words.
  */
 export function ClApplySheet({
   visible,
@@ -57,6 +64,7 @@ export function ClApplySheet({
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const reduce = useReduceMotion();
   const apply = useApplyCasualLeave(employeeId);
   const limits = requestPickerLimits(new Date());
 
@@ -148,7 +156,7 @@ export function ClApplySheet({
             >
               <MotiView
                 animate={{ scale: active ? 1 : 0.98, opacity: choice.enabled ? 1 : 0.5 }}
-                transition={{ type: 'timing', duration: 180 }}
+                transition={{ type: 'timing', duration: reduce ? 0 : 180 }}
                 style={[styles.option, active && styles.optionActive]}
               >
                 <View style={[styles.optionIcon, active && { backgroundColor: Colors.primary }]}>
@@ -171,9 +179,10 @@ export function ClApplySheet({
           );
         })}
       </View>
-      <Text style={styles.rule}>
-        Each month you get one Casual Leave: one full day, or two half-days on any dates of that month.
-      </Text>
+      {afterApplyText(month, portion) ? (
+        <Text style={styles.after} testID="cl-after-apply">{afterApplyText(month, portion)}</Text>
+      ) : null}
+      <Text style={styles.rule}>{applyRuleText(month)}</Text>
 
       <TextArea
         label="Reason"
@@ -226,5 +235,6 @@ const makeStyles = (Colors: Palette) =>
     optionDays: { color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 12 },
     optionText: { color: Colors.textMuted, fontSize: 11.5, marginTop: 2, lineHeight: 16 },
     rule: { color: Colors.textMuted, fontSize: 11.5, marginBottom: 14, lineHeight: 16 },
+    after: { color: Colors.primary, fontSize: 12, fontWeight: '700', marginBottom: 6 },
     error: { color: Colors.error, fontSize: 12, marginBottom: 8, marginTop: -4 },
   });

@@ -73,6 +73,11 @@ export function outpassDay(r: OutpassLike): string | null {
   return istDateOf(r.exitedAt) ?? istDateOf(r.approvedAt) ?? istDateOf(r.createdAt);
 }
 
+/** The day of a pass for the month switcher (2026-11-02): the India day the employee went out, else the day it was asked. */
+export function outpassPassDay(r: OutpassLike): string | null {
+  return istDateOf(r.exitedAt) ?? istDateOf(r.createdAt);
+}
+
 /** "Taken this month" = approved passes whose day (outpassDay) is in this month. */
 export function outpassViewOptions<T extends OutpassLike>(today?: Date): ViewOptions<T> {
   return {
@@ -154,6 +159,18 @@ export function onDutyRowLabel(row: OnDutyLike & { completionReason?: string | n
   if (group === 'approved') return { label: 'Approved', variant: 'approved', detail: ended ? `Day completed${how}` : 'Day in progress' };
   if (group === 'rejected') return { label: 'Rejected', variant: 'rejected', detail: 'Punches recorded under it do not count' };
   return { label: row.status, variant: 'pending', detail: '' };
+}
+
+/** The day an On-Duty request is for (the session date; the India day it was sent when the server gave no date). */
+export function onDutyDay(r: OnDutyLike): string | null {
+  return r.date ?? istDateOf(r.createdAt);
+}
+
+// ── Tea Break ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** The India day of a tea break: the day the employee went out (the server sends outAt in UTC). */
+export function teaBreakDay(r: { outAt: string | null | undefined }): string | null {
+  return istDateOf(r.outAt);
 }
 
 /** "Sent this month" = every On-Duty request sent this month (India date). */

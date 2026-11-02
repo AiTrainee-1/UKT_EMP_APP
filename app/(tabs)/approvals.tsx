@@ -9,10 +9,10 @@
 // unchanged PATCH /manager/.../status endpoints. An older backend without the history endpoint gets the old pending list
 // (searchable on the phone) and a note on Approved / Rejected.
 // Pieces: src/components/approvals/*, wording and rules: src/lib/approvalsHistory.ts + approvalsItems.ts.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import {
@@ -26,6 +26,7 @@ import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { approvalsBadgeCount, shownApprovalTabs } from '../../src/lib/approvalBadge';
 import { approvalErrorMessage, hodTakesPart } from '../../src/lib/approval';
 import {
+  APPROVAL_STATUSES,
   CATEGORY_LABEL,
   CATEGORY_WORKFLOW,
   LEGACY_LIST_KEY,
@@ -56,9 +57,12 @@ import {
 import { useApprovalDecision } from '../../src/components/approvals/useApprovalDecision';
 import type { ApprovalItem, SelectedApproval } from '../../src/components/approvals/types';
 import { Reveal } from '../../src/components/Reveal';
+import { useFocusItem, useFocusParam, useRouteRequest } from '../../src/hooks/useFocusItem';
+import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
 import { Toast } from '../../src/components/ui/Toast';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
+import { trackingRoutes } from '../../src/tracking/routes';
 
 /** `value`, once it has stopped changing for `ms` (the search box asks the server after the typing pauses). */
 function useDebounced<T>(value: T, ms: number): T {
@@ -85,7 +89,7 @@ export default function ApprovalsScreen() {
   const styles = useThemedStyles(makeStyles);
   const queryClient = useQueryClient();
 
-  const params = useLocalSearchParams<{ category?: string; status?: string }>();
+  const params = useLocalSearchParams<{ category?: string; status?: string; focus?: string }>();
   const { user } = useAuth();
   const signedIn = !!user;
   const { data: manager } = useManagerProfile(signedIn);
@@ -105,13 +109,30 @@ export default function ApprovalsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [now, tick] = useMinuteClock();
 
-  // A link may name the list to open (?category=casual_leave&status=approved).
+  // A link may name the list to open (?category=casual_leave&status=approved) and the request in it (&focus=<id>, a
+  // notification's View: src/lib/notificationTarget.ts). Each param is read once and taken off the route, so the same link
+  // opened again later (this tab stays mounted) still switches the list.
+  const categoryLink = useRouteRequest('category', categoryFromWire);
+  const statusLink = useRouteRequest('status', statusFromParam);
+  const focusRequest = useFocusParam();
+  // What the focus link came with, read in the render it arrived (the params are cleared right after).
+  const focusLink = useRef<{ category: ApprovalCategory | null; status: ApprovalStatus | null }>({ category: null, status: null });
+  if (params.focus !== undefined) {
+    focusLink.current = { category: categoryFromWire(params.category), status: statusFromParam(params.status) };
+  }
   useEffect(() => {
-    const c = categoryFromWire(params.category);
-    if (c) setCategory(c);
-    const s = statusFromParam(params.status);
-    if (s) setStatus(s);
-  }, [params.category, params.status]);
+    if (categoryLink) setCategory(categoryLink.value);
+  }, [categoryLink?.nonce]);
+  useEffect(() => {
+    if (statusLink) setStatus(statusLink.value);
+  }, [statusLink?.nonce]);
+  // Looking for one request: start on Pending (it most likely waits for this head) unless the link named a list, and drop a
+  // search that could hide it.
+  useEffect(() => {
+    if (!focusRequest) return;
+    setStatus(focusLink.current.status ?? 'pending');
+    setSearchText('');
+  }, [focusRequest?.nonce]);
 
   // Which categories this head sees: ONE definition shared with the Approvals badge on the tab bar (approvalBadge.ts).
   const categories = useMemo(() => visibleCategories(shownApprovalTabs(manager)), [manager]);
@@ -165,6 +186,23 @@ export default function ApprovalsScreen() {
   };
   const { decide, busy } = useApprovalDecision();
 
+  // "View route" on an On-Duty request: the sheet is a modal that would sit on top of the journey screen, so it is put
+  // away (the comment kept) and opened again when the head comes back to this tab, to decide with the route in mind.
+  const reopenAfterRoute = useRef<SelectedApproval | null>(null);
+  const onViewRoute = (journeyId: number) => {
+    reopenAfterRoute.current = selected;
+    setSelected(null);
+    router.push(trackingRoutes.journey(journeyId));
+  };
+  useFocusEffect(
+    useCallback(() => {
+      const back = reopenAfterRoute.current;
+      if (!back) return;
+      reopenAfterRoute.current = null;
+      setSelected(back);
+    }, []),
+  );
+
   const refreshAll = useCallback(async () => {
     tick();
     await Promise.allSettled([
@@ -205,6 +243,24 @@ export default function ApprovalsScreen() {
     setSearchText('');
   };
 
+  // ?focus=<id>: find the request in Pending, then Approved, then Rejected (each its own server list, a few pages deep),
+  // scroll to it and pulse it once (src/hooks/useFocusItem.ts). Waits until the linked category and a cleared search are
+  // on screen; a category this head can no longer see is "no longer in this list".
+  const listRef = useRef<FlatList<ApprovalItem>>(null);
+  const linkCategory = focusLink.current.category;
+  const focus = useFocusItem<ApprovalItem, ApprovalStatus>({
+    request: focusRequest,
+    rows: loading || loadError ? undefined : items,
+    idOf: (i) => i.id,
+    views: { order: legacy ? ['pending'] : APPROVAL_STATUSES, current: status, set: setStatus },
+    refresh: () => (legacy ? legacyQuery.refetch() : listQuery.refetch()),
+    more: legacy ? undefined : { has: !!listQuery.hasNextPage, load: () => listQuery.fetchNextPage() },
+    fetching: active.isFetching,
+    ready: !!manager && (!linkCategory || category === linkCategory) && search === searchText.trim(),
+    unavailable: !!manager && !!linkCategory && !categories.includes(linkCategory),
+    list: { ref: listRef, indexOf: (id) => items.findIndex((i) => i.id === id) },
+  });
+
   const label = CATEGORY_LABEL[category];
   const empty = emptyCopy(category, status, {
     search,
@@ -219,6 +275,7 @@ export default function ApprovalsScreen() {
         placeholder={`Search ${label.toLowerCase()} by name or code`}
       />
       <View style={styles.notices}>
+        {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
         {legacy && status !== 'pending' && (
           <ApprovalNotice
             icon="update"
@@ -247,8 +304,11 @@ export default function ApprovalsScreen() {
       </View>
 
       <FlatList
+        ref={listRef}
         data={items}
         keyExtractor={(item) => `${category}-${item.id}`}
+        onScrollToIndexFailed={focus.onScrollToIndexFailed}
+        extraData={focus.activeId}
         contentContainerStyle={[styles.list, !items.length && styles.listGrow]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
@@ -287,13 +347,15 @@ export default function ApprovalsScreen() {
         }
         renderItem={({ item, index }) => (
           <Reveal index={index}>
-            <ApprovalCard
-              category={category}
-              status={status}
-              item={item}
-              now={now}
-              onOpen={() => setSelected({ category, status, item })}
-            />
+            <FocusFrame {...focus.frame(item.id)}>
+              <ApprovalCard
+                category={category}
+                status={status}
+                item={item}
+                now={now}
+                onOpen={() => setSelected({ category, status, item })}
+              />
+            </FocusFrame>
           </Reveal>
         )}
       />
@@ -305,6 +367,7 @@ export default function ApprovalsScreen() {
         onDecide={onDecide}
         busy={busy}
         onClose={closeSheet}
+        onViewRoute={onViewRoute}
       />
 
       <Toast {...toast} />

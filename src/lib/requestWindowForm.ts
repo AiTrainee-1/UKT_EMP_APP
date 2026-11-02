@@ -92,7 +92,7 @@ export function casualLeaveMonthBlock(date: string, months: readonly MonthEligib
 
 /**
  * The date the Casual Leave sheet opens on: today, unless the month of today is listed and not eligible while an earlier month
- * of the window is still open (the grace days, the 1st and 2nd). Then the latest day of that month that is not after today
+ * of the window is still open (the grace days, the 1st to the 5th). Then the latest day of that month that is not after today
  * (its last day), so the sheet does not open on a red "not eligible" message for a month the employee did not pick.
  */
 export function casualLeaveDefaultDate(now: Date, months: readonly MonthEligibility[] | undefined): string {

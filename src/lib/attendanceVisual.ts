@@ -8,6 +8,8 @@
 //     declared Holiday (Sunday and Holiday are different colours);
 //   * Late-In and Early-Out do NOT get a fill of their own: the day keeps the colour of what it was (a late Present
 //     day is still green) and a RING around the cell marks it.
+//   * a day HR edited carries a "!" and, once the edit is applied, an indigo "Edited by HR" tint + outline: that colour
+//     lives in src/lib/hrEdit.ts (HR_EDIT_TONE), and its test checks it is none of the colours below.
 
 export type DayVisualKey =
   | 'present'

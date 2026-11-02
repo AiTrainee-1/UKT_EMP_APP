@@ -29,6 +29,9 @@ export interface JourneyListItem {
   lastPointAt: string | null;
   /** Geo-punches (of the 4) recorded under this journey; null when the server does not say (an older backend). */
   punchCount: number | null;
+  /** Whose journey it is (the server always sends both; a Department Head may open a team member's from Approvals). */
+  employeeId: number | null;
+  employeeName: string;
 }
 
 export interface JourneySegment {
@@ -141,6 +144,8 @@ export function normalizeListItem(raw: unknown): JourneyListItem | null {
     approvalStatus: str(r.approvalStatus),
     lastPointAt: strOrNull(r.lastPointAt),
     punchCount: numOrNull(r.punchCount) == null ? null : Math.round(num(r.punchCount)),
+    employeeId: numOrNull(r.employeeId),
+    employeeName: str(r.employeeName),
   };
 }
 

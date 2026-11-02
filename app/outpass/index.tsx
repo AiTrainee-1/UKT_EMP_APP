@@ -19,8 +19,20 @@ import { useOutpassRequests, OUTPASS_PASS_TYPE_LABEL, type OutpassRequestItem } 
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { useNow } from '../../src/components/journey/useNow';
 import { workflowOff } from '../../src/lib/approval';
-import { defaultView, rowsForView, viewCounts, type RequestView } from '../../src/lib/requestViews';
-import { emptyViewText, monthSections, outpassDay, outpassViewOptions } from '../../src/lib/myRequests';
+import {
+  defaultView,
+  monthEmptyText,
+  monthForRow,
+  rowsForView,
+  viewCounts,
+  waitingInOtherMonths,
+  type RequestView,
+  type ViewOptions,
+} from '../../src/lib/requestViews';
+import { outpassPassDay, outpassViewOptions } from '../../src/lib/myRequests';
+import { useSelectedMonth } from '../../src/hooks/useSelectedMonth';
+import { MonthSwitcher } from '../../src/components/MonthSwitcher';
+import { WaitingElsewhereNote } from '../../src/components/requests/WaitingElsewhereNote';
 import { outpassRowLabel, pickOpenPass } from '../../src/lib/outpassOpen';
 import { WaitingChip } from '../../src/components/approval/ApprovalTrail';
 import { deciderFromFields } from '../../src/lib/approvalsDecider';
@@ -29,7 +41,10 @@ import { OutpassFlipCard } from '../../src/components/outpass/OutpassFlipCard';
 import { OpenPassBanner } from '../../src/components/outpass/OpenPassBanner';
 import { TeaBreakPanel } from '../../src/components/tea-break/TeaBreakPanel';
 import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
-import { ListSkeleton, LoadError, MonthHeading, StaleNote } from '../../src/components/myrequests/ListStates';
+import { REQUEST_FOCUS_ORDER, requestViewHasInItsMonth } from '../../src/lib/focusItem';
+import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
+import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
+import { ListSkeleton, LoadError, StaleNote } from '../../src/components/myrequests/ListStates';
 import { Reveal } from '../../src/components/Reveal';
 import { BottomSheet } from '../../src/components/ui/BottomSheet';
 import { Badge } from '../../src/components/ui/Badge';
@@ -41,9 +56,7 @@ import { FontFamily } from '../../src/constants/typography';
 
 type Section = 'outpass' | 'teaBreak';
 
-type Row =
-  | { kind: 'heading'; key: string; title: string; count: number }
-  | { kind: 'item'; key: string; item: OutpassRequestItem; index: number };
+type Row = { kind: 'item'; key: string; item: OutpassRequestItem; index: number };
 
 const APPROVER_LABEL: Record<string, string> = { dept_head: 'HOD', hr: 'HR', system: 'On-Duty approval' };
 
@@ -56,7 +69,7 @@ export default function OutpassScreen() {
   const [previewItem, setPreviewItem] = useState<OutpassRequestItem | null>(null);
 
   const { data: employee } = useEmployee(user?.employeeId ?? null);
-  const { data, isLoading, isError, refetch, isRefetching } = useOutpassRequests(user?.employeeId ?? null);
+  const { data, isLoading, isError, refetch, isRefetching, isFetching } = useOutpassRequests(user?.employeeId ?? null);
   // Whether HR has switched new outpass requests off (Approval Workflow Control).
   const { data: approvalSummary } = useApprovalSummary();
   const outpassOff = workflowOff(approvalSummary?.outpass);
@@ -64,7 +77,14 @@ export default function OutpassScreen() {
   const now = useNow(10_000);
 
   const items = data ?? [];
-  const opts = outpassViewOptions<OutpassRequestItem>(new Date(now));
+  // The month switcher (owner 2026-11-02), shared by the Outpass and Tea Break sections: the outpass views list and count
+  // only the passes of the month on screen (by the day of the pass: the day the employee went out, else the day it was
+  // asked), and the Tea Break section lists that month's breaks. The open gate pass stays pinned whatever the month.
+  const [selectedMonth, setSelectedMonth] = useSelectedMonth();
+  const opts: ViewOptions<OutpassRequestItem> = {
+    ...outpassViewOptions<OutpassRequestItem>(new Date(now)),
+    scope: { ...selectedMonth, daysOf: outpassPassDay },
+  };
   const counts = viewCounts(items, opts);
 
   const [view, setView] = useState<RequestView>('waiting');
@@ -80,19 +100,34 @@ export default function OutpassScreen() {
   // a manual request, or one an On-Duty approval raised). Pinned at the top (owner, 2026-10-31).
   const openPass = pickOpenPass(items, now);
 
+  // One month is on screen, so no month headings: the switcher already names it.
   const visible = rowsForView(items, view, opts);
-  const rows: Row[] = [];
-  if (view === 'approved' || view === 'rejected') {
-    let i = 0;
-    for (const s of monthSections(visible, outpassDay)) {
-      rows.push({ kind: 'heading', key: `h-${s.key}`, title: s.title, count: s.rows.length });
-      for (const item of s.rows) rows.push({ kind: 'item', key: String(item.id), item, index: i++ });
-    }
-  } else {
-    visible.forEach((item, index) => rows.push({ kind: 'item', key: String(item.id), item, index }));
-  }
+  const rows: Row[] = visible.map((item, index) => ({ kind: 'item', key: String(item.id), item, index }));
+  const elsewhere = waitingInOtherMonths(items, opts);
 
-  const empty = emptyViewText(view, 'outpasses', 'taken this month');
+  // A notification's View opens this screen with ?focus=<outpass id> (src/lib/notificationTarget.ts): the Outpass section
+  // and the month of that pass open first, then the view that holds it, the list scrolls to it and it pulses once
+  // (src/hooks/useFocusItem.ts).
+  const listRef = useRef<FlatList<Row>>(null);
+  const focus = useFocusItem<OutpassRequestItem, RequestView>({
+    request: useFocusParam(),
+    rows: data,
+    idOf: (r) => r.id,
+    views: { order: REQUEST_FOCUS_ORDER, current: view, set: setView, has: (r, v) => requestViewHasInItsMonth(r, v, opts) },
+    reveal: (r) => {
+      setSection('outpass');
+      const m = monthForRow(r, opts);
+      if (m) setSelectedMonth(m);
+    },
+    refresh: () => refetch(),
+    fetching: isFetching,
+    list: { ref: listRef, indexOf: (id) => rows.findIndex((r) => r.kind === 'item' && r.item.id === id) },
+  });
+
+  const empty = monthEmptyText(view, 'outpasses', selectedMonth, counts.month, new Date(now));
+  const monthSwitcher = (
+    <MonthSwitcher value={selectedMonth} onChange={setSelectedMonth} style={styles.monthSwitch} testID="outpass-month" />
+  );
   const failedFirstLoad = isError && !data;
 
   const renderCard = (item: OutpassRequestItem, index: number) => {
@@ -100,62 +135,64 @@ export default function OutpassScreen() {
     const isOpen = openPass?.id === item.id;
     return (
       <Reveal index={index}>
-        <View style={[styles.card, isOpen && styles.cardOpen]}>
-          <View style={styles.cardTop}>
-            <View style={styles.iconWrap}>
-              <MaterialCommunityIcons name="exit-run" size={16} color={Colors.categoryOutpass} />
+        <FocusFrame {...focus.frame(item.id)} bottomInset={10}>
+          <View style={[styles.card, isOpen && styles.cardOpen]}>
+            <View style={styles.cardTop}>
+              <View style={styles.iconWrap}>
+                <MaterialCommunityIcons name="exit-run" size={16} color={Colors.categoryOutpass} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.destination} numberOfLines={1}>{item.destination}</Text>
+                {!!item.passType && (
+                  <Text style={styles.passType}>{OUTPASS_PASS_TYPE_LABEL[item.passType] ?? item.passType}</Text>
+                )}
+              </View>
+              <Badge label={badge.label} variant={badge.variant} />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.destination} numberOfLines={1}>{item.destination}</Text>
-              {!!item.passType && (
-                <Text style={styles.passType}>{OUTPASS_PASS_TYPE_LABEL[item.passType] ?? item.passType}</Text>
-              )}
+            <Text style={styles.reason}>{item.reason}</Text>
+            <WaitingChip
+              approval={item.approval}
+              fallback={deciderFromFields({
+                status: item.status,
+                name: item.approvedBy,
+                role: item.approverRole,
+                at: item.approvedAt,
+              })}
+            />
+            {(item.exitedAt || item.enteredAt) && (
+              <View style={styles.gateRow}>
+                {item.exitedAt && (
+                  <Text style={styles.gateText}>
+                    <MaterialCommunityIcons name="logout" size={12} color={Colors.textMuted} /> Out {format(new Date(item.exitedAt), 'h:mm a')}
+                  </Text>
+                )}
+                {item.enteredAt && (
+                  <Text style={styles.gateText}>
+                    <MaterialCommunityIcons name="login" size={12} color={Colors.textMuted} /> Back {format(new Date(item.enteredAt), 'h:mm a')}
+                  </Text>
+                )}
+              </View>
+            )}
+            <View style={styles.cardBottom}>
+              <Text style={styles.dateTime}>
+                {format(new Date(item.createdAt), 'dd MMM yyyy · h:mm a')}
+                {item.source === 'on_duty' && ' · from On-Duty'}
+                {item.approverRole && item.status === 'approved' && ` · Approved by ${APPROVER_LABEL[item.approverRole] ?? item.approverRole}`}
+              </Text>
+              <TouchableOpacity
+                style={styles.previewBtn}
+                onPress={() => setPreviewItem(item)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`Open the pass card for ${item.destination}`}
+                hitSlop={8}
+              >
+                <MaterialCommunityIcons name="card-account-details-outline" size={15} color={Colors.primary} />
+                <Text style={styles.previewBtnText}>Open card</Text>
+              </TouchableOpacity>
             </View>
-            <Badge label={badge.label} variant={badge.variant} />
           </View>
-          <Text style={styles.reason}>{item.reason}</Text>
-          <WaitingChip
-            approval={item.approval}
-            fallback={deciderFromFields({
-              status: item.status,
-              name: item.approvedBy,
-              role: item.approverRole,
-              at: item.approvedAt,
-            })}
-          />
-          {(item.exitedAt || item.enteredAt) && (
-            <View style={styles.gateRow}>
-              {item.exitedAt && (
-                <Text style={styles.gateText}>
-                  <MaterialCommunityIcons name="logout" size={12} color={Colors.textMuted} /> Out {format(new Date(item.exitedAt), 'h:mm a')}
-                </Text>
-              )}
-              {item.enteredAt && (
-                <Text style={styles.gateText}>
-                  <MaterialCommunityIcons name="login" size={12} color={Colors.textMuted} /> Back {format(new Date(item.enteredAt), 'h:mm a')}
-                </Text>
-              )}
-            </View>
-          )}
-          <View style={styles.cardBottom}>
-            <Text style={styles.dateTime}>
-              {format(new Date(item.createdAt), 'dd MMM yyyy · h:mm a')}
-              {item.source === 'on_duty' && ' · from On-Duty'}
-              {item.approverRole && item.status === 'approved' && ` · Approved by ${APPROVER_LABEL[item.approverRole] ?? item.approverRole}`}
-            </Text>
-            <TouchableOpacity
-              style={styles.previewBtn}
-              onPress={() => setPreviewItem(item)}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Open the pass card for ${item.destination}`}
-              hitSlop={8}
-            >
-              <MaterialCommunityIcons name="card-account-details-outline" size={15} color={Colors.primary} />
-              <Text style={styles.previewBtnText}>Open card</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        </FocusFrame>
       </Reveal>
     );
   };
@@ -199,12 +236,15 @@ export default function OutpassScreen() {
 
       {section === 'teaBreak' ? (
         <ScrollView contentContainerStyle={styles.pad}>
-          <TeaBreakPanel employeeId={user?.employeeId ?? null} />
+          <TeaBreakPanel employeeId={user?.employeeId ?? null} month={selectedMonth} monthSwitcher={monthSwitcher} />
         </ScrollView>
       ) : (
         <FlatList
+          ref={listRef}
           data={failedFirstLoad || isLoading ? [] : rows}
           keyExtractor={(r) => r.key}
+          onScrollToIndexFailed={focus.onScrollToIndexFailed}
+          extraData={focus.activeId}
           contentContainerStyle={[styles.pad, !rows.length && styles.grow]}
           refreshControl={
             <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
@@ -225,16 +265,25 @@ export default function OutpassScreen() {
               <WorkflowOffNote workflow={approvalSummary?.outpass} style={styles.offNote} />
 
               {!failedFirstLoad && (
-                <View style={styles.switcher}>
-                  <RequestViewSwitcher
-                    value={view}
-                    counts={counts}
-                    onChange={setView}
-                    labels={{ month: 'Taken this month' }}
-                    testID="outpass-views"
+                <>
+                  {monthSwitcher}
+                  <View style={styles.switcher}>
+                    <RequestViewSwitcher
+                      value={view}
+                      counts={counts}
+                      onChange={setView}
+                      month={selectedMonth}
+                      testID="outpass-views"
+                    />
+                  </View>
+                  <WaitingElsewhereNote
+                    count={elsewhere.count}
+                    month={elsewhere.month}
+                    onShow={(m) => { setSelectedMonth(m); setView('waiting'); }}
                   />
-                </View>
+                </>
               )}
+              {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
               {isError && !!data && <StaleNote onRetry={() => { void refetch(); }} />}
             </>
           }
@@ -247,9 +296,7 @@ export default function OutpassScreen() {
               <EmptyState icon="exit-run" title={empty.title} subtitle={empty.subtitle} />
             )
           }
-          renderItem={({ item: row }) =>
-            row.kind === 'heading' ? <MonthHeading title={row.title} count={row.count} /> : renderCard(row.item, row.index)
-          }
+          renderItem={({ item: row }) => renderCard(row.item, row.index)}
         />
       )}
 
@@ -292,6 +339,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   pad: { padding: 16, paddingBottom: 100 },
   grow: { flexGrow: 1 },
   switcher: { marginHorizontal: -16, marginBottom: 10 },
+  monthSwitch: { marginBottom: 6 },
 
   sectionBar: {
     flexDirection: 'row',

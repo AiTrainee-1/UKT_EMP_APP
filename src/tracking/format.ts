@@ -77,8 +77,11 @@ const END_REASON: Record<string, string> = {
   admin: 'Closed by HR',
 };
 
-export function endReasonLabel(reason: string | null | undefined): string {
-  return END_REASON[String(reason ?? '')] ?? '';
+/** `own` false: worded for someone else reading the journey (a Department Head from Approvals), not "You ...". */
+export function endReasonLabel(reason: string | null | undefined, own = true): string {
+  const key = String(reason ?? '');
+  if (!own && key === 'manual') return 'The employee marked it Done';
+  return END_REASON[key] ?? '';
 }
 
 const EVENT_LABEL: Record<string, string> = {

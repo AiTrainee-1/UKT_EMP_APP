@@ -12,13 +12,15 @@ import { ApprovalTrail, WaitingChip } from '../approval/ApprovalTrail';
 import { deciderFromFields } from '../../lib/approvalsDecider';
 import type { CasualLeaveRequest } from '../../hooks/useCasualLeave';
 import { PORTION_LONG, longDate, shortDate } from '../../lib/casualLeave';
+import { hrTone } from '../../lib/hrEdit';
 
 const PORTION_ICON = { full: 'weather-sunny', first_half: 'weather-sunset-up', second_half: 'weather-sunset-down' } as const;
 
 /** One Casual Leave application: the day, which part of it, where it stands and who decided. */
 export function ClRequestCard({ request, index = 0 }: { request: CasualLeaveRequest; index?: number }) {
-  const { C: Colors } = useTheme();
+  const { C: Colors, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const hr = hrTone(isDark);
   const variant = request.status === 'Approved' ? 'approved' : request.status === 'Rejected' ? 'rejected' : 'pending';
   const edge = variant === 'approved' ? Colors.statusGreen : variant === 'rejected' ? Colors.statusRed : Colors.statusYellow;
   const decided = request.status !== 'Pending' && !!request.reviewComment;
@@ -38,6 +40,13 @@ export function ClRequestCard({ request, index = 0 }: { request: CasualLeaveRequ
           <Text style={styles.portionText}>{PORTION_LONG[request.portion]}</Text>
           <Text style={styles.sent}>Sent {shortDate(String(request.createdAt).slice(0, 10))}</Text>
         </View>
+        {/* Given by an HR attendance edit (2026-11-02): it uses the balance like any other Casual Leave. */}
+        {request.source === 'hr_edit' && (
+          <View style={[styles.hrTag, { backgroundColor: hr.fill }]} accessible accessibilityLabel="Casual Leave by HR, from an attendance edit">
+            <MaterialCommunityIcons name="account-edit-outline" size={12} color={hr.ink} />
+            <Text style={[styles.hrTagText, { color: hr.ink }]}>by HR (attendance edit)</Text>
+          </View>
+        )}
         {!!request.reason && (
           <Text style={styles.reason} numberOfLines={3}>
             "{request.reason}"
@@ -82,4 +91,14 @@ const makeStyles = (Colors: Palette) =>
     sent: { color: Colors.textMuted, fontSize: 11 },
     reason: { color: Colors.textMuted, fontSize: 12, fontStyle: 'italic' },
     decided: { color: Colors.textSecondary, fontSize: 12 },
+    hrTag: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      alignSelf: 'flex-start',
+      borderRadius: BorderRadius.full,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    hrTagText: { fontSize: 10.5, fontWeight: '800' },
   });

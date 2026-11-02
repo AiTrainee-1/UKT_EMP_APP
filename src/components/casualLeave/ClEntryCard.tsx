@@ -9,7 +9,9 @@ import { BorderRadius } from '../../constants/theme';
 import { FontFamily, TabularNums } from '../../constants/typography';
 import { Skeleton } from '../ui/Skeleton';
 import { ClDial } from './ClDial';
-import { daysText, type MonthCardState, type YearMonth } from '../../lib/casualLeave';
+import { ClBalanceBar } from './ClBalanceBar';
+import { useReduceMotion } from '../../lib/motionPrefs';
+import { balanceSentence, daysText, type CLBalance, type MonthCardState, type YearMonth } from '../../lib/casualLeave';
 
 export const TONE_ICON: Record<MonthCardState['tone'], string> = {
   open: 'check-circle-outline',
@@ -32,8 +34,10 @@ export function toneColors(tone: MonthCardState['tone'], Colors: Palette) {
 }
 
 /**
- * The Casual Leave card on the Leave page: this month's state at a glance, the year so far as twelve small dials, and a
- * tap to the Casual Leave screen. Loading shows a skeleton; a failed load says so (never an empty year).
+ * The Casual Leave card on the Leave page: the state at a glance and a tap to the Casual Leave screen. Under the yearly
+ * balance (owner 2026-11-02, `balance` given) the year is the twelve-box balance bar with "11 of 12 CL left in 2026 ·
+ * resets on 1 Jan"; on an older server (no balance) it is the year so far as twelve small month dials, as before. Loading
+ * shows a skeleton; a failed load says so (never an empty year).
  */
 export function ClEntryCard({
   state,
@@ -45,6 +49,8 @@ export function ClEntryCard({
   failed,
   onPress,
   footer,
+  balance = null,
+  yearly = false,
 }: {
   state: MonthCardState | null;
   months: YearMonth[] | null;
@@ -55,9 +61,14 @@ export function ClEntryCard({
   failed: boolean;
   onPress: () => void;
   footer?: React.ReactNode;
+  /** The yearly balance to draw (only when it is the employee's to take: casualLeave.showBalance). */
+  balance?: CLBalance | null;
+  /** The yearly rule is in force (the subtitle says so even when the balance is not shown). */
+  yearly?: boolean;
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const reduce = useReduceMotion();
   const tone = toneColors(state?.tone ?? 'closed', Colors);
   const thisMonth = new Date().getMonth() + 1;
 
@@ -67,7 +78,7 @@ export function ClEntryCard({
       activeOpacity={0.88}
       style={styles.card}
       accessibilityRole="button"
-      accessibilityLabel={`Casual Leave. ${state ? `${state.title}. ${state.detail}` : ''} Opens your Casual Leave.`}
+      accessibilityLabel={`Casual Leave. ${state ? `${state.title}. ${state.detail}` : ''}${balance ? ` ${balanceSentence(balance)}.` : ''} Opens your Casual Leave.`}
       testID="cl-entry-card"
     >
       <View style={styles.topRow}>
@@ -76,7 +87,7 @@ export function ClEntryCard({
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Casual Leave (CL)</Text>
-          <Text style={styles.sub}>One paid day a month, or two half-days</Text>
+          <Text style={styles.sub}>{yearly ? `${balance?.total ?? 12} paid days a year, full or half days` : 'One paid day a month, or two half-days'}</Text>
         </View>
         <MaterialCommunityIcons name="chevron-right" size={22} color={Colors.textMuted} />
       </View>
@@ -88,9 +99,9 @@ export function ClEntryCard({
         </View>
       ) : state ? (
         <MotiView
-          from={{ opacity: 0, translateY: 4 }}
+          from={reduce ? undefined : { opacity: 0, translateY: 4 }}
           animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'timing', duration: 240 }}
+          transition={{ type: 'timing', duration: reduce ? 0 : 240 }}
           style={styles.stateRow}
         >
           <View style={[styles.stateChip, { backgroundColor: tone.bg }]}>
@@ -105,6 +116,8 @@ export function ClEntryCard({
 
       {failed ? (
         <Text style={styles.failText}>Could not load your Casual Leave. Pull down to try again.</Text>
+      ) : balance ? (
+        <ClBalanceBar balance={balance} compact />
       ) : months ? (
         <View>
           <View style={styles.strip}>

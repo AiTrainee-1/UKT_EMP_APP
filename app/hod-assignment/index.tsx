@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   RefreshControl,
   Platform,
   Share,
+  type ScrollViewInstance,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +17,9 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useEmployeeHod } from '../../src/hooks/useCompensation';
 import { usePendingRequests } from '../../src/hooks/usePendingReminders';
 import { MyRequestsPanel } from '../../src/components/hodAssignment/MyRequestsPanel';
+import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
+import { readWordParam } from '../../src/lib/focusItem';
+import { FocusMissingNote } from '../../src/components/focus/FocusFrame';
 import { Toast } from '../../src/components/ui/Toast';
 import { countBadge } from '../../src/lib/pendingReminders';
 import { Avatar } from '../../src/components/ui/Avatar';
@@ -51,7 +55,7 @@ export default function HodAssignmentScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
-  const params = useLocalSearchParams<{ tab?: string }>();
+  const params = useLocalSearchParams<{ tab?: string; focus?: string; module?: string }>();
   const [tab, setTab] = useState<TabKey>(params.tab === 'requests' ? 'requests' : 'head');
 
   const { data, isLoading, refetch, isRefetching } = useEmployeeHod();
@@ -72,6 +76,39 @@ export default function HodAssignmentScreen() {
   useEffect(() => () => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
   }, []);
+
+  // A notification's View opens My Requests on one row: ?tab=requests&focus=<id>&module=<module> (the rows are keyed
+  // "<module>-<id>": an attendance change HR raised is "attendance_correction-<id>", src/lib/notificationTarget.ts). The
+  // screen can already be open, so `tab` is followed when it changes too.
+  const focusRequest = useFocusParam();
+  const focusModuleRef = useRef<string | null>(null);
+  if (params.focus !== undefined) focusModuleRef.current = readWordParam(params.module);
+  const focusModule = focusModuleRef.current;
+  useEffect(() => {
+    if (params.tab === 'requests') setTab('requests');
+  }, [params.tab]);
+  useEffect(() => {
+    if (focusRequest) setTab('requests');
+  }, [focusRequest?.nonce]);
+  const myRows = useMemo(() => {
+    if (!pending.data) return undefined;
+    const rows = [
+      ...pending.data.items.map((i) => ({ module: i.module, id: i.id })),
+      ...pending.data.recentHrEdits.map((e) => ({ module: 'attendance_correction', id: e.id })),
+    ];
+    return focusModule ? rows.filter((r) => r.module === focusModule) : rows;
+  }, [pending.data, focusModule]);
+  const requestsScrollRef = useRef<ScrollViewInstance>(null);
+  const focus = useFocusItem<{ module: string; id: number }, never>({
+    request: focusRequest,
+    rows: myRows,
+    idOf: (r) => r.id,
+    refresh: () => pending.refetch(),
+    fetching: pending.isFetching,
+    ready: tab === 'requests',
+    scrollRef: requestsScrollRef,
+  });
+  const frameFor = (module: string, id: number) => (!focusModule || module === focusModule ? focus.frame(id) : undefined);
 
   const header = (
     <View style={styles.header}>
@@ -132,6 +169,7 @@ export default function HodAssignmentScreen() {
         {header}
         {tabs}
         <ScrollView
+          ref={requestsScrollRef}
           contentContainerStyle={styles.pad}
           showsVerticalScrollIndicator={false}
           refreshControl={
@@ -143,7 +181,9 @@ export default function HodAssignmentScreen() {
             />
           }
         >
+          {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
           <MyRequestsPanel
+            frameFor={frameFor}
             data={pending.data}
             isLoading={pending.isLoading}
             isError={pending.isError}

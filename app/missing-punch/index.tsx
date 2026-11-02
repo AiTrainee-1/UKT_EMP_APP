@@ -17,14 +17,30 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useMissingPunch, PUNCH_SLOT_LABEL, type MissingPunchItem } from '../../src/hooks/useRequests';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { hasProgressed, pipelineSentence, workflowOff } from '../../src/lib/approval';
-import { defaultView, rowsForView, viewCounts, type RequestView } from '../../src/lib/requestViews';
-import { emptyViewText, istDateOf, missingPunchViewOptions, monthSections } from '../../src/lib/myRequests';
+import {
+  defaultView,
+  monthEmptyText,
+  monthForRow,
+  rowsForView,
+  rowsInScope,
+  viewCounts,
+  waitingInOtherMonths,
+  type RequestView,
+  type ViewOptions,
+} from '../../src/lib/requestViews';
+import { istDateOf, missingPunchViewOptions } from '../../src/lib/myRequests';
+import { useSelectedMonth } from '../../src/hooks/useSelectedMonth';
+import { MonthSwitcher } from '../../src/components/MonthSwitcher';
+import { WaitingElsewhereNote } from '../../src/components/requests/WaitingElsewhereNote';
 import { parseClock, to12hLabel } from '../../src/lib/punchTimePicker';
 import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
 import { deciderFromStamps } from '../../src/lib/approvalsDecider';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
-import { ListSkeleton, LoadError, MonthHeading, StaleNote } from '../../src/components/myrequests/ListStates';
+import { REQUEST_FOCUS_ORDER, requestViewHasInItsMonth } from '../../src/lib/focusItem';
+import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
+import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
+import { ListSkeleton, LoadError, StaleNote } from '../../src/components/myrequests/ListStates';
 import { Reveal } from '../../src/components/Reveal';
 import { Badge } from '../../src/components/ui/Badge';
 import { EmptyState } from '../../src/components/ui/EmptyState';
@@ -64,7 +80,7 @@ const SLOT_ICON: Record<string, string> = {
   evening_out: 'logout',
 };
 
-type Row = { kind: 'heading'; key: string; title: string; count: number } | { kind: 'item'; key: string; item: MissingPunchItem; index: number };
+type Row = { kind: 'item'; key: string; item: MissingPunchItem; index: number };
 
 /** "Wed, 29 Oct 2026" from "2026-10-29" without a time-zone shift. */
 function dayLabel(date: string): string {
@@ -86,115 +102,152 @@ export default function MissingPunchScreen() {
   const styles = useThemedStyles(makeStyles);
 
   const { user } = useAuth();
-  // Every request (the latest 300, newest first): the four views need more than one month.
-  const { data, isLoading, isError, refetch, isRefetching } = useMissingPunch(user?.employeeId ?? null);
+  const employeeId = user?.employeeId ?? null;
+  // The month switcher (owner 2026-11-02): the four views list and count only the requests whose PUNCH DATE is in the
+  // month on screen; the second card is every request of that month ("This month" / "All in Sep").
+  const [selectedMonth, setSelectedMonth] = useSelectedMonth();
+  // Every request (the latest 300, newest first): what a notification's request is looked up in, and what the month on
+  // screen shows straight away while its own list loads.
+  const all = useMissingPunch(employeeId);
+  // The month's own list (GET /missing-punch-requests?month=&year=, by punch date): complete even for a month older than
+  // the latest 300.
+  const monthQuery = useMissingPunch(employeeId, selectedMonth.month, selectedMonth.year);
+  const { data } = all;
+  const listData = monthQuery.data ?? data;
+  const isError = all.isError || monthQuery.isError;
+  const isRefetching = all.isRefetching || monthQuery.isRefetching;
+  const refetch = () => Promise.all([all.refetch(), monthQuery.refetch()]);
   // Who approves a missing punch, and whether HR has switched new ones off (Approval Workflow Control).
   const { data: approvalSummary } = useApprovalSummary();
   const missingPunchOff = workflowOff(approvalSummary?.missingPunch);
 
-  const items = data ?? [];
+  const items = listData ?? [];
   // "Now" is read when the screen renders, never once at module load: the app process lives for days.
-  const opts = missingPunchViewOptions<MissingPunchItem>(new Date());
+  const opts: ViewOptions<MissingPunchItem> = {
+    ...missingPunchViewOptions<MissingPunchItem>(new Date()),
+    scope: { ...selectedMonth, daysOf: (r) => r.date },
+  };
   const counts = viewCounts(items, opts);
+  // Skeleton while nothing of the month is on hand yet (not the month's empty state, which its own list may yet fill).
+  const isLoading =
+    (!listData && (all.isLoading || monthQuery.isLoading)) ||
+    (!monthQuery.data && monthQuery.isPending && rowsInScope(items, opts).length === 0);
 
-  // Opens on Waiting when something is waiting, else on "Sent this month" - decided once, when the list first arrives.
+  // Opens on Waiting when something is waiting, else on the month view - decided once, when the list first arrives.
   const [view, setView] = useState<RequestView>('waiting');
   const chosen = useRef(false);
+  // A view picked by hand or by a notification is never overruled by that opening choice.
+  const pickView = (next: RequestView) => {
+    chosen.current = true;
+    setView(next);
+  };
   useEffect(() => {
-    if (!chosen.current && data) {
+    if (!chosen.current && listData) {
       chosen.current = true;
       setView(defaultView(counts));
     }
-  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [listData]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // One month is on screen, so no month headings: the switcher already names it.
   const visible = rowsForView(items, view, opts);
-  // Long histories (Approved / Rejected) read best under month headings, by the day of the missed punch.
-  const rows: Row[] = [];
-  if (view === 'approved' || view === 'rejected') {
-    let i = 0;
-    for (const s of monthSections(visible, (r) => r.date)) {
-      rows.push({ kind: 'heading', key: `h-${s.key}`, title: s.title, count: s.rows.length });
-      for (const item of s.rows) rows.push({ kind: 'item', key: String(item.id), item, index: i++ });
-    }
-  } else {
-    visible.forEach((item, index) => rows.push({ kind: 'item', key: String(item.id), item, index }));
-  }
+  const rows: Row[] = visible.map((item, index) => ({ kind: 'item', key: String(item.id), item, index }));
+  const elsewhere = waitingInOtherMonths(data ?? [], opts);
 
-  const empty = emptyViewText(view, 'missing punch requests', 'sent this month');
-  const failedFirstLoad = isError && !data;
+  // A notification's View opens this screen with ?focus=<missing punch id> (src/lib/notificationTarget.ts): the month of
+  // its punch date opens first, then the view that holds it, the list scrolls to it and it pulses once
+  // (src/hooks/useFocusItem.ts). Looked up in the latest 300, which the month on screen falls back to while it loads.
+  const listRef = useRef<FlatList<Row>>(null);
+  const focus = useFocusItem<MissingPunchItem, RequestView>({
+    request: useFocusParam(),
+    rows: data,
+    idOf: (r) => r.id,
+    views: { order: REQUEST_FOCUS_ORDER, current: view, set: pickView, has: (r, v) => requestViewHasInItsMonth(r, v, opts) },
+    reveal: (r) => {
+      const m = monthForRow(r, opts);
+      if (m) setSelectedMonth(m);
+    },
+    refresh: () => refetch(),
+    fetching: all.isFetching,
+    list: { ref: listRef, indexOf: (id) => rows.findIndex((r) => r.kind === 'item' && r.item.id === id) },
+  });
+
+  const empty = monthEmptyText(view, 'missing punch requests', selectedMonth, counts.month);
+  const failedFirstLoad = isError && !listData;
 
   const renderCard = (item: MissingPunchItem, index: number) => {
     const badge = stageBadge(item);
     const sent = istDateOf(item.createdAt);
     return (
       <Reveal index={index}>
-        <View style={styles.card}>
-          <View style={styles.cardTop}>
-            <View style={styles.cardTopLeft}>
-              <View style={styles.slotIconWrap}>
-                <MaterialCommunityIcons name={(item.punchSlot ? SLOT_ICON[item.punchSlot] : 'fingerprint') as any} size={16} color={Colors.categoryPunch} />
-              </View>
-              <View style={{ flexShrink: 1 }}>
-                <Text style={styles.type}>
-                  {item.punchSlot ? PUNCH_SLOT_LABEL[item.punchSlot] : (item.punchType === 'IN' ? 'Check-In' : 'Check-Out')}
-                </Text>
-                <Text style={styles.dateTime}>{dayLabel(item.date)} · {timeLabel(item.punchTime)}</Text>
-              </View>
-            </View>
-            <Badge label={badge.label} variant={badge.variant} />
-          </View>
-
-          {!!item.reason && (
-            <View style={styles.reasonBox}>
-              <Text style={styles.reasonQuote}>"</Text>
-              <Text style={styles.reason}>{item.reason}</Text>
-            </View>
-          )}
-
-          <WaitingChip
-            approval={item.approval}
-            fallback={deciderFromStamps({
-              status: item.status,
-              hodBy: item.hodReviewedBy,
-              hodAt: (item as any).hodReviewedAt,
-              hrBy: item.hrReviewedBy,
-              hrAt: (item as any).hrReviewedAt,
-            })}
-          />
-
-          {item.approval ? (
-            <ApprovalTrail approval={item.approval} title="APPROVAL WORKFLOW" />
-          ) : (item.hodReviewedBy || item.hrReviewedBy) ? (
-            <View style={styles.workflow}>
-              <Text style={styles.workflowLabel}>APPROVAL WORKFLOW</Text>
-              {item.hodReviewedBy && (
-                <View style={styles.workflowRow}>
-                  <MaterialCommunityIcons
-                    name={item.status === 'rejected' && !item.hrReviewedBy ? 'close-circle' : 'check-circle'}
-                    size={15}
-                    color={item.status === 'rejected' && !item.hrReviewedBy ? Colors.statusRed : Colors.statusGreen}
-                  />
-                  <Text style={styles.workflowText}>Department Head: {item.hodReviewedBy}</Text>
+        <FocusFrame {...focus.frame(item.id)} bottomInset={10}>
+          <View style={styles.card}>
+            <View style={styles.cardTop}>
+              <View style={styles.cardTopLeft}>
+                <View style={styles.slotIconWrap}>
+                  <MaterialCommunityIcons name={(item.punchSlot ? SLOT_ICON[item.punchSlot] : 'fingerprint') as any} size={16} color={Colors.categoryPunch} />
                 </View>
-              )}
-              {item.hrReviewedBy && (
-                <View style={styles.workflowRow}>
-                  <MaterialCommunityIcons
-                    name={item.status === 'rejected' ? 'close-circle' : 'check-circle'}
-                    size={15}
-                    color={item.status === 'rejected' ? Colors.statusRed : Colors.statusGreen}
-                  />
-                  <Text style={styles.workflowText}>HR: {item.hrReviewedBy}</Text>
+                <View style={{ flexShrink: 1 }}>
+                  <Text style={styles.type}>
+                    {item.punchSlot ? PUNCH_SLOT_LABEL[item.punchSlot] : (item.punchType === 'IN' ? 'Check-In' : 'Check-Out')}
+                  </Text>
+                  <Text style={styles.dateTime}>{dayLabel(item.date)} · {timeLabel(item.punchTime)}</Text>
                 </View>
-              )}
+              </View>
+              <Badge label={badge.label} variant={badge.variant} />
             </View>
-          ) : null}
 
-          <View style={styles.cardFooter}>
-            <Text style={styles.refText}>#MP-{item.id}{sent ? ` · Sent ${dayLabel(sent)}` : ''}</Text>
-            {item.status === 'approved' && <Text style={styles.approvedHint}>Added to your attendance</Text>}
+            {!!item.reason && (
+              <View style={styles.reasonBox}>
+                <Text style={styles.reasonQuote}>"</Text>
+                <Text style={styles.reason}>{item.reason}</Text>
+              </View>
+            )}
+
+            <WaitingChip
+              approval={item.approval}
+              fallback={deciderFromStamps({
+                status: item.status,
+                hodBy: item.hodReviewedBy,
+                hodAt: (item as any).hodReviewedAt,
+                hrBy: item.hrReviewedBy,
+                hrAt: (item as any).hrReviewedAt,
+              })}
+            />
+
+            {item.approval ? (
+              <ApprovalTrail approval={item.approval} title="APPROVAL WORKFLOW" />
+            ) : (item.hodReviewedBy || item.hrReviewedBy) ? (
+              <View style={styles.workflow}>
+                <Text style={styles.workflowLabel}>APPROVAL WORKFLOW</Text>
+                {item.hodReviewedBy && (
+                  <View style={styles.workflowRow}>
+                    <MaterialCommunityIcons
+                      name={item.status === 'rejected' && !item.hrReviewedBy ? 'close-circle' : 'check-circle'}
+                      size={15}
+                      color={item.status === 'rejected' && !item.hrReviewedBy ? Colors.statusRed : Colors.statusGreen}
+                    />
+                    <Text style={styles.workflowText}>Department Head: {item.hodReviewedBy}</Text>
+                  </View>
+                )}
+                {item.hrReviewedBy && (
+                  <View style={styles.workflowRow}>
+                    <MaterialCommunityIcons
+                      name={item.status === 'rejected' ? 'close-circle' : 'check-circle'}
+                      size={15}
+                      color={item.status === 'rejected' ? Colors.statusRed : Colors.statusGreen}
+                    />
+                    <Text style={styles.workflowText}>HR: {item.hrReviewedBy}</Text>
+                  </View>
+                )}
+              </View>
+            ) : null}
+
+            <View style={styles.cardFooter}>
+              <Text style={styles.refText}>#MP-{item.id}{sent ? ` · Sent ${dayLabel(sent)}` : ''}</Text>
+              {item.status === 'approved' && <Text style={styles.approvedHint}>Added to your attendance</Text>}
+            </View>
           </View>
-        </View>
+        </FocusFrame>
       </Reveal>
     );
   };
@@ -218,8 +271,11 @@ export default function MissingPunchScreen() {
       </View>
 
       <FlatList
+        ref={listRef}
         data={failedFirstLoad || isLoading ? [] : rows}
         keyExtractor={(r) => r.key}
+        onScrollToIndexFailed={focus.onScrollToIndexFailed}
+        extraData={focus.activeId}
         contentContainerStyle={[styles.pad, !rows.length && styles.grow]}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
@@ -243,17 +299,31 @@ export default function MissingPunchScreen() {
             <WorkflowOffNote workflow={approvalSummary?.missingPunch} style={styles.offNote} />
 
             {!failedFirstLoad && (
-              <View style={styles.switcher}>
-                <RequestViewSwitcher
-                  value={view}
-                  counts={counts}
-                  onChange={setView}
-                  labels={{ month: 'Sent this month' }}
-                  testID="missing-punch-views"
+              <>
+                <MonthSwitcher
+                  value={selectedMonth}
+                  onChange={setSelectedMonth}
+                  style={styles.monthSwitch}
+                  testID="missing-punch-month"
                 />
-              </View>
+                <View style={styles.switcher}>
+                  <RequestViewSwitcher
+                    value={view}
+                    counts={counts}
+                    onChange={pickView}
+                    month={selectedMonth}
+                    testID="missing-punch-views"
+                  />
+                </View>
+                <WaitingElsewhereNote
+                  count={elsewhere.count}
+                  month={elsewhere.month}
+                  onShow={(m) => { setSelectedMonth(m); pickView('waiting'); }}
+                />
+              </>
             )}
-            {isError && !!data && <StaleNote onRetry={() => { void refetch(); }} />}
+            {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
+            {isError && !!listData && <StaleNote onRetry={() => { void refetch(); }} />}
           </>
         }
         ListEmptyComponent={
@@ -265,9 +335,7 @@ export default function MissingPunchScreen() {
             <EmptyState icon="fingerprint" title={empty.title} subtitle={empty.subtitle} />
           )
         }
-        renderItem={({ item: row }) =>
-          row.kind === 'heading' ? <MonthHeading title={row.title} count={row.count} /> : renderCard(row.item, row.index)
-        }
+        renderItem={({ item: row }) => renderCard(row.item, row.index)}
       />
 
       <TouchableOpacity
@@ -305,6 +373,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   pad: { padding: 16, paddingBottom: 100 },
   grow: { flexGrow: 1 },
   switcher: { marginHorizontal: -16, marginBottom: 10 },
+  monthSwitch: { marginBottom: 6 },
 
   introCard: {
     flexDirection: 'row', gap: 12,

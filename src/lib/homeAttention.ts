@@ -6,6 +6,7 @@
 //   gate pass open     GET /outpass-requests               -> Outpass (/outpass)
 //   On-Duty running    GET /attendance/geo-punch/status    -> On-Duty (/on-duty)
 //   Casual Leave left  GET /casual-leaves/my-eligibility   -> Casual Leave (/casual-leave), staff only, last week of month
+//                                                             (yearly balance, 2026-11-02: last week of December only)
 //   advances open      GET /my/advances/eligibility        -> Advances & Loans (/settlement)
 //   last salary        GET /my/salary-insights             -> Salary (/salary)
 // A source that failed or is still loading simply gives no row: Home never shows an error for these extras.
@@ -253,6 +254,9 @@ export interface CLMonthLike {
   label: string;
   eligible: boolean;
   left: 'full' | 'one_half' | 'nothing';
+  /** Added 2026-11-02: the yearly balance's rule and the days still free (absent on an older server). */
+  rule?: 'yearly_balance' | 'one_per_month';
+  remaining?: number | null;
 }
 
 /** How many days before the month ends Home starts pointing at unused Casual Leave. */
@@ -268,9 +272,13 @@ export function monthKeyOf(d: Date): string {
  * staff (the caller checks the profile; production has no CL). null otherwise.
  */
 export function casualLeaveAttention(months: readonly CLMonthLike[] | null | undefined, now: Date): AttentionItem | null {
+  const m = (months ?? []).find((x) => x.month === monthKeyOf(now));
+  // The yearly balance (owner 2026-11-02): unused days carry over month to month and lapse only on 31 December, so the
+  // month-end reminder would be wrong. Home reminds in the last week of December instead (as the web dashboard does), with
+  // what is left of the year.
+  if (m?.rule === 'yearly_balance') return yearEndCasualLeave(m, now);
   const left = daysLeftInMonth(now);
   if (left >= CL_REMIND_DAYS) return null;
-  const m = (months ?? []).find((x) => x.month === monthKeyOf(now));
   if (!m || !m.eligible || m.left === 'nothing') return null;
   const name = (m.label || '').split(' ')[0] || 'This month';
   const what = m.left === 'full' ? '1 day' : 'half a day';
@@ -281,6 +289,35 @@ export function casualLeaveAttention(months: readonly CLMonthLike[] | null | und
     tone: 'leave',
     title: `${name}'s Casual Leave not used yet`,
     detail: `${capitalise(what)} left · ${ends}`,
+    href: '/casual-leave',
+    rank: RANK.casualLeave,
+  });
+}
+
+/** "10½": a balance with its half. */
+function halves(days: number): string {
+  const whole = Math.floor(days);
+  return days - whole >= 0.5 ? (whole ? `${whole}½` : '½') : String(whole);
+}
+
+/** The last week of December only: the year's Casual Leave still free, before it lapses on 31 December. */
+function yearEndCasualLeave(m: CLMonthLike, now: Date): AttentionItem | null {
+  const left = daysLeftInMonth(now);
+  if (now.getMonth() !== 11 || left >= CL_REMIND_DAYS || !m.eligible || m.left === 'nothing') return null;
+  const year = now.getFullYear();
+  const days = typeof m.remaining === 'number' ? m.remaining : null;
+  if (days !== null && days <= 0) return null;
+  const ends = left === 0 ? 'the year ends today' : left === 1 ? 'the year ends tomorrow' : `the year ends in ${left} days`;
+  const title =
+    days === null
+      ? `Casual Leave left for ${year}`
+      : `${halves(days)} Casual Leave ${days > 1 ? 'days' : 'day'} left for ${year}`;
+  return item({
+    key: 'casualLeave',
+    icon: 'beach',
+    tone: 'leave',
+    title,
+    detail: `Unused days lapse on 31 Dec · ${ends}`,
     href: '/casual-leave',
     rank: RANK.casualLeave,
   });

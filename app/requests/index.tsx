@@ -18,14 +18,30 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { usePermissions, type PermissionRequest } from '../../src/hooks/useRequests';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { pipelineSentence, workflowOff } from '../../src/lib/approval';
-import { defaultView, rowsForView, viewCounts, type RequestView } from '../../src/lib/requestViews';
-import { emptyViewText, monthSections, permissionsUsedThisMonth, permissionViewOptions } from '../../src/lib/myRequests';
+import {
+  defaultView,
+  monthEmptyText,
+  monthForRow,
+  rowsForView,
+  viewCounts,
+  waitingInOtherMonths,
+  type RequestView,
+  type ViewOptions,
+} from '../../src/lib/requestViews';
+import { permissionsUsedThisMonth, permissionViewOptions } from '../../src/lib/myRequests';
+import { currentMonth, laterMonth, latestMonthOf } from '../../src/lib/monthSwitch';
+import { useSelectedMonth } from '../../src/hooks/useSelectedMonth';
+import { MonthSwitcher } from '../../src/components/MonthSwitcher';
+import { WaitingElsewhereNote } from '../../src/components/requests/WaitingElsewhereNote';
 import { parseClock, to12hLabel } from '../../src/lib/punchTimePicker';
 import { ApprovalTrail, WaitingChip } from '../../src/components/approval/ApprovalTrail';
 import { deciderFromFields } from '../../src/lib/approvalsDecider';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
 import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
-import { ListSkeleton, LoadError, MonthHeading, StaleNote } from '../../src/components/myrequests/ListStates';
+import { REQUEST_FOCUS_ORDER, requestViewHasInItsMonth } from '../../src/lib/focusItem';
+import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
+import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
+import { ListSkeleton, LoadError, StaleNote } from '../../src/components/myrequests/ListStates';
 import { Reveal } from '../../src/components/Reveal';
 import {
   useShiftStats,
@@ -48,9 +64,10 @@ import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
 
-type Row =
-  | { kind: 'heading'; key: string; title: string; count: number }
-  | { kind: 'item'; key: string; item: PermissionRequest; index: number };
+type Row = { kind: 'item'; key: string; item: PermissionRequest; index: number };
+
+/** The day a permission is for: what the month switcher files it under. */
+const permissionDay = (r: PermissionRequest) => r.date;
 
 function currency(n: number) {
   return `₹${(n || 0).toLocaleString('en-IN')}`;
@@ -82,7 +99,7 @@ export default function RequestsScreen() {
 
   // Every permission request (no month filter): the four views reach past this month (an approved one from May, one
   // still waiting from last month). The allowance card below is still about THIS month only.
-  const { data, isLoading, isError, refetch, isRefetching } = usePermissions(employeeId);
+  const { data, isLoading, isError, refetch, isRefetching, isFetching } = usePermissions(employeeId);
   const { data: shiftStats } = useShiftStats(month, year);
   // Who approves a permission, and whether HR has switched new ones off (Approval Workflow Control).
   const { data: approvalSummary } = useApprovalSummary();
@@ -118,7 +135,15 @@ export default function RequestsScreen() {
         { label: 'Salary Cut', value: '—' },
       ];
 
-  const opts = permissionViewOptions<PermissionRequest>(now);
+  // The month switcher (owner 2026-11-02): the four views list and count only the permissions FOR a day of the month on
+  // screen; the second card is every permission of that month ("This month" / "All in Sep"). The allowance card above
+  // stays about the current month whatever month is picked.
+  const [selectedMonth, setSelectedMonth] = useSelectedMonth();
+  const maxMonth = laterMonth(currentMonth(now), latestMonthOf(items, permissionDay) ?? currentMonth(now));
+  const opts: ViewOptions<PermissionRequest> = {
+    ...permissionViewOptions<PermissionRequest>(now),
+    scope: { ...selectedMonth, daysOf: permissionDay },
+  };
   const counts = viewCounts(items, opts);
   const [view, setView] = useState<RequestView>('waiting');
   const chosen = useRef(false);
@@ -129,18 +154,29 @@ export default function RequestsScreen() {
     }
   }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // One month is on screen, so no month headings: the switcher already names it.
   const visible = rowsForView(items, view, opts);
-  const rows: Row[] = [];
-  if (view === 'approved' || view === 'rejected') {
-    let i = 0;
-    for (const s of monthSections(visible, (r) => r.date)) {
-      rows.push({ kind: 'heading', key: `h-${s.key}`, title: s.title, count: s.rows.length });
-      for (const item of s.rows) rows.push({ kind: 'item', key: String(item.id), item, index: i++ });
-    }
-  } else {
-    visible.forEach((item, index) => rows.push({ kind: 'item', key: String(item.id), item, index }));
-  }
-  const empty = emptyViewText(view, 'permissions', 'taken this month');
+  const rows: Row[] = visible.map((item, index) => ({ kind: 'item', key: String(item.id), item, index }));
+  const elsewhere = waitingInOtherMonths(items, opts);
+
+  // A notification's View opens this screen with ?focus=<permission id> (src/lib/notificationTarget.ts): the month of
+  // that permission opens first, then the view that holds it, the list scrolls to it and it pulses once (useFocusItem.ts).
+  const listRef = useRef<FlatList<Row>>(null);
+  const focus = useFocusItem<PermissionRequest, RequestView>({
+    request: useFocusParam(),
+    rows: data?.items,
+    idOf: (r) => r.id,
+    views: { order: REQUEST_FOCUS_ORDER, current: view, set: setView, has: (r, v) => requestViewHasInItsMonth(r, v, opts) },
+    reveal: (r) => {
+      const m = monthForRow(r, opts);
+      if (m) setSelectedMonth(m);
+    },
+    refresh: () => refetch(),
+    fetching: isFetching,
+    list: { ref: listRef, indexOf: (id) => rows.findIndex((r) => r.kind === 'item' && r.item.id === id) },
+  });
+
+  const empty = monthEmptyText(view, 'permission requests', selectedMonth, counts.month, now);
   const failedFirstLoad = isError && !data;
 
   const renderCard = (item: PermissionRequest, index: number) => {
@@ -148,33 +184,35 @@ export default function RequestsScreen() {
     const duration = formatPermissionDuration(item.durationMinutes);
     return (
       <Reveal index={index}>
-        <View style={styles.card}>
-          <View style={styles.cardTopRow}>
-            <View style={styles.cardIconWrap}>
-              <MaterialCommunityIcons name={permissionTypeIcon(item.typeKey) as any} size={16} color={Colors.tertiary} />
+        <FocusFrame {...focus.frame(item.id)} bottomInset={10}>
+          <View style={styles.card}>
+            <View style={styles.cardTopRow}>
+              <View style={styles.cardIconWrap}>
+                <MaterialCommunityIcons name={permissionTypeIcon(item.typeKey) as any} size={16} color={Colors.tertiary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.type}>{item.typeLabel}</Text>
+                <Text style={styles.dateTime}>{dayLabel(item.date)} · {timeLabel(item.time)}</Text>
+              </View>
+              <Badge label={item.outcomeLabel} variant={item.outcomeBadge} />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.type}>{item.typeLabel}</Text>
-              <Text style={styles.dateTime}>{dayLabel(item.date)} · {timeLabel(item.time)}</Text>
+            {!!item.reason && <Text style={styles.reason}><Text style={styles.reasonLabel}>Reason: </Text>{item.reason}</Text>}
+            {item.outcome === 'excess' && (
+              <Text style={styles.excessNote}>
+                Beyond your monthly limit: this does not protect the day and counts toward late deductions.
+              </Text>
+            )}
+            <WaitingChip
+              approval={item.approval}
+              fallback={deciderFromFields({ status: item.status, name: item.approvedBy, role: item.approverRole })}
+            />
+            <ApprovalTrail approval={item.approval} />
+            <View style={styles.cardFooterRow}>
+              <Text style={styles.refText}>Req ID: #PR-{item.id}</Text>
+              {!!duration && <Text style={styles.durationText}>{duration}</Text>}
             </View>
-            <Badge label={item.outcomeLabel} variant={item.outcomeBadge} />
           </View>
-          {!!item.reason && <Text style={styles.reason}><Text style={styles.reasonLabel}>Reason: </Text>{item.reason}</Text>}
-          {item.outcome === 'excess' && (
-            <Text style={styles.excessNote}>
-              Beyond your monthly limit: this does not protect the day and counts toward late deductions.
-            </Text>
-          )}
-          <WaitingChip
-            approval={item.approval}
-            fallback={deciderFromFields({ status: item.status, name: item.approvedBy, role: item.approverRole })}
-          />
-          <ApprovalTrail approval={item.approval} />
-          <View style={styles.cardFooterRow}>
-            <Text style={styles.refText}>Req ID: #PR-{item.id}</Text>
-            {!!duration && <Text style={styles.durationText}>{duration}</Text>}
-          </View>
-        </View>
+        </FocusFrame>
       </Reveal>
     );
   };
@@ -201,8 +239,11 @@ export default function RequestsScreen() {
       </View>
 
       <FlatList
+        ref={listRef}
         data={failedFirstLoad || isLoading ? [] : rows}
         keyExtractor={(r) => r.key}
+        onScrollToIndexFailed={focus.onScrollToIndexFailed}
+        extraData={focus.activeId}
         contentContainerStyle={[styles.pad, !rows.length && styles.grow]}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} />
@@ -283,16 +324,31 @@ export default function RequestsScreen() {
             </View>
 
             {!failedFirstLoad && (
-              <View style={styles.switcher}>
-                <RequestViewSwitcher
-                  value={view}
-                  counts={counts}
-                  onChange={setView}
-                  labels={{ month: 'Taken this month' }}
-                  testID="permission-views"
+              <>
+                <MonthSwitcher
+                  value={selectedMonth}
+                  onChange={setSelectedMonth}
+                  max={maxMonth}
+                  style={styles.monthSwitch}
+                  testID="permission-month"
                 />
-              </View>
+                <View style={styles.switcher}>
+                  <RequestViewSwitcher
+                    value={view}
+                    counts={counts}
+                    onChange={setView}
+                    month={selectedMonth}
+                    testID="permission-views"
+                  />
+                </View>
+                <WaitingElsewhereNote
+                  count={elsewhere.count}
+                  month={elsewhere.month}
+                  onShow={(m) => { setSelectedMonth(m); setView('waiting'); }}
+                />
+              </>
             )}
+            {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
             {isError && !!data && <StaleNote onRetry={() => { void refetch(); }} />}
           </>
         }
@@ -305,9 +361,7 @@ export default function RequestsScreen() {
             <EmptyState icon="clock-check-outline" title={empty.title} subtitle={empty.subtitle} />
           )
         }
-        renderItem={({ item: row }) =>
-          row.kind === 'heading' ? <MonthHeading title={row.title} count={row.count} /> : renderCard(row.item, row.index)
-        }
+        renderItem={({ item: row }) => renderCard(row.item, row.index)}
       />
 
       {/* Footer CTA */}
@@ -356,6 +410,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   pad: { padding: 16, paddingBottom: 24 },
   grow: { flexGrow: 1 },
   switcher: { marginHorizontal: -16, marginBottom: 10 },
+  monthSwitch: { marginBottom: 6 },
 
   statsCard: {
     backgroundColor: Colors.bgCard,

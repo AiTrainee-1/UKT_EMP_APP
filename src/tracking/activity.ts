@@ -156,8 +156,9 @@ type Draft = ActivityRow & { rank: number };
  * Everything the employee did, in the order it happened. Break rows are numbered like the pins on the map. A phone-side event
  * (location switched off, no internet ...) that falls inside a "no location" stretch is shown inside that stretch, not twice;
  * a fake-location event is always its own red row. The geo-punches of the journey's session are rows at their own time.
+ * `own` false (a Department Head reading a team member's route): nothing is worded "You ...".
  */
-export function buildActivity(detail: JourneyDetail, now: number = Date.now()): ActivityRow[] {
+export function buildActivity(detail: JourneyDetail, now: number = Date.now(), { own = true }: { own?: boolean } = {}): ActivityRow[] {
   const track = detail.track;
   const drafts: Draft[] = [];
   let idx = 0;
@@ -382,10 +383,10 @@ export function buildActivity(detail: JourneyDetail, now: number = Date.now()): 
         at: endedAt ?? parseTime(track.lastPointAt) ?? startedAt,
         title: rejected ? 'On-duty ended' : 'On-duty completed',
         when: formatClock(endedAt),
-        summary: endReasonLabel(track.endReason),
+        summary: endReasonLabel(track.endReason, own),
         details: [
           ...detailRow('Ended at', formatClock(endedAt)),
-          ...detailRow('Why it ended', endReasonLabel(track.endReason)),
+          ...detailRow('Why it ended', endReasonLabel(track.endReason, own)),
           { label: 'Total time', value: formatDuration(track.durationS) },
           { label: 'Distance', value: formatDistance(track.distanceM) },
           { label: 'Breaks', value: b.count ? `${b.count} · ${formatDuration(b.totalS)}` : 'None' },

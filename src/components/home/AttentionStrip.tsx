@@ -54,7 +54,8 @@ export function AttentionStrip({
   const advances = useAdvanceEligibility();
   const geo = useGeoPunchStatus(!!employeeId);
   const outpass = useHomeOutpass(employeeId);
-  // Casual Leave is staff-only and only worth a reminder in the month's last week; otherwise the query stays off.
+  // Casual Leave is staff-only and only worth a reminder in the month's last week (under the yearly balance, 2026-11-02,
+  // only December's last week: the lib decides); otherwise the query stays off.
   const clOn = isStaffEmployee(employmentType) && daysLeftInMonth(now) < CL_REMIND_DAYS;
   const cl = useCLEligibility(clOn ? employeeId : null);
 

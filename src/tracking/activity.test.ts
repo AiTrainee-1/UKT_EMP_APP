@@ -15,6 +15,7 @@ import {
   dayParts,
   endNote,
   journeyChip,
+  journeyViewer,
   lastUpdateText,
   liveStatus,
   punchText,
@@ -288,6 +289,32 @@ test('the live status of a journey in progress', () => {
   assert.equal(liveStatus('waiting_first_fix').label, 'Starting');
   assert.equal(liveStatus('???').label, 'Recording');
   assert.match(liveStatus('location_off').hint, /quick settings/);
+});
+
+test('a Department Head reading a team member\'s journey: whose it is, and nothing worded "you"', () => {
+  const theirs = item({ employeeId: 7, employeeName: 'Asha Kumar', endReason: 'manual' });
+  assert.deepEqual([theirs.employeeId, theirs.employeeName], [7, 'Asha Kumar']);
+  assert.deepEqual(journeyViewer(theirs, 7), { own: true, ownerName: null });
+  assert.deepEqual(journeyViewer(theirs, 3), { own: false, ownerName: 'Asha Kumar' });
+  assert.deepEqual(journeyViewer(item({ employeeId: 7, employeeName: ' ' }), 3), { own: false, ownerName: 'Team member' });
+  // an older backend that does not say whose it is only ever served the employee their own
+  assert.deepEqual(journeyViewer(item(), 3), { own: true, ownerName: null });
+  assert.deepEqual(journeyViewer(theirs, null), { own: true, ownerName: null });
+  assert.equal(item().employeeId, null);
+
+  assert.equal(endNote(theirs), 'You marked it Done');
+  assert.equal(endNote(theirs, false), 'The employee marked it Done');
+  assert.equal(endNote(item({ endReason: 'auto_4th_punch' }), false), 'All 4 punches were recorded');
+  for (const state of ['moving', 'stationary', 'offline', 'location_off', 'waiting_first_fix', '???']) {
+    const neutral = liveStatus(state, false);
+    assert.equal(neutral.label, liveStatus(state).label, state);
+    assert.doesNotMatch(neutral.hint, /\byou\b|\byour\b/i, state);
+  }
+  const done = detail({ track: { ...RAW.track, endReason: 'manual', employeeId: 7, employeeName: 'Asha Kumar' } });
+  assert.equal(buildActivity(done).at(-1)!.summary, 'You marked it Done');
+  const rows = buildActivity(done, Date.now(), { own: false });
+  assert.equal(rows.at(-1)!.summary, 'The employee marked it Done');
+  assert.doesNotMatch(JSON.stringify(rows), /\byou\b|\byour\b/i);
 });
 
 test('time running: the clock while it runs, the recorded total once it has ended', () => {

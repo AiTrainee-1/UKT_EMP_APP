@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
@@ -6,6 +6,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useOnDutySessionStatus } from '../../src/hooks/useGeoAttendance';
 import { useOnDutyHistory } from '../../src/hooks/useOnDutyHistory';
+import { useFocusParam } from '../../src/hooks/useFocusItem';
 import { OnDutyApplyFlow } from '../../src/components/onduty/OnDutyApplyFlow';
 import { OnDutyModeSwitch, type OnDutyMode } from '../../src/components/onduty/OnDutyModeSwitch';
 import { OnDutyRecords } from '../../src/components/onduty/OnDutyRecords';
@@ -18,7 +19,8 @@ import type { Palette } from '../../src/theme/palettes';
  * Apply On-Duty is the existing request form and the live day (approval, four geo-punches, done), unchanged
  * (src/components/onduty/OnDutyApplyFlow.tsx). It is where the page opens, so every link to /on-duty still lands on a
  * running day straight away; a running day turns the first card into "Today's On-Duty" with a live dot.
- * View Records is the employee's own requests in the four views. `/on-duty?view=records` opens on the records.
+ * View Records is the employee's own requests in the four views. `/on-duty?view=records` opens on the records;
+ * `&focus=<session id>` (a notification's View, src/lib/notificationTarget.ts) also brings that request on screen.
  */
 export default function OnDutyScreen() {
   const styles = useThemedStyles(makeStyles);
@@ -29,6 +31,16 @@ export default function OnDutyScreen() {
     if (next === 'records') setRecordsOpened(true);
     setModeState(next);
   };
+  // The screen can already be open when a link arrives: follow `view` when it changes, and a `focus` always means records.
+  const focusRequest = useFocusParam();
+  useEffect(() => {
+    if (params.view === 'records') setMode('records');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.view]);
+  useEffect(() => {
+    if (focusRequest) setMode('records');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest?.nonce]);
 
   const { user } = useAuth();
   // The same cached queries the two bodies use: no extra request.
@@ -63,7 +75,7 @@ export default function OnDutyScreen() {
       </View>
       {(mode === 'records' || recordsOpened) && (
         <SafeAreaView style={[styles.safe, mode !== 'records' && styles.hidden]} edges={['bottom']}>
-          <OnDutyRecords header={header} onApply={() => setMode('apply')} />
+          <OnDutyRecords header={header} onApply={() => setMode('apply')} focusRequest={focusRequest} />
         </SafeAreaView>
       )}
     </View>

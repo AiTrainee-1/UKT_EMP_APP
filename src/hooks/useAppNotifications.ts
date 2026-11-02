@@ -9,6 +9,12 @@ export interface AppNotification {
   isRead: boolean;
   createdAt: string;
   type?: string;
+  /**
+   * What the notification is about, for its View button: { kind, id, date, role, category, label } (read by
+   * src/lib/notificationTarget.ts). `null` = nothing to open; the key is ABSENT on an older server, which then falls back
+   * to the `type`. Left raw on purpose: never trust its shape before normalizeTarget().
+   */
+  target?: unknown;
 }
 
 export function useAppNotifications(employeeId: number | null) {

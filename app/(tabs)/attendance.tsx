@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -20,14 +20,21 @@ import { useAttendance } from '../../src/hooks/useAttendance';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { isStaffEmployee } from '../../src/lib/employmentType';
 import { useLatePolicy } from '../../src/hooks/useShiftStats';
+import { useRouteRequest } from '../../src/hooks/useFocusItem';
+import { readIsoDateParam, yearMonthOfDay } from '../../src/lib/focusItem';
+import { formatDayMonthYear } from '../../src/lib/compensation';
+import { FocusMissingNote } from '../../src/components/focus/FocusFrame';
 import { useShift } from '../../src/hooks/useShift';
 import { useAttendanceSyncStatus } from '../../src/hooks/useGeoAttendance';
 import { useCLEligibility } from '../../src/hooks/useCasualLeave';
 import { casualLeaveAvailable } from '../../src/lib/requestWindowForm';
+import { balanceSentence, showBalance } from '../../src/lib/casualLeave';
 import { useGeoPunchStatus } from '../../src/hooks/useGeoAttendance';
 import { AttendanceCalendar, AttendanceLegend } from '../../src/components/AttendanceCalendar';
 import { AttendanceOverview } from '../../src/components/AttendanceOverview';
 import { DAY_TONES, RING } from '../../src/lib/attendanceVisual';
+import { MonthSwitcher } from '../../src/components/MonthSwitcher';
+import type { CalMonth } from '../../src/lib/monthSwitch';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
@@ -76,11 +83,38 @@ export default function AttendanceScreen() {
   // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
   const handleLogout = useConfirmSignOut();
 
-  const { data, isLoading, refetch, isRefetching } = useAttendance(
+  const { data, isLoading, refetch, isRefetching, isFetching } = useAttendance(
     user?.employeeId ?? null,
     month,
     year
   );
+
+  // A notification about one day (a late / absent / missing punch alert, an attendance change) opens this tab with
+  // ?date=YYYY-MM-DD (src/lib/notificationTarget.ts): show that month, ask the server again (the alert is about a change
+  // the cached month may not have), then open the day's detail sheet. A day with no record gets a small note instead.
+  const dayRequest = useRouteRequest('date', readIsoDateParam);
+  const [openDay, setOpenDay] = useState<{ date: string; key: number; refreshed: boolean } | null>(null);
+  const [dayMissing, setDayMissing] = useState<string | null>(null);
+  useEffect(() => {
+    if (!dayRequest) return;
+    const [y, m] = yearMonthOfDay(dayRequest.value);
+    setYear(y);
+    setMonth(m);
+    setDayMissing(null);
+    setOpenDay({ date: dayRequest.value, key: dayRequest.nonce, refreshed: false });
+  }, [dayRequest?.nonce]);
+  // Once the day's month is the one on screen: refresh it once, then let the calendar open the day.
+  const dayMonthShown = !!openDay && openDay.date.startsWith(`${year}-${String(month).padStart(2, '0')}-`);
+  useEffect(() => {
+    if (!openDay || openDay.refreshed || !dayMonthShown) return;
+    const key = openDay.key;
+    void refetch().finally(() => setOpenDay((d) => (d && d.key === key ? { ...d, refreshed: true } : d)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openDay?.key, openDay?.refreshed, dayMonthShown]);
+  const onOpenDate = (found: boolean) => {
+    if (!found && openDay) setDayMissing(openDay.date);
+    setOpenDay(null);
+  };
   const { data: shift } = useShift(user?.employeeId ?? null);
   // Compensation is for staff only: the calendar legend lists the compensation days once the employee's own profile has
   // said 'staff' (never for a production employee, and not while the profile is still loading). The same cached profile
@@ -89,26 +123,22 @@ export default function AttendanceScreen() {
   const showCompensationLegend = isStaffEmployee(employee?.employmentType);
   const { data: syncStatus } = useAttendanceSyncStatus();
   const { data: clEligibility } = useCLEligibility(user?.employeeId ?? null);
-  // On the grace days (1st / 2nd) the top-level `eligible` is about the new month only while last month may still be open:
+  // On the grace days (1st to 5th) the top-level `eligible` is about the new month only while last month may still be open:
   // eligible when any month the server lists is (the same test as the Leave tab's card; `eligible` alone without a list).
   const clEligible = casualLeaveAvailable(clEligibility?.eligible, clEligibility?.months);
+  // The yearly balance (2026-11-02): "11 of 12 CL left in 2026 · resets on 1 Jan" (an older server: the old line).
+  const clBalance = clEligibility?.balance ?? null;
+  const clBalanceShown = showBalance({ balance: clBalance, eligible: clEligibility?.eligible, months: clEligibility?.months });
   const { data: geoStatus } = useGeoPunchStatus();
   // Which Late Detection checks are on (company policy; unknown = both on).
   const detect = useLatePolicy();
 
-  const prevMonth = () => {
-    if (month === 1) { setMonth(12); setYear((y) => y - 1); }
-    else setMonth((m) => m - 1);
+  // The month card is the shared MonthSwitcher (the same one the request screens use): back without limit, never past
+  // the current month.
+  const pickMonth = (m: CalMonth) => {
+    setYear(m.year);
+    setMonth(m.month);
   };
-
-  const nextMonth = () => {
-    const atCurrent = year === now.getFullYear() && month === now.getMonth() + 1;
-    if (atCurrent) return;
-    if (month === 12) { setMonth(1); setYear((y) => y + 1); }
-    else setMonth((m) => m + 1);
-  };
-
-  const atCurrent = year === now.getFullYear() && month === now.getMonth() + 1;
 
   const punchCount = geoStatus?.punches?.length ?? 0;
   const nextType = geoStatus?.nextPunchType;
@@ -153,30 +183,27 @@ export default function AttendanceScreen() {
         </View>
 
         {/* ─── Month nav + sync status ─── */}
-        <View style={styles.monthCard}>
-          <TouchableOpacity onPress={prevMonth} style={styles.monthNavBtn} activeOpacity={0.7}>
-            <MaterialCommunityIcons name="chevron-left" size={20} color={Colors.textPrimary} />
-          </TouchableOpacity>
-          <View style={styles.monthLabelWrap}>
-            <MaterialCommunityIcons name="calendar-month-outline" size={15} color={Colors.textMuted} />
-            <Text style={styles.monthLabel}>{MONTHS[month - 1]} {year}</Text>
-          </View>
-          <TouchableOpacity
-            onPress={nextMonth}
-            style={styles.monthNavBtn}
-            activeOpacity={0.7}
-            disabled={atCurrent}
-          >
-            <MaterialCommunityIcons name="chevron-right" size={20} color={atCurrent ? Colors.outline : Colors.textPrimary} />
-          </TouchableOpacity>
-          <View style={{ flex: 1 }} />
-          <View style={[styles.syncPill, syncStatus?.pendingSync ? styles.syncPillWarn : styles.syncPillOk]}>
-            <View style={[styles.syncDot, { backgroundColor: syncStatus?.pendingSync ? Colors.statusYellow : Colors.statusGreen }]} />
-            <Text style={[styles.syncText, { color: syncStatus?.pendingSync ? Colors.statusYellow : Colors.statusGreen }]}>
-              {syncStatus?.pendingSync ? 'Pending Sync' : 'Synced'}
-            </Text>
-          </View>
-        </View>
+        <MonthSwitcher
+          value={{ year, month }}
+          onChange={pickMonth}
+          testID="attendance-month"
+          right={
+            <View style={[styles.syncPill, syncStatus?.pendingSync ? styles.syncPillWarn : styles.syncPillOk]}>
+              <View style={[styles.syncDot, { backgroundColor: syncStatus?.pendingSync ? Colors.statusYellow : Colors.statusGreen }]} />
+              <Text style={[styles.syncText, { color: syncStatus?.pendingSync ? Colors.statusYellow : Colors.statusGreen }]}>
+                {syncStatus?.pendingSync ? 'Pending Sync' : 'Synced'}
+              </Text>
+            </View>
+          }
+        />
+
+        {/* The day a link asked for has no record (yet). */}
+        {!!dayMissing && (
+          <FocusMissingNote
+            text={`There is no attendance record for ${formatDayMonthYear(dayMissing) || dayMissing} yet`}
+            onDismiss={() => setDayMissing(null)}
+          />
+        )}
 
         {/* ─── Office Geo-Punch ─── */}
         <TouchableOpacity
@@ -262,9 +289,11 @@ export default function AttendanceScreen() {
                 </View>
               </View>
               <Text style={styles.clSubtitle} numberOfLines={1}>
-                {clEligible && clEligibility.yearlyEntitlement != null
-                  ? `${clEligibility.remainingThisYear} Remaining of ${clEligibility.yearlyEntitlement} yearly entitlement`
-                  : clEligibility.reason ?? 'Not eligible this period'}
+                {clBalanceShown && clBalance
+                  ? balanceSentence(clBalance)
+                  : clEligible && clEligibility.yearlyEntitlement != null
+                    ? `${clEligibility.remainingThisYear} Remaining of ${clEligibility.yearlyEntitlement} yearly entitlement`
+                    : clEligibility.reason ?? 'Not eligible this period'}
               </Text>
             </View>
             <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.textMuted} />
@@ -291,7 +320,15 @@ export default function AttendanceScreen() {
           {isLoading ? (
             <SkeletonCard lines={5} />
           ) : (
-            <AttendanceCalendar records={data?.records ?? []} month={month} year={year} detect={detect} />
+            <AttendanceCalendar
+              records={data?.records ?? []}
+              month={month}
+              year={year}
+              detect={detect}
+              openDate={openDay?.refreshed && !isFetching && data ? openDay : null}
+              onOpenDate={onOpenDate}
+              futureHrEdits={data?.futureHrEdits}
+            />
           )}
         </View>
 
@@ -332,19 +369,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Month nav card
-  monthCard: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingVertical: 8, paddingHorizontal: 10,
-    marginBottom: 14,
-    ...cardShadow,
-  },
-  monthNavBtn: { padding: 4 },
-  monthLabelWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  monthLabel: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  // Month nav card: the card itself is src/components/MonthSwitcher.tsx; the sync pill sits at its right end.
   syncPill: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: BorderRadius.full, paddingHorizontal: 9, paddingVertical: 5 },
   syncPillOk: { backgroundColor: Colors.badgeGreenBg },
   syncPillWarn: { backgroundColor: Colors.badgeYellowBg },

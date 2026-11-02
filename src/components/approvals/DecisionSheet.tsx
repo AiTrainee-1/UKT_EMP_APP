@@ -21,6 +21,7 @@ import {
   empName,
   itemDateLabel,
   itemTypeLabel,
+  onDutyJourneyId,
   onDutyPunches,
   totalDays,
 } from '../../lib/approvalsItems';
@@ -81,7 +82,7 @@ function detailRows(sel: SelectedApproval): [string, string][] {
 /**
  * The request's details, its approval trail, and - while it waits for this head - an optional comment with Approve /
  * Reject (only the buttons HR's pipeline allows: hodCanAct / hodCanReject). A decided request (Approved / Rejected
- * lists) shows who decided it instead.
+ * lists) shows who decided it instead. An On-Duty request with a recorded route offers "View route" (`onViewRoute`).
  */
 export function DecisionSheet({
   selected,
@@ -90,6 +91,7 @@ export function DecisionSheet({
   onDecide,
   busy,
   onClose,
+  onViewRoute,
 }: {
   selected: SelectedApproval | null;
   comment: string;
@@ -97,6 +99,8 @@ export function DecisionSheet({
   onDecide: (decision: 'approved' | 'rejected') => void;
   busy: boolean;
   onClose: () => void;
+  /** Open the recorded route of an On-Duty day (the journey screen). */
+  onViewRoute?: (journeyId: number) => void;
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -108,6 +112,7 @@ export function DecisionSheet({
   const outcome = normalizeOutcome(item?.outcome);
   const line = outcomeLine(outcome);
   const isResignation = selected?.category === 'resignation';
+  const journeyId = selected?.category === 'onDuty' ? onDutyJourneyId(item) : null;
 
   return (
     <BottomSheet visible={!!selected} onClose={onClose} title={selected ? meta[selected.category].sheetTitle : ''}>
@@ -163,6 +168,20 @@ export function DecisionSheet({
               month are Allowed. Approving one beyond that makes it Overdue / Excess: it will not protect the day and counts
               toward late deductions.
             </Text>
+          )}
+
+          {journeyId != null && onViewRoute && (
+            <TouchableOpacity
+              style={styles.routeBtn}
+              onPress={() => onViewRoute(journeyId)}
+              accessibilityRole="button"
+              accessibilityLabel={`View route of ${empName(item)}'s day`}
+              testID="approvals-sheet-view-route"
+            >
+              <MaterialCommunityIcons name="map-marker-path" size={18} color={Colors.primary} />
+              <Text style={styles.routeText}>View route</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={Colors.primary} />
+            </TouchableOpacity>
           )}
 
           {selected.category === 'onDuty' && <OnDutyPunchList punches={onDutyPunches(item)} />}
@@ -277,6 +296,21 @@ const makeStyles = (Colors: Palette) =>
     valueStacked: { textAlign: 'left', flex: undefined },
     hint: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, marginTop: 12 },
     trail: { marginTop: 12 },
+    routeBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      marginTop: 14,
+      minHeight: 44,
+      paddingVertical: 11,
+      paddingHorizontal: 16,
+      borderRadius: BorderRadius.full,
+      borderWidth: 1.5,
+      borderColor: Colors.primary,
+      backgroundColor: Colors.bgSurfaceLow,
+    },
+    routeText: { color: Colors.primary, fontSize: 14, fontWeight: '800' },
     commentLabel: {
       color: Colors.textSecondary,
       fontSize: 13,

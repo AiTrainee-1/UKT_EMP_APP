@@ -8,6 +8,8 @@ import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import { useTeaBreakQrToken, useTeaBreakStatus, type TeaBreakLogItem } from '../../hooks/useTeaBreak';
+import { daysTouchMonth, monthKey, monthLabel, type CalMonth } from '../../lib/monthSwitch';
+import { teaBreakDay } from '../../lib/myRequests';
 
 /**
  * Tea Break -a permanent per-employee QR (unlike the Outpass card's QR,
@@ -44,13 +46,34 @@ function useElapsedMinutes(outAt: string | null) {
   return Math.max(0, Math.round((now - new Date(outAt).getTime()) / 60000));
 }
 
-export function TeaBreakPanel({ employeeId }: { employeeId: number | null }) {
+/**
+ * `month` (the Outpass screen's month switcher, 2026-11-02): the list under the QR is that month's tea breaks (by the
+ * India day the employee went out) instead of the latest 10, with `monthSwitcher` drawn above it. The QR and the
+ * "on a break now" line are about right now whatever the month.
+ */
+export function TeaBreakPanel({
+  employeeId,
+  month,
+  monthSwitcher,
+}: {
+  employeeId: number | null;
+  month?: CalMonth;
+  monthSwitcher?: React.ReactNode;
+}) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { data: qrToken, isLoading: qrLoading } = useTeaBreakQrToken(employeeId);
-  const { data: status, isLoading: statusLoading } = useTeaBreakStatus(employeeId);
+  const { data: status, isLoading: statusLoading, isPlaceholderData } = useTeaBreakStatus(
+    employeeId,
+    month ? monthKey(month) : undefined,
+  );
   const elapsedMinutes = useElapsedMinutes(status?.onBreak ? status.outAt : null);
   const overAllowed = elapsedMinutes != null && status ? elapsedMinutes > status.allowedMinutes : false;
+  // An older server ignores ?month= and sends its latest 10: keep only the month's ones either way.
+  const logs = month
+    ? (status?.recent ?? []).filter((log) => daysTouchMonth(teaBreakDay(log), month))
+    : (status?.recent ?? []);
+  const monthLoading = !!month && (statusLoading || isPlaceholderData);
 
   return (
     <View>
@@ -86,10 +109,28 @@ export function TeaBreakPanel({ employeeId }: { employeeId: number | null }) {
         </View>
       </View>
 
-      {!!status?.recent.length && (
+      {month ? (
         <View style={styles.recentSection}>
-          <Text style={[styles.recentTitle, { color: Colors.textMuted }]}>Recent Tea Breaks</Text>
-          {status.recent.map((log) => {
+          {monthSwitcher}
+          <Text style={[styles.recentTitle, { color: Colors.textMuted }]}>Tea breaks in {monthLabel(month)}</Text>
+          {monthLoading ? (
+            <View style={[styles.recentRow, styles.monthNote, { backgroundColor: Colors.bgCard }]}>
+              <ActivityIndicator color={Colors.primary} size="small" />
+              <Text style={[styles.recentSub, { color: Colors.textMuted, marginTop: 0 }]}>Loading {monthLabel(month)}…</Text>
+            </View>
+          ) : !logs.length ? (
+            <View style={[styles.recentRow, styles.monthNote, { backgroundColor: Colors.bgCard }]} testID="tea-break-month-empty">
+              <MaterialCommunityIcons name="coffee-off-outline" size={16} color={Colors.textMuted} />
+              <Text style={[styles.recentTime, { color: Colors.textMuted }]}>No tea breaks in {monthLabel(month)}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {!!logs.length && !monthLoading && (
+        <View style={month ? styles.monthList : styles.recentSection}>
+          {!month && <Text style={[styles.recentTitle, { color: Colors.textMuted }]}>Recent Tea Breaks</Text>}
+          {logs.map((log) => {
             const tone = toneFor(log.remark, Colors);
             return (
               <View key={log.id} style={[styles.recentRow, { backgroundColor: Colors.bgCard }]}>
@@ -126,6 +167,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   statusText: { fontSize: 13, fontWeight: '700', flexShrink: 1 },
   recentSection: { marginTop: 18, gap: 8 },
+  monthList: { marginTop: 8, gap: 8 },
+  monthNote: { justifyContent: 'flex-start', gap: 8 },
   recentTitle: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
   recentRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

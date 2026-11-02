@@ -36,8 +36,10 @@ export interface OnDutyHistoryPage {
   page: number;
   pageSize: number;
   hasMore: boolean;
-  /** Over ALL of the employee's requests, not only the loaded pages. */
+  /** Over ALL of the employee's requests (or all of the asked month's), not only the loaded pages. */
   counts: Record<RequestView, number>;
+  /** 'YYYY-MM' when the server applied ?month= (an older server ignores it: null). */
+  month: string | null;
 }
 
 const PAGE_SIZE = 50;
@@ -45,13 +47,22 @@ const PAGE_SIZE = 50;
 /**
  * The employee's own On-Duty requests, newest first, 50 at a time ("Show older" loads the next page). `poll` refreshes
  * every minute (only while the records are on screen: a waiting request changes on its own).
+ *
+ * `month` ('YYYY-MM', the month switcher, 2026-11-02): only that month's requests, with the counts over that month (the
+ * server echoes `month` when it applied the filter). Its own cache entry under the same ['on-duty-history', employeeId]
+ * prefix, so anything that refreshes the history refreshes it too.
  */
-export function useOnDutyHistory(employeeId: number | null, { poll = false }: { poll?: boolean } = {}) {
+export function useOnDutyHistory(
+  employeeId: number | null,
+  { poll = false, month }: { poll?: boolean; month?: string } = {},
+) {
   return useInfiniteQuery({
-    queryKey: ['on-duty-history', employeeId],
+    queryKey: month ? ['on-duty-history', employeeId, { month }] : ['on-duty-history', employeeId],
     initialPageParam: 1,
     queryFn: async ({ pageParam }): Promise<OnDutyHistoryPage> => {
-      const res = await api.get('/on-duty-sessions/mine', { params: { page: pageParam, pageSize: PAGE_SIZE } });
+      const res = await api.get('/on-duty-sessions/mine', {
+        params: { page: pageParam, pageSize: PAGE_SIZE, ...(month ? { month } : {}) },
+      });
       const d = res.data ?? {};
       return {
         items: Array.isArray(d.items) ? d.items : [],
@@ -65,6 +76,7 @@ export function useOnDutyHistory(employeeId: number | null, { poll = false }: { 
           approved: Number(d.counts?.approved ?? 0),
           rejected: Number(d.counts?.rejected ?? 0),
         },
+        month: typeof d.month === 'string' ? d.month : null,
       };
     },
     getNextPageParam: (last) => (last.hasMore ? last.page + 1 : undefined),

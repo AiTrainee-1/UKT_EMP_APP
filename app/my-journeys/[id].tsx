@@ -1,7 +1,7 @@
 import React, { useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, type LayoutChangeEvent, type ScrollViewInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { ActivityTimeline } from '../../src/components/journey/ActivityTimeline';
@@ -22,12 +22,15 @@ import { FontFamily, TabularNums } from '../../src/constants/typography';
 import { buildActivity, journeyTiles, TONE_COLOR } from '../../src/tracking/activity';
 import type { Tone } from '../../src/tracking/activity';
 import { formatDateTime } from '../../src/tracking/format';
-import { endNote, journeyChip, lastUpdateText, liveStatus } from '../../src/tracking/journeyList';
+import { endNote, journeyChip, journeyViewer, lastUpdateText, liveStatus } from '../../src/tracking/journeyList';
 import { buildMapPayload } from '../../src/tracking/journeyModel';
 import { useJourney } from '../../src/tracking/useTracking';
 import { trackingRoutes } from '../../src/tracking/routes';
+import { useAuth } from '../../src/hooks/useAuth';
 
 const MAP_HEIGHT = 300;
+// Where a Department Head lands when this screen was opened with nothing to go back to (see trackingRoutes on the cast).
+const APPROVALS_ROUTE = '/(tabs)/approvals' as unknown as Href;
 
 export default function JourneyDetailScreen() {
   const { C } = useTheme();
@@ -40,9 +43,14 @@ export default function JourneyDetailScreen() {
   const now = useNow();
 
   const { data: journey, isLoading, isError, refetch, isRefetching } = useJourney(Number.isFinite(journeyId) ? journeyId : null);
+  // A Department Head opens a team member's route from Approvals (the server lets them in for exactly those people): the
+  // screen then names whose journey it is and never words anything "you" / "your phone". It has no owner-only actions.
+  const { user } = useAuth();
+  const viewer = journeyViewer(journey?.track, user?.employeeId);
+  const own = viewer.own;
 
   const payload = useMemo(() => (journey ? buildMapPayload(journey) : null), [journey]);
-  const rows = useMemo(() => (journey ? buildActivity(journey, now) : []), [journey, now]);
+  const rows = useMemo(() => (journey ? buildActivity(journey, now, { own }) : []), [journey, now, own]);
   const tiles = useMemo(() => (journey ? journeyTiles(journey) : []), [journey]);
   const hasMap = !!payload && (payload.route.length > 1 || payload.stops.length > 0 || payload.events.length > 0);
 
@@ -54,15 +62,19 @@ export default function JourneyDetailScreen() {
 
   const track = journey?.track;
   const chip = track ? journeyChip(track) : null;
-  const live = track?.status === 'active' ? liveStatus(track.state) : null;
-  const note = track ? endNote(track) : '';
+  const live = track?.status === 'active' ? liveStatus(track.state, own) : null;
+  const note = track ? endNote(track, own) : '';
+  const when = track ? formatDateTime(track.startedAt) : '';
+  const subtitle = track ? [viewer.ownerName, when].filter(Boolean).join(' · ') || undefined : undefined;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       <TrackingHeader
         title={track?.destination || 'On-Duty Journey'}
-        subtitle={track ? formatDateTime(track.startedAt) : undefined}
-        onBack={() => (router.canGoBack() ? router.back() : router.replace(trackingRoutes.journeys))}
+        subtitle={subtitle}
+        onBack={() =>
+          router.canGoBack() ? router.back() : router.replace(own ? trackingRoutes.journeys : APPROVALS_ROUTE)
+        }
       />
       <ScrollView
         ref={scroll}
@@ -128,7 +140,9 @@ export default function JourneyDetailScreen() {
               ) : (
                 <View style={styles.noMap}>
                   <MaterialCommunityIcons name="map-marker-question-outline" size={28} color={C.textMuted} />
-                  <Text style={styles.noMapText}>No locations have reached the office for this journey yet. They upload when your phone has internet.</Text>
+                  <Text style={styles.noMapText}>
+                    No locations have reached the office for this journey yet. They upload when {own ? 'your' : "the employee's"} phone has internet.
+                  </Text>
                 </View>
               )}
               <View style={styles.legend}>

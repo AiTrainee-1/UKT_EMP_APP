@@ -19,7 +19,6 @@ import { MotiView } from 'moti';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { useShift } from '../../src/hooks/useShift';
-import { useAttendance } from '../../src/hooks/useAttendance';
 import { useMissingPunch, useSubmitMissingPunch, PUNCH_SLOT_LABEL, type MissingPunchSlot } from '../../src/hooks/useRequests';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { pipelineSentence, waitingPhrase, workflowOff } from '../../src/lib/approval';
@@ -37,12 +36,11 @@ import {
   toHHmm,
 } from '../../src/lib/punchTimePicker';
 import { overlapNotice } from '../../src/lib/missingPunchOverlap';
-import { PunchTimePicker, type DayPunch } from '../../src/components/myrequests/PunchTimePicker';
 import { Reveal } from '../../src/components/Reveal';
 import { Avatar } from '../../src/components/ui/Avatar';
 import { Button } from '../../src/components/ui/Button';
 import { TextArea } from '../../src/components/ui/TextArea';
-import { DatePickerField } from '../../src/components/ui/DatePickerField';
+import { DatePickerField, TimePickerField } from '../../src/components/ui/DatePickerField';
 import { Toast } from '../../src/components/ui/Toast';
 import { SuccessOverlay } from '../../src/components/ui/SuccessOverlay';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
@@ -65,12 +63,6 @@ const schema = z.object({
   reason: z.string().min(5, 'Provide a reason (min 5 characters)').max(200, 'Reason is too long (max 200 characters)'),
 });
 type FormData = z.infer<typeof schema>;
-
-/** "2026-10-07" -> [10, 2026]. */
-function monthYearOf(date: string): [number, number] {
-  const [y, m] = date.split('-').map(Number);
-  return [m || new Date().getMonth() + 1, y || new Date().getFullYear()];
-}
 
 export default function ReportMissingPunchScreen() {
   const { C: Colors } = useTheme();
@@ -124,18 +116,6 @@ export default function ReportMissingPunchScreen() {
     }
   }, [shift]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The punches already recorded on the chosen day, from the attendance the app already loads (same month = cached).
-  const [month, year] = monthYearOf(date);
-  const attendance = useAttendance(employeeId, month, year);
-  const record = attendance.data?.records.find((r) => r.date === date);
-  const dayPunches: DayPunch[] | 'loading' | 'error' = attendance.isLoading
-    ? 'loading'
-    : attendance.isError && !attendance.data
-      ? 'error'
-      : (record?.punches ?? [])
-          .map((p) => ({ minutes: parseClock(p.time), type: p.type }))
-          .filter((p): p is DayPunch => p.minutes != null)
-          .sort((a, b) => a.minutes - b.minutes);
 
   const pickTime = (m: number) => {
     timeTouched.current = true;
@@ -300,16 +280,17 @@ export default function ReportMissingPunchScreen() {
 
           {/* ─── 3. Time ─── */}
           <Text style={styles.sectionLabel}>3 · WHAT TIME?</Text>
-          <PunchTimePicker
-            value={minutes}
-            onChange={pickTime}
-            shift={shift}
-            slot={punchSlot}
-            nowMinutes={nowMin}
-            dayPunches={dayPunches}
-            problem={errors.punchTime?.message ?? problem}
-            hint={hint}
+          {/* The same tap-to-open clock as the Permission form (owner 2026-11-02: the grid picker was hard to use). */}
+          <TimePickerField
+            label="Time of the missed punch"
+            value={punchTime}
+            onChange={(v) => {
+              const m = parseClock(v);
+              if (m != null) pickTime(m);
+            }}
+            error={errors.punchTime?.message ?? problem ?? undefined}
           />
+          {!!hint && <Text style={styles.sectionHint}>{hint}</Text>}
 
           {/* ─── 4. Reason ─── */}
           <Controller

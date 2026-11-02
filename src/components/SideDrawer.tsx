@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   Dimensions,
   Switch,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -128,9 +128,24 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
     .filter((group) => group.items.length > 0);
   const slideX = useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
+  // Whether the drawer is on screen at all. It stays mounted while the closing slide runs and is removed only when that
+  // slide has really finished. (The slide runs on the native driver, so the JS-side value never learns it moved: reading
+  // `slideX._value` to decide left a closed drawer mounted, and the next re-render - coming back to the screen - put it
+  // back on screen while `visible` was false.)
+  const [mounted, setMounted] = useState(visible);
+
+  // Leaving the screen (a drawer link, a tab, a notification) always closes the drawer, so it is never found open on return.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useFocusEffect(
+    useCallback(() => () => {
+      onCloseRef.current();
+    }, []),
+  );
 
   useEffect(() => {
     if (visible) {
+      setMounted(true);
       Animated.parallel([
         Animated.spring(slideX, {
           toValue: 0,
@@ -156,11 +171,16 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
           duration: 200,
           useNativeDriver: true,
         }),
-      ]).start();
+      ]).start(({ finished }) => {
+        if (!finished) return; // reopened meanwhile
+        slideX.setValue(-DRAWER_WIDTH);
+        backdropOpacity.setValue(0);
+        setMounted(false);
+      });
     }
   }, [visible]);
 
-  if (!visible && (slideX as any)._value <= -DRAWER_WIDTH) return null;
+  if (!visible && !mounted) return null;
 
   const navigate = (route: string) => {
     onClose();

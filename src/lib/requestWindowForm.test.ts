@@ -31,13 +31,17 @@ test('isoToLocalDate is local midnight of that day', () => {
   assert.deepEqual([d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()], [0, 0, 0, 0])
 })
 
-test('picker limits: 1st and 2nd open last month as well, from the 3rd only this month', () => {
+test('picker limits: the 1st to the 5th open last month as well, from the 6th only this month', () => {
   for (const [today, min, max] of [
     ['2026-10-01', '2026-09-01', '2026-10-31'],
     ['2026-10-02', '2026-09-01', '2026-10-31'],
-    ['2026-10-03', '2026-10-01', '2026-10-31'],
+    ['2026-10-05', '2026-09-01', '2026-10-31'],
+    ['2026-10-06', '2026-10-01', '2026-10-31'],
     ['2026-01-01', '2025-12-01', '2026-01-31'],
+    ['2026-01-05', '2025-12-01', '2026-01-31'],
+    ['2026-01-06', '2026-01-01', '2026-01-31'],
     ['2028-03-02', '2028-02-01', '2028-03-31'],
+    ['2028-03-05', '2028-02-01', '2028-03-31'],
     ['2026-02-28', '2026-02-01', '2026-02-28'],
   ]) {
     const p = requestPickerLimits(at(today))
@@ -60,7 +64,7 @@ test('picker limits for Missing Punch (noFuture) end today, not at the end of th
 })
 
 test('every date the picker allows passes the check, and the days just outside it do not', () => {
-  for (const today of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-31', '2028-02-29', '2026-12-01']) {
+  for (const today of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05', '2026-10-06', '2026-10-31', '2028-02-29', '2026-12-01']) {
     for (const noFuture of [false, true]) {
       const now = at(today)
       const p = requestPickerLimits(now, { noFuture })
@@ -92,7 +96,7 @@ test('rangeFieldErrors puts each message under the end that is wrong', () => {
 
 test('rangeFieldErrors says "refused" exactly when checkRequestRange does', () => {
   const days = ['2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02', '2026-10-15', '2026-10-31', '2026-11-01', 'bad', '']
-  for (const today of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-15']) {
+  for (const today of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05', '2026-10-06', '2026-10-15']) {
     const now = at(today)
     for (const start of days) {
       for (const end of days) {
@@ -137,9 +141,10 @@ test('casualLeaveMonthBlock blocks only a listed, not eligible month', () => {
 test('missingPunchHint says the window ends today, and requestPickerLimits uses it for Missing Punch only', () => {
   const w = (day: string) => getRequestWindow(at(day))
   assert.equal(missingPunchHint(w('2026-10-15')), 'Any day in October 2026, up to today')
-  assert.equal(missingPunchHint(w('2026-10-03')), 'Any day in October 2026, up to today')
+  assert.equal(missingPunchHint(w('2026-10-06')), 'Any day in October 2026, up to today')
   assert.equal(missingPunchHint(w('2026-10-01')), '1 September 2026 to today')
   assert.equal(missingPunchHint(w('2026-10-02')), '1 September 2026 to today')
+  assert.equal(missingPunchHint(w('2026-10-05')), '1 September 2026 to today')
   assert.equal(missingPunchHint(w('2026-01-02')), '1 December 2025 to today')
   assert.equal(requestPickerLimits(at('2026-10-15'), { noFuture: true }).hint, 'Any day in October 2026, up to today')
   assert.equal(requestPickerLimits(at('2026-10-02'), { noFuture: true }).hint, '1 September 2026 to today')
@@ -180,7 +185,7 @@ test('casualLeaveDefaultDate: today, unless only last month is open on a grace d
   // A listed month outside the window is never offered.
   assert.equal(casualLeaveDefaultDate(at('2026-10-15'), [{ month: '2026-09', label: 'September 2026', eligible: true, reason: null }, octUsed]), '2026-10-15')
   // Whatever it returns can be picked: it is inside the window.
-  for (const today of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-31']) {
+  for (const today of ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-05', '2026-10-06', '2026-10-31']) {
     const d = casualLeaveDefaultDate(at(today), [sepOpen, octUsed])
     assert.equal(checkRequestDate(d, at(today)), null, today)
   }

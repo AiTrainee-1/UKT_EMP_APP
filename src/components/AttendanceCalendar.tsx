@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { router } from 'expo-router';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns';
@@ -11,12 +11,18 @@ import type { DetectionFlags } from '../hooks/useShiftStats';
 import { getRequestWindow } from '../lib/requestWindow';
 import {
   COMPENSATION_LEGEND, COMPENSATION_ORDER, COMPENSATION_TONES, DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING,
-  compensationKeyOf, compensationLabelOf, hasCompensationMarker, isCompensatedWholeDay, marksOf, visualKeyOf,
+  compensationKeyOf, compensationLabelOf, hasCompensationMarker, isCompensatedWholeDay, visualKeyOf,
   type CompensationKey, type DayTone, type DayVisualKey,
 } from '../lib/attendanceVisual';
 import { minutesText } from '../lib/compensation';
 import type { RequestWindow } from '../lib/requestWindow';
+import {
+  HR_EDIT_OUTLINE, cellMarksOf, hrBadgeOf, hrEditCounts, hrEditsByDate, hrMonthLine, hrStageTitle, hrTone, isHrColoured,
+  type HrEdit,
+} from '../lib/hrEdit';
+import { useReduceMotion } from '../lib/motionPrefs';
 import { BottomSheet } from './ui/BottomSheet';
+import { HrEditBadge, HrEditLegend, HrEditPanel } from './HrEditMark';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
@@ -144,6 +150,14 @@ interface Props {
   year: number;
   /** Which Late Detection checks the company has switched on; unknown (omitted) = both on. */
   detect?: DetectionFlags;
+  /**
+   * Open this day's detail sheet (a notification's View: `/(tabs)/attendance?date=YYYY-MM-DD`). `key` is new for every
+   * request. Acted on once the calendar shows that day's month; `onOpenDate(found)` then says whether the day has a record.
+   */
+  openDate?: { date: string; key: number } | null;
+  onOpenDate?: (found: boolean) => void;
+  /** HR edits on days drawn empty (still to come): they get their "!" too (useAttendance `futureHrEdits`). */
+  futureHrEdits?: Record<string, HrEdit>;
 }
 
 interface DayAction {
@@ -165,7 +179,7 @@ interface DayAction {
  * punch and the permission route offered.
  *
  * Only for a day the request forms can still take: they accept dates inside
- * the request window (this month, plus last month on its 1st and 2nd) and
+ * the request window (this month, plus last month on its 1st to 5th) and
  * the chips carry no date, so on a day outside it no chip is offered and
  * `closed` says so (the sheet then tells the employee to ask HR).
  */
@@ -212,20 +226,44 @@ function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWin
 
 const ALL_CHECKS_ON: DetectionFlags = { lateIn: true, earlyOut: true };
 
-export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_ON }: Props) {
+export function AttendanceCalendar({
+  records, month, year, detect = ALL_CHECKS_ON, openDate = null, onOpenDate, futureHrEdits,
+}: Props) {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const CHIP_COLORS = makeChipColors(isDark);
+  const reduceMotion = useReduceMotion();
+  const hr = hrTone(isDark);
 
-  const [selected, setSelected] = useState<AttendanceRecord | null>(null);
+  // The open day sheet: which day, and whether its "Edited by HR" section is unfolded (tapping the "!" opens it unfolded,
+  // tapping the day opens it folded). The record is read from the current list, so a refetch shows fresh facts.
+  const [sel, setSel] = useState<{ date: string; hrOpen: boolean } | null>(null);
+
+  const recordMap = new Map(records.map((r) => [r.date, r]));
+  const edits = hrEditsByDate(records, futureHrEdits);
+  const selected = sel ? recordMap.get(sel.date) ?? null : null;
+  const selectedEdit = sel ? edits[sel.date] ?? null : null;
+  const close = () => setSel(null);
+
+  useEffect(() => {
+    if (!openDate) return;
+    // Another month is still on screen (the parent is switching to the day's month): wait for it.
+    if (!openDate.date.startsWith(`${year}-${String(month).padStart(2, '0')}-`)) return;
+    const rec = records.find((r) => r.date === openDate.date) ?? null;
+    const edit = futureHrEdits?.[openDate.date] ?? null;
+    if (rec || edit) setSel({ date: openDate.date, hrOpen: !rec });
+    onOpenDate?.(!!rec || !!edit);
+    // only when a new day is asked for, or the month's records arrive
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openDate?.key, records, month, year]);
 
   const monthStart = new Date(year, month - 1, 1);
   const days = eachDayOfInterval({ start: startOfMonth(monthStart), end: endOfMonth(monthStart) });
   const startPad = getDay(monthStart);
-
-  const recordMap = new Map(records.map((r) => [r.date, r]));
+  const editCounts = hrEditCounts(edits);
+  const editLine = hrMonthLine(editCounts);
 
   // "Now" is read at render: the screen stays mounted for days and the request window moves on the 1st-3rd of a month.
   const dayActions = selected ? actionsFor(selected, detect, getRequestWindow(new Date())) : null;
@@ -254,9 +292,27 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
           // readable in the day sheet); every ordinary status is a soft tint. See lib/attendanceVisual.ts.
           const compKey = rec ? compensationKeyOf(rec.compensationKind) : null;
           const compTone = compKey ? COMPENSATION_TONES[compKey] : null;
-          const ink = compTone ? '#FFFFFF' : tone ? inkOf(tone, isDark) : undefined;
-          const marks = rec ? marksOf(rec, detect) : null;
+          // HR edits (lib/hrEdit.ts): every edit gets a "!", an APPLIED one also the "Edited by HR" tint + outline (its
+          // Late-In / Early-Out then show as corner dots). The icon keeps saying what the day is.
+          const edit = edits[key] ?? null;
+          const hrBadge = hrBadgeOf(edit);
+          const hrColoured = !!rec && isHrColoured(rec.hrEdit);
+          const ink = hrColoured ? hr.ink : compTone ? '#FFFFFF' : tone ? inkOf(tone, isDark) : undefined;
+          const marks = rec ? cellMarksOf(rec, detect) : null;
           const isOff = !!rec && (rec.status === 'Holiday' || rec.status === 'Weekend');
+          const fill = hrColoured ? hr.fill : compTone ? compTone.solid : tone ? fillOf(tone, isDark) : undefined;
+          const border = marks?.hrOutline ? hr.solid : marks?.ring ?? 'transparent';
+          const dayLabel = format(d, 'd MMMM');
+          // Late / early-out as the ring says it, or as the corner dots say it on an HR-coloured day.
+          const markWords = marks?.ring
+            ? rec?.isLate ? ', late' : ', early out'
+            : marks?.hrOutline
+              ? `${marks.amberDot && rec?.isLate && detect.lateIn ? ', late' : ''}${marks.earlyDot ? ', early out' : ''}`
+              : '';
+          const recLabel = rec
+            ? `${dayLabel}, ${rec.holidayName ?? rec.status}${markWords}${compensationLabelOf(rec.compensationKind) ? `, ${compensationLabelOf(rec.compensationKind)}` : ''}`
+            : dayLabel;
+          const openDay = (hrOpen: boolean) => (rec || edit ? setSel({ date: key, hrOpen }) : undefined);
 
           return (
             <TouchableOpacity
@@ -264,20 +320,17 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
               style={[
                 styles.cell,
                 { width: CELL, height: CELL },
-                tone ? { backgroundColor: compTone ? compTone.solid : fillOf(tone, isDark) } : styles.futureCell,
-                // A ring marks Late-In / Early-Out (no fill of its own). Every other cell keeps a transparent border of
-                // the same size, so nothing shifts.
-                tone ? { borderWidth: 2.5, borderColor: marks?.ring ?? 'transparent' } : null,
+                tone ? { backgroundColor: fill } : styles.futureCell,
+                // A ring marks Late-In / Early-Out (no fill of its own), the indigo outline an applied HR edit. Every
+                // other cell keeps a transparent border of the same size, so nothing shifts.
+                tone ? { borderWidth: HR_EDIT_OUTLINE, borderColor: border } : null,
               ]}
-              onPress={() => rec && setSelected(rec)}
-              disabled={!rec}
+              onPress={() => openDay(!rec)}
+              disabled={!rec && !edit}
               activeOpacity={0.75}
               accessibilityRole="button"
-              accessibilityLabel={
-                rec
-                  ? `${format(d, 'd MMMM')}, ${rec.holidayName ?? rec.status}${marks?.ring ? (rec.isLate ? ', late' : ', early out') : ''}${compensationLabelOf(rec.compensationKind) ? `, ${compensationLabelOf(rec.compensationKind)}` : ''}`
-                  : format(d, 'd MMMM')
-              }
+              accessibilityLabel={edit ? `${recLabel}, edited by HR, ${hrStageTitle(edit)}` : recLabel}
+              testID={edit ? `cal-day-${key}-hr` : undefined}
             >
               {tone && (
                 <MaterialCommunityIcons name={(compTone ? compTone.icon : tone.icon) as any} size={isOff || compTone ? 12 : 10} color={ink} style={styles.cellIcon} />
@@ -286,14 +339,45 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                 {format(d, 'd')}
               </Text>
               {marks?.earlyDot && <View style={[styles.markDot, styles.markDotBottom, { backgroundColor: RING.earlyOut }]} />}
-              {marks?.excessDot && <View style={[styles.markDot, { backgroundColor: RING.late }]} />}
+              {marks?.amberDot && <View style={[styles.markDot, { backgroundColor: RING.late }]} />}
+              {hrBadge && (
+                <HrEditBadge
+                  variant={hrBadge}
+                  style={styles.hrBadge}
+                  onPress={() => openDay(true)}
+                  accessibilityLabel={`What HR changed on ${dayLabel}`}
+                />
+              )}
             </TouchableOpacity>
           );
         })}
       </View>
 
+      {/* A month with HR edits says so under the grid (the web app's words), with what to tap. */}
+      {editLine && (
+        <View style={styles.hrNote} accessible accessibilityLabel={`${editLine} Tap a day with an exclamation mark to see what changed.`}>
+          <HrEditBadge variant={editCounts.applied ? 'applied' : editCounts.waiting ? 'waiting' : 'rejected'} size={14} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.hrNoteText}>{editLine}</Text>
+            <Text style={styles.hrNoteHint}>Tap the ! on a day to see what changed.</Text>
+          </View>
+        </View>
+      )}
+
       {/* Detail sheet */}
-      <BottomSheet visible={!!selected} onClose={() => setSelected(null)} title="Attendance Detail">
+      <BottomSheet visible={!!sel && (!!selected || !!selectedEdit)} onClose={close} title="Attendance Detail">
+        {/* A day drawn empty (still to come) that HR edited: only the date and the HR edit. */}
+        {sel && !selected && selectedEdit && (
+          <View>
+            <Text style={styles.dayNote}>{format(new Date(sel.date + 'T00:00:00'), 'EEEE, d MMMM yyyy')}</Text>
+            <HrEditPanel
+              edit={selectedEdit}
+              open={sel.hrOpen}
+              onToggle={() => setSel((s) => (s ? { ...s, hrOpen: !s.hrOpen } : s))}
+              reduceMotion={reduceMotion}
+            />
+          </View>
+        )}
         {selected && badge && (
           <View>
             {/* Status on the left, what-to-do-about-it on the right, on one
@@ -323,7 +407,7 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                     onPress={() => {
                       // Close first -leaving the sheet open behind a pushed
                       // screen leaves it covering the new one on the way back.
-                      setSelected(null);
+                      close();
                       router.push(a.route as any);
                     }}
                   >
@@ -333,6 +417,16 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                 ))}
               </View>
             </View>
+
+            {/* HR edited this day (any stage): what was changed and where its approval stands. */}
+            {selectedEdit && sel && (
+              <HrEditPanel
+                edit={selectedEdit}
+                open={sel.hrOpen}
+                onToggle={() => setSel((s) => (s ? { ...s, hrOpen: !s.hrOpen } : s))}
+                reduceMotion={reduceMotion}
+              />
+            )}
 
             {dayNote(selected) && <Text style={styles.dayNote}>{dayNote(selected)}</Text>}
 
@@ -403,7 +497,7 @@ export function AttendanceCalendar({ records, month, year, detect = ALL_CHECKS_O
                 accessibilityLabel="See all my compensation"
                 onPress={() => {
                   // Close first, as the action chips do.
-                  setSelected(null);
+                  close();
                   router.push('/compensation' as any);
                 }}
               >
@@ -450,6 +544,15 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderWidth: 1, borderColor: '#fff',
   },
   markDotBottom: { top: undefined, bottom: 3 },
+  // The "!" of an HR edit: top-left, inside the cell (the dots use the right-hand corners).
+  hrBadge: { position: 'absolute', top: 1, left: 1 },
+  hrNote: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginTop: 12, paddingTop: 10,
+    borderTopWidth: 1, borderTopColor: Colors.outlineVariant,
+  },
+  hrNoteText: { color: Colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '600' },
+  hrNoteHint: { color: Colors.textMuted, fontSize: 11, lineHeight: 15 },
   dayNote: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600', marginBottom: 10 },
 
   legendWrap: { marginTop: 12, gap: 10 },
@@ -615,6 +718,8 @@ export function AttendanceLegend({
           <Text style={styles.legendText}>Excess permission</Text>
         </View>
       </View>
+      {/* HR edits: the "Edited by HR" colour (applied) and the "!" (any stage). */}
+      <HrEditLegend presentFill={fillOf(DAY_TONES.present, isDark)} presentInk={inkOf(DAY_TONES.present, isDark)} />
       {showCompensation && (
         <>
           <Text style={styles.legendTitle}>COMPENSATION DAYS (SOLID COLOUR AND SYMBOL)</Text>

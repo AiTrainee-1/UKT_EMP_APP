@@ -12,6 +12,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { AnimatePresence, MotiView } from 'moti';
 
 import { Reveal } from '../Reveal';
+import { FocusFrame } from '../focus/FocusFrame';
+import type { FocusFrameState } from '../../hooks/useFocusItem';
 import { EmptyState } from '../ui/EmptyState';
 import { Skeleton } from '../ui/Skeleton';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
@@ -64,6 +66,11 @@ function useNow(intervalMs = 20_000): number {
 
 export type ToastFn = (message: string, type: 'success' | 'error' | 'info') => void;
 
+/** The highlight of a row a link pointed at (app/hod-assignment/index.tsx, src/hooks/useFocusItem.ts); undefined = none. */
+export type FrameFor = (module: string, id: number) => FocusFrameState | undefined;
+
+const NO_FRAME: FocusFrameState = { active: false, pulseKey: 0 };
+
 /**
  * HOD Assignment -> My Requests: the employee's own requests still waiting for an answer, where each one stands, and a
  * "Remind" button (once a day per request) that tells whoever has to act now: the Department Head on their phone, or HR.
@@ -76,6 +83,7 @@ export function MyRequestsPanel({
   fetchedAt,
   onRetry,
   onToast,
+  frameFor,
 }: {
   data: PendingRequests | undefined;
   isLoading: boolean;
@@ -84,6 +92,8 @@ export function MyRequestsPanel({
   fetchedAt: number;
   onRetry: () => void;
   onToast: ToastFn;
+  /** `?focus=` on HOD Assignment: which row to scroll to and pulse. */
+  frameFor?: FrameFor;
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
@@ -133,7 +143,7 @@ export function MyRequestsPanel({
   }
 
   const recent = data.recentHrEdits.length > 0 && (
-    <RecentHrEdits edits={data.recentHrEdits} days={data.recentDays} startIndex={data.items.length + 1} />
+    <RecentHrEdits edits={data.recentHrEdits} days={data.recentDays} startIndex={data.items.length + 1} frameFor={frameFor} />
   );
 
   if (data.items.length === 0) {
@@ -162,7 +172,9 @@ export function MyRequestsPanel({
       </View>
       {data.items.map((item, i) => (
         <Reveal key={item.key} index={i} style={styles.gap}>
-          <RequestCard item={item} now={now} fetchedAt={fetchedAt} onToast={onToast} />
+          <FocusFrame {...(frameFor?.(item.module, item.id) ?? NO_FRAME)}>
+            <RequestCard item={item} now={now} fetchedAt={fetchedAt} onToast={onToast} />
+          </FocusFrame>
         </Reveal>
       ))}
       {recent}
@@ -200,7 +212,17 @@ function ChangeBox({ text, reason, by }: { text: string; reason: string | null; 
 }
 
 /** HR's attendance changes for this employee decided in the last `days` days: what changed, and who decided it. */
-function RecentHrEdits({ edits, days, startIndex }: { edits: RecentHrEdit[]; days: number; startIndex: number }) {
+function RecentHrEdits({
+  edits,
+  days,
+  startIndex,
+  frameFor,
+}: {
+  edits: RecentHrEdit[];
+  days: number;
+  startIndex: number;
+  frameFor?: FrameFor;
+}) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   return (
@@ -211,25 +233,27 @@ function RecentHrEdits({ edits, days, startIndex }: { edits: RecentHrEdit[]; day
         const ok = e.status === 'approved';
         return (
           <Reveal key={e.key} index={startIndex + i} style={styles.gapSm}>
-            <View style={styles.recentCard}>
-              <View style={styles.recentTop}>
-                <View style={[styles.recentIcon, { backgroundColor: ok ? Colors.badgeGreenBg : Colors.badgeRedBg }]}>
-                  <MaterialCommunityIcons
-                    name={ok ? 'check-circle-outline' : 'close-circle-outline'}
-                    size={18}
-                    color={ok ? Colors.statusGreen : Colors.statusRed}
-                  />
+            <FocusFrame {...(frameFor?.('attendance_correction', e.id) ?? NO_FRAME)} radius={BorderRadius.lg}>
+              <View style={styles.recentCard}>
+                <View style={styles.recentTop}>
+                  <View style={[styles.recentIcon, { backgroundColor: ok ? Colors.badgeGreenBg : Colors.badgeRedBg }]}>
+                    <MaterialCommunityIcons
+                      name={ok ? 'check-circle-outline' : 'close-circle-outline'}
+                      size={18}
+                      color={ok ? Colors.statusGreen : Colors.statusRed}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.recentText, TabularNums]}>{e.change?.text || e.summary || e.title}</Text>
+                    <Text style={[styles.recentDecision, { color: ok ? Colors.badgeGreenText : Colors.badgeRedText }]}>
+                      {decisionLine(e)}
+                    </Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.recentText, TabularNums]}>{e.change?.text || e.summary || e.title}</Text>
-                  <Text style={[styles.recentDecision, { color: ok ? Colors.badgeGreenText : Colors.badgeRedText }]}>
-                    {decisionLine(e)}
-                  </Text>
-                </View>
+                {!!e.reason && <Text style={styles.recentNote}>HR's reason: {e.reason}</Text>}
+                {!!e.comment && <Text style={styles.recentNote}>Note: {e.comment}</Text>}
               </View>
-              {!!e.reason && <Text style={styles.recentNote}>HR's reason: {e.reason}</Text>}
-              {!!e.comment && <Text style={styles.recentNote}>Note: {e.comment}</Text>}
-            </View>
+            </FocusFrame>
           </Reveal>
         );
       })}

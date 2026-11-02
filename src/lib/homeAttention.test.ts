@@ -187,6 +187,26 @@ test('Casual Leave: unused, in the last week of the month only', () => {
   assert.equal(casualLeaveAttention(months, at(2026, 10, 31))?.detail, '1 day left · the month ends today')
 })
 
+test('Casual Leave under the yearly balance: no month-end nag, a reminder in the last week of December only', () => {
+  const nov = { month: '2026-11', label: 'November 2026', eligible: true, left: 'full' as const, rule: 'yearly_balance' as const, remaining: 11 }
+  // unused days carry over: the last week of November says nothing
+  assert.equal(casualLeaveAttention([nov], at(2026, 11, 28)), null)
+  const dec = { ...nov, month: '2026-12', label: 'December 2026', remaining: 10.5 }
+  // early December: not yet (the web dashboard reminds in the last week too)
+  assert.equal(casualLeaveAttention([dec], at(2026, 12, 3)), null)
+  assert.equal(casualLeaveAttention([dec], at(2026, 12, 24)), null)
+  const row = casualLeaveAttention([dec], at(2026, 12, 26))
+  assert.equal(row?.title, '10½ Casual Leave days left for 2026')
+  assert.equal(row?.detail, 'Unused days lapse on 31 Dec · the year ends in 5 days')
+  assert.equal(row?.href, '/casual-leave')
+  assert.equal(casualLeaveAttention([{ ...dec, remaining: 1 }], at(2026, 12, 31))?.title, '1 Casual Leave day left for 2026')
+  assert.equal(casualLeaveAttention([{ ...dec, remaining: 1 }], at(2026, 12, 31))?.detail, 'Unused days lapse on 31 Dec · the year ends today')
+  assert.equal(casualLeaveAttention([{ ...dec, remaining: 0.5, left: 'one_half' }], at(2026, 12, 30))?.title, '½ Casual Leave day left for 2026')
+  assert.equal(casualLeaveAttention([{ ...dec, remaining: 0, left: 'nothing', eligible: false }], at(2026, 12, 30)), null)
+  assert.equal(casualLeaveAttention([{ ...dec, eligible: false }], at(2026, 12, 30)), null)
+  assert.equal(casualLeaveAttention([{ ...dec, remaining: null }], at(2026, 12, 30))?.title, 'Casual Leave left for 2026')
+})
+
 test('rows are ordered by urgency and empty sources drop out', () => {
   const rows = sortAttention([
     casualLeaveAttention([{ month: '2026-10', label: 'October 2026', eligible: true, left: 'full' }], at(2026, 10, 31)),
