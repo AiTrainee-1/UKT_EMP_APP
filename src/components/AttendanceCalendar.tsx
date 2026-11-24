@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns';
 import { Colors } from '../constants/colors';
@@ -9,6 +9,7 @@ import { BorderRadius } from '../constants/theme';
 import { AttendanceRecord } from '../hooks/useAttendance';
 import type { DetectionFlags } from '../hooks/useShiftStats';
 import { getRequestWindow } from '../lib/requestWindow';
+import { dayPunchViews, earnedShiftHint, earnedShiftText, type DayPunchView, type PunchKind } from '../lib/dayPunches';
 import {
   COMPENSATION_LEGEND, COMPENSATION_ORDER, COMPENSATION_TONES, DAY_TONES, OFF_DAY_ORDER, OUTCOME_ORDER, RING,
   compensationKeyOf, compensationLabelOf, hasCompensationMarker, isCompensatedWholeDay, visualKeyOf,
@@ -158,6 +159,8 @@ interface Props {
   onOpenDate?: (found: boolean) => void;
   /** HR edits on days drawn empty (still to come): they get their "!" too (useAttendance `futureHrEdits`). */
   futureHrEdits?: Record<string, HrEdit>;
+  /** A staff employee (Casual Leave is offered on an absent day). */
+  isStaff?: boolean;
 }
 
 interface DayAction {
@@ -165,6 +168,8 @@ interface DayAction {
   icon: string;
   color: string;
   route: string;
+  /** The day the sheet is about, so the form opens on it (owner 2026-11-24). */
+  params: Record<string, string>;
 }
 
 /**
@@ -183,7 +188,12 @@ interface DayAction {
  * the chips carry no date, so on a day outside it no chip is offered and
  * `closed` says so (the sheet then tells the employee to ask HR).
  */
-function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWindow): { actions: DayAction[]; closed: boolean } {
+function actionsFor(
+  rec: AttendanceRecord,
+  detect: DetectionFlags,
+  w: RequestWindow,
+  isStaff = false,
+): { actions: DayAction[]; closed: boolean } {
   const actions: DayAction[] = [];
   // A birthday or a relaxation day is made up by the compensation itself: it has no punches to be "missing", and it is no
   // absence to apply leave for.
@@ -195,7 +205,17 @@ function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWin
       icon: 'umbrella-outline',
       color: '#8E44AD',
       route: '/(tabs)/leave',
+      params: { applyDate: rec.date },
     });
+    if (isStaff) {
+      actions.push({
+        label: 'Casual Leave',
+        icon: 'calendar-star',
+        color: '#B7791F',
+        route: '/casual-leave',
+        params: { applyDate: rec.date },
+      });
+    }
   }
 
   // Half Day almost always means a punch never reached the system -the
@@ -205,7 +225,8 @@ function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWin
       label: 'Missing Punch',
       icon: 'fingerprint',
       color: '#5E35B1',
-      route: '/missing-punch',
+      route: '/missing-punch/report',
+      params: { date: rec.date },
     });
   }
 
@@ -216,7 +237,9 @@ function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWin
       label: 'Permission',
       icon: 'hand-pointing-right',
       color: '#2980B9',
-      route: '/requests',
+      route: '/requests/new',
+      // the kind of permission that fits the day: a late arrival, else an early departure
+      params: { date: rec.date, type: detect.lateIn && rec.isLate ? 'Late In' : 'Early Out' },
     });
   }
 
@@ -226,8 +249,71 @@ function actionsFor(rec: AttendanceRecord, detect: DetectionFlags, w: RequestWin
 
 const ALL_CHECKS_ON: DetectionFlags = { lateIn: true, earlyOut: true };
 
+/** Colours per punch source (fixed hues readable in both themes). */
+const KIND_TONE: Record<PunchKind, string> = {
+  biometric: '#2563EB',
+  geo: '#0891B2',
+  on_duty: '#B7791F',
+  ot: '#C2410C',
+  missing_punch: '#7C3AED',
+  hr: '#4F46E5',
+  auto: '#64748B',
+};
+
+/**
+ * Every punch of the day side by side (owner 2026-11-24): its time, In / Out / OT, where it came from (Biometric, Geo
+ * Punch, On-Duty, OT Punch, Missing Punch, HR entry) and anything special about it (waiting for HR, not counted ...).
+ */
+function PunchStrip({ punches }: { punches: DayPunchView[] }) {
+  const { C: Colors } = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const counted = punches.filter((p) => p.counted).length;
+  return (
+    <View style={styles.punchSection}>
+      <View style={styles.punchHead}>
+        <Text style={styles.punchTitle}>Punches</Text>
+        <Text style={styles.punchCount}>
+          {punches.length ? `${punches.length} recorded${counted !== punches.length ? ` · ${counted} counted` : ''}` : 'None'}
+        </Text>
+      </View>
+      {punches.length === 0 ? (
+        <Text style={styles.noPunch}>No punches were recorded on this day.</Text>
+      ) : (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.punchRow}>
+          {punches.map((p, i) => {
+            const tone = KIND_TONE[p.kind];
+            return (
+              <View
+                key={p.key}
+                style={[styles.punchCard, { borderColor: tone + '55' }, !p.counted && styles.punchCardMuted]}
+                accessible
+                accessibilityLabel={`Punch ${i + 1}: ${p.direction} at ${p.time}, ${p.source}${p.detail ? `, ${p.detail}` : ''}`}
+              >
+                <View style={styles.punchTop}>
+                  <Text style={styles.punchIndex}>#{i + 1}</Text>
+                  <View style={[styles.dirPill, { backgroundColor: tone + '1A' }]}>
+                    <Text style={[styles.dirText, { color: tone }]}>{p.direction}</Text>
+                  </View>
+                </View>
+                <Text style={styles.punchTime}>{p.time}</Text>
+                <View style={styles.sourceRow}>
+                  <MaterialCommunityIcons name={p.icon as any} size={13} color={tone} />
+                  <Text style={[styles.sourceText, { color: tone }]} numberOfLines={1}>{p.source}</Text>
+                </View>
+                {!!p.detail && (
+                  <Text style={[styles.punchDetail, { color: Colors.textMuted }]} numberOfLines={2}>{p.detail}</Text>
+                )}
+              </View>
+            );
+          })}
+        </ScrollView>
+      )}
+    </View>
+  );
+}
+
 export function AttendanceCalendar({
-  records, month, year, detect = ALL_CHECKS_ON, openDate = null, onOpenDate, futureHrEdits,
+  records, month, year, detect = ALL_CHECKS_ON, openDate = null, onOpenDate, futureHrEdits, isStaff = false,
 }: Props) {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
@@ -266,7 +352,7 @@ export function AttendanceCalendar({
   const editLine = hrMonthLine(editCounts);
 
   // "Now" is read at render: the screen stays mounted for days and the request window moves on the 1st-3rd of a month.
-  const dayActions = selected ? actionsFor(selected, detect, getRequestWindow(new Date())) : null;
+  const dayActions = selected ? actionsFor(selected, detect, getRequestWindow(new Date()), isStaff) : null;
   const badge = selected ? badgeFor(selected, isDark) : null;
 
   return (
@@ -408,7 +494,7 @@ export function AttendanceCalendar({
                       // Close first -leaving the sheet open behind a pushed
                       // screen leaves it covering the new one on the way back.
                       close();
-                      router.push(a.route as any);
+                      router.push({ pathname: a.route, params: a.params } as any);
                     }}
                   >
                     <MaterialCommunityIcons name={a.icon as any} size={13} color={a.color} />
@@ -477,9 +563,6 @@ export function AttendanceCalendar({
 
             {([
               ['Date', format(new Date(selected.date + 'T00:00:00'), 'EEEE, d MMMM yyyy')],
-              ['First Punch', selected.firstIn || '—'],
-              ['Last Punch', selected.lastOut || '—'],
-              ['Total Punches', selected.punchCount != null ? String(selected.punchCount) : '—'],
               // The badge above says what the compensation was; this says how the day is counted.
               ...(isCompensatedWholeDay(selected.compensationKind) ? [['Day counted as', selected.status]] : []),
             ] as [string, string][]).map(([label, value]) => (
@@ -488,6 +571,25 @@ export function AttendanceCalendar({
                 <Text style={styles.detailValue}>{value}</Text>
               </View>
             ))}
+
+            {/* The shift the day earned (payroll's own figure). */}
+            {earnedShiftText(selected.shiftsEarned) && (
+              <View style={styles.earnedRow} accessible accessibilityLabel={`Earned shift: ${earnedShiftText(selected.shiftsEarned)}`}>
+                <View style={styles.earnedIcon}>
+                  <MaterialCommunityIcons name="briefcase-check-outline" size={18} color={Colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.detailLabel}>Earned Shift</Text>
+                  {!!earnedShiftHint(selected.shiftsEarned) && (
+                    <Text style={styles.earnedHint}>{earnedShiftHint(selected.shiftsEarned)}</Text>
+                  )}
+                </View>
+                <Text style={styles.earnedValue}>{earnedShiftText(selected.shiftsEarned)}</Text>
+              </View>
+            )}
+
+            {/* Every punch of the day, in time order, each with where it came from. */}
+            <PunchStrip punches={dayPunchViews(selected.allPunches, selected.punches as any)} />
 
             {hasCompensationMarker(selected.compensationKind) && (
               <TouchableOpacity
@@ -514,6 +616,32 @@ export function AttendanceCalendar({
 }
 
 const makeStyles = (Colors: Palette) => StyleSheet.create({
+  earnedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, padding: 12,
+    borderRadius: BorderRadius.lg, backgroundColor: Colors.primaryFixed,
+  },
+  earnedIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgCard },
+  earnedHint: { fontSize: 11.5, color: Colors.textMuted, marginTop: 1 },
+  earnedValue: { fontSize: 17, fontWeight: '800', color: Colors.primary },
+  punchSection: { marginTop: 14 },
+  punchHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 },
+  punchTitle: { fontSize: 15, fontWeight: '800', color: Colors.textPrimary },
+  punchCount: { fontSize: 12, color: Colors.textMuted },
+  noPunch: { fontSize: 13, color: Colors.textMuted },
+  punchRow: { gap: 10, paddingRight: 8 },
+  punchCard: {
+    width: 128, padding: 10, borderRadius: BorderRadius.lg, borderWidth: 1.5,
+    backgroundColor: Colors.bgCard, gap: 3,
+  },
+  punchCardMuted: { borderStyle: 'dashed' },
+  punchTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  punchIndex: { fontSize: 11, fontWeight: '700', color: Colors.textMuted },
+  dirPill: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999 },
+  dirText: { fontSize: 11, fontWeight: '800' },
+  punchTime: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary, marginTop: 2 },
+  sourceRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  sourceText: { flex: 1, fontSize: 12, fontWeight: '700' },
+  punchDetail: { fontSize: 11, lineHeight: 14 },
   headerRow: { flexDirection: 'row', marginBottom: 8 },
   dayLabel: {
     color: Colors.textMuted,

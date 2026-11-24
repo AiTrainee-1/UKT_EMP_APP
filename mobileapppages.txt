@@ -8,12 +8,13 @@ screen, component, feature, and API call in the mobile app, for use as
 a source-of-truth reference when recreating the UI (e.g. in Google
 Stitch) with identical features and functionality.
 
-This document has five parts:
+This document has six parts:
   1. Full route tree
   2. Per-page catalog (UI, actions, API calls, conditional content)
   3. Reusable shared components
   4. Navigation structure (tab bar, side drawer, home quick actions)
   5. Full hook / API endpoint map
+  6. Offline mode and sign-in
 
 
 ====================================================================
@@ -31,72 +32,52 @@ app/
   (tabs)/
     _layout.tsx                  Bottom tab bar shell
     home.tsx                     -> /(tabs)/home
-    attendance.tsx                -> /(tabs)/attendance
+    attendance.tsx               -> /(tabs)/attendance
     shift.tsx                    -> /(tabs)/shift              (thin wrapper)
-    approvals.tsx                -> /(tabs)/approvals          (manager-only tab)
+    approvals.tsx                -> /(tabs)/approvals          (Department Head only)
     profile.tsx                  -> /(tabs)/profile
     leave.tsx                    -> /(tabs)/leave              (routable, no tab button)
     notifications.tsx            -> /(tabs)/notifications      (routable, no tab button)
-  chat/
-    _layout.tsx
-    index.tsx                    -> /chat
-  company/
-    _layout.tsx
-    index.tsx                    -> /company
-  compensation/
-    _layout.tsx
-    index.tsx                    -> /compensation              (staff only)
-  documents/
-    _layout.tsx
-    index.tsx                    -> /documents
-  geo-punch/
-    _layout.tsx
-    index.tsx                    -> /geo-punch
-  geo-tracking/
-    _layout.tsx
-    index.tsx                    -> /geo-tracking
-  hod-assignment/
-    _layout.tsx
-    index.tsx                    -> /hod-assignment            (every employee type)
-  holidays/
-    _layout.tsx
-    index.tsx                    -> /holidays
-  idcard/
-    _layout.tsx
-    index.tsx                    -> /idcard
+  casual-leave/index.tsx         -> /casual-leave              (staff only)
+  chat/index.tsx                 -> /chat
+  company/index.tsx              -> /company
+  compensation/index.tsx         -> /compensation              (staff only)
+  documents/index.tsx            -> /documents
+  geo-punch/index.tsx            -> /geo-punch                 ("Attendance Request", Office Geo Punch)
+  geo-tracking/index.tsx         -> /geo-tracking              (Live Tracking, HR toggle)
+  help/index.tsx                 -> /help                      (Help & Support)
+  hod-assignment/index.tsx       -> /hod-assignment            (every employee type)
+  holidays/index.tsx             -> /holidays
+  enquiries/index.tsx            -> /enquiries                 ("Enquiries", NEW 2026-11-24)
+  idcard/index.tsx               -> /idcard
   missing-punch/
-    _layout.tsx
-    index.tsx                    -> /missing-punch
+    index.tsx                    -> /missing-punch             (list)
+    report.tsx                   -> /missing-punch/report      (form)
   my-journeys/
-    _layout.tsx
     index.tsx                    -> /my-journeys               ("On-Duty Journey": the list)
     [id].tsx                     -> /my-journeys/[id]          (one journey: map, activity, geo-punches)
-  on-duty/
-    _layout.tsx
-    index.tsx                    -> /on-duty
+  on-duty/index.tsx              -> /on-duty                   (Apply On-Duty / View Records, redesigned 2026-11-24)
   outpass/
-    _layout.tsx
-    index.tsx                    -> /outpass
+    index.tsx                    -> /outpass                   (Gate Outpass + Tea Break)
+    request.tsx                  -> /outpass/request           (form)
   requests/
-    _layout.tsx
-    index.tsx                    -> /requests                 (Permission requests)
+    index.tsx                    -> /requests                  (Permission requests)
+    new.tsx                      -> /requests/new              (form)
   resignation/
-    _layout.tsx
-    warning.tsx                  -> /resignation/warning
-    survey.tsx                   -> /resignation/survey
-    confirm.tsx                  -> /resignation/confirm
-    success.tsx                  -> /resignation/success
-    deactivated.tsx              -> /resignation/deactivated
+    warning.tsx / survey.tsx / confirm.tsx / success.tsx / deactivated.tsx
   salary/
-    _layout.tsx
     index.tsx                    -> /salary
     [id].tsx                     -> /salary/[id]
   settlement/
-    _layout.tsx
     index.tsx                    -> /settlement                (Advances & Loans)
-  shift/
-    _layout.tsx
-    index.tsx                    -> /shift                     (also mounted as the "My Shift" tab)
+    apply.tsx                    -> /settlement/apply          (Salary Advance / Term Loan form)
+    [id].tsx                     -> /settlement/[id]           (one application)
+  shift/index.tsx                -> /shift                     (also mounted as the "My Shift" tab)
+  sync/index.tsx                 -> /sync                      (offline queue + sync state, NEW 2026-11-24)
+  tracking-setup/
+    index.tsx                    -> /tracking-setup            (On-Duty tracking set-up steps)
+    health.tsx                   -> /tracking-setup/health     (Tracking health)
+  (each folder also has a _layout.tsx Stack shell)
 
 
 ====================================================================
@@ -157,9 +138,18 @@ API calls:
   - requestOtp(identifier, 'login') -> POST /auth/otp/request
   - otpLoginRequest() -> POST /auth/otp/login
 
-Conditional content: the code flow only when login-options says otpLogin;
-the switch link only when passwordLogin is also on (the password is never
-removed as a fallback). The wording follows login-options.otpChannel.
+Login methods (2026-11-24): Employee Code + Password is the DEFAULT form
+and always works (the server never refuses a password sign-in any more;
+HR portal shows "Password sign-in: always ON"). Under it, "OR CONTINUE
+WITH": two options, "Continue with WhatsApp OTP" and "Continue with SMS
+OTP" (src/components/auth/LoginMethodOption.tsx, rules loginChannelStates /
+codesForChannel in src/lib/otp.ts). An option HR switched off stays on
+screen LOCKED: dashed grey card, a padlock that shakes every few seconds,
+"NOT ENABLED", not selectable, and a note that the password always works.
+Choosing an open option shows the code flow for that channel only, with
+"Use my password instead". Options are re-read whenever the screen or the
+app comes back to the front; a channel switched off meanwhile returns the
+screen to the password form.
 
 
 --------------------------------------------------------------------
@@ -370,8 +360,16 @@ UI:
   - Casual Leave eligibility card: eligible/not-eligible badge, yearly
     entitlement / used / remaining stats
   - AttendanceCalendar grid card: tap a day -> detail BottomSheet
-    (status, first/last punch, punch count, quick-action chips for
-    Absent/Half Shift/Late days)
+    (2026-11-24): status, quick-action chips that open the form ON THAT
+    DAY (Apply Leave -> /(tabs)/leave?applyDate=, Casual Leave (staff, absent
+    day) -> /casual-leave?applyDate=, Missing Punch -> /missing-punch/report
+    ?date=, Permission -> /requests/new?date=&type=Late In|Early Out; a day
+    outside the request window keeps the form's own default), Date, Earned
+    Shift (shiftsEarned: "1.00 shift · Full day"), and every punch of the
+    day side by side in time order (allPunches): time, In / Out / OT, source
+    (Biometric, Geo Punch, On-Duty, OT Punch n, Missing Punch, HR entry,
+    Auto) and notes (Waiting for HR, Rejected by HR, Overtime, Not counted ·
+    double tap, Next day). Rules in src/lib/dayPunches.ts.
   - Color legend row
   - SideDrawer
 
@@ -1121,63 +1119,101 @@ Conditional content: none (all employees can submit).
 
 
 --------------------------------------------------------------------
-PAGE: On-Duty
+PAGE: On-Duty  (redesigned 2026-11-24)
 --------------------------------------------------------------------
-Route:    /on-duty
-File:     app/on-duty/index.tsx
-Purpose:  Off-site work session as ONE seven-step process: request a
-          destination, approval + route tracking, four geo-punches
-          (selfie(s) + GPS each), done.
+Route:    /on-duty   (?view=records opens View Records; &focus=<session id>)
+Files:    app/on-duty/index.tsx (mode switch), src/components/onduty/OnDutyToday.tsx
+          (Apply tab), OnDutyRecords.tsx (View Records tab), PunchTiles.tsx,
+          EndOnDutySheet.tsx, RecentOnDuty.tsx, PunchCapture.tsx,
+          JourneyStrip.tsx, TrackingReadiness.tsx; rules in
+          src/lib/onDutyPunches.ts; actions in src/hooks/useOnDutyActions.ts
+Purpose:  Off-site work for the day, its gate pass and its four punches, on
+          ONE page.
 
-UI (one vertical stepper; src/lib/onDutyFlow.ts decides every step):
-  - Hero: destination, "Step N of 7" and a 7-segment progress bar
-    (blue while it runs, green when completed, red when rejected)
-  - Red TrackingIssueBanner (pending/active) + a compact live journey
-    strip (moving / still / offline / location off, last position,
-    running time, breaks, distance; tap = the journey)
-  - Stepper: 1 Request  2 Approval & route tracking  3-6 Geo-punch
-    1..4  7 Done. Finished steps show a check, time, place (and the
-    punch's Approved/Pending/Rejected chip); the CURRENT step is a
-    highlighted card holding the one primary action; the rest are
-    muted. The page scrolls to the current step on open.
-      * 1 current (no session / new request): intro + approval
-        pipeline sentence, tracking note, consent gate, location
-        permission line, destination TextArea, "Submit for Approval"
-      * 2 current (older backend, pending_hod/pending_hr): waiting
-        text, approval trail / HOD-approved note, "Refresh Status"
-      * punch current: "Record Punch N" -> capture panel: "Photo 1 of 2"
-        / "Photo 2 of 2" tiles (one tile when HR asks for one photo),
-        retake per tile, location pill (accuracy, tap to retry), ONE
-        "Confirm Punch N" button disabled until every photo and the
-        location are there. Any other open punch offers "Record now"
-        (any order). A punch HR rejected is open again.
-      * 7 current: all 4 punches in
-  - Active: "Mark On-Duty as Done" button
-  - Completed / Rejected: how it ended, approval trail / HR and HOD
-    comments, "View On-Duty Journey", "Submit New On-Duty Request",
-    "Back to Attendance"
-  - Shortcuts: On-Duty Journey, Tracking health. Toast throughout.
+Tabs (OnDutyModeSwitch): "Apply On-Duty" (note: "In progress · n of 4
+punches" / "Today's is done · apply again" / "Start a new request") and
+"View Records" (n waiting · n sent this month).
 
-Actions:
-  - Submit a destination request
-  - Capture a punch (camera photo(s) + GPS) per open slot
-  - Retake any photo / confirm / cancel a punch
-  - Mark the session done early
-  - Start a new request after completion/rejection
-  - Refresh status
+APPLY TAB, nothing open:
+  - "Apply On-Duty" card: 4-step explainer (submit -> gate pass ready at
+    once -> four punches in any order -> End On-Duty), photo/approval
+    sentence, tracking-consent gate, tracking readiness line, "WHERE ARE
+    YOU GOING?" text area (3-300), workflow-off note, "Start On-Duty".
+  - Offline with nothing cached: a warning not to apply twice.
+  - "Not sent yet" (queued On-Duty items) and "Previous On-Duty": the last
+    5 requests (day, place, n of 4 punches, status chip), "See all" ->
+    View Records.
+  - A second open On-Duty is impossible: the form is only shown when none
+    is open, and the server answers 409 (shown as "You already have an
+    On-Duty open. End it first, then apply for a new one.").
+
+APPLY TAB, one open (server session, or a request still saved on the phone):
+  - Hero: "ON-DUTY IN PROGRESS", chip Waiting for approval / Approved /
+    Saved on phone, destination, started time + running duration, 4-step
+    progress bar, "n of 4 punches · n left".
+  - Red TrackingIssueBanner and the live JourneyStrip (server session).
+  - "Your gate pass": the session's GatePassCard (compact). Its QR only
+    appears once HR / the Department Head APPROVED the On-Duty; until then
+    the card shows "Pending approval" (ringing-bell animation, a "QR after
+    approval" placeholder and a Refresh button; the status is also polled
+    every 15 s, so the QR shows up on its own). Download and Return QR as on
+    the Outpass page. A request still on the phone says the pass appears
+    once it reaches the server.
+  - Geo-punches: four tiles, each selectable on its own, any order:
+        1 Morning Punch  (expected = shift start)          In
+        2 Lunch Out      (expected = first half end)       Out
+        3 Lunch In       (expected = lunch out + lunch)    In
+        4 Night Punch    (expected = shift end)            Out
+    Names / expected times come from the server's punchSlots (name,
+    expectedTime, expectedSource "shift" | "default" = 9:00/13:00/14:00/
+    18:00). Tile states: Not recorded yet (tap to record) / Waiting for HR
+    / Approved / Recorded by the biometric (or Office Geo Punch, HR, a
+    missing-punch request) / Saved on phone · sends when online / Could
+    not be sent. A punch HR rejected is open again with HR's note.
+  - Tapping a tile: camera (1 or 2 selfies as HR requires), GPS (last known
+    fix if no fresh one), inline PunchCapture "<name> · Check-In/Out",
+    Confirm. PHOTO2_REQUIRED switches to two photos.
+  - Approval card (trail), "End On-Duty" button and its hint.
+  - After the 4th punch: popup "All 4 punches are in" -> Complete Duty
+    (opens the End On-Duty review) or Continue Duty (overtime). If the page
+    is reopened before choosing, the same choice is shown as a card.
+  - Overtime (OT) punches (after Continue Duty): list "OT 1 · 7:05 PM ·
+    Waiting for approval / Approved / Saved on phone", "OT so far: 1 h 20 min
+    past your Night Punch time", "+ OT Punch" (selfie(s) + location, same
+    capture as the four). OT punches are stored apart from the four
+    (backend OnDutyOvertimePunch), never change attendance, follow the
+    On-Duty's approval, and once approved the last one is the day's OT end
+    for overtime detection (backend overtime.py). Only after the four are in.
+    The main button reads "Complete Duty" once the four are in.
+  - End On-Duty sheet: where, started, duration, distance travelled,
+    overtime (OT punches + minutes),
+    approval, each punch done / "Not recorded (expected …)", a warning
+    naming the missing punches, "Yes, end On-Duty" / "Not yet".
+  - Ended offline: "saved on your phone, closed on the server when online".
+
+VIEW RECORDS TAB: OnDutyRecords (month switcher, Waiting / This month /
+  Approved / Rejected views, punches, approval, journey link, focus).
 
 API calls:
-  - useOnDutySessionStatus() -> GET /on-duty-sessions/status
-  - useSubmitOnDutySessionRequest() -> POST /on-duty-sessions/request
-  - useCompleteOnDutySession() -> POST /on-duty-sessions/complete
-  - useSubmitOnDutyPunch() -> POST /on-duty-sessions/punch
-    (multipart form: photo, and photo2 when HR requires two)
-  - useSessionJourney() -> GET /tracking/my-journeys (the live strip)
-
-Conditional content:
-  - Steps branch on session.status: none / pending_hod / pending_hr /
-    active / completed / rejected, and on the server's requiredPhotos
-
+  - GET  /on-duty-sessions/status   (session, punchVerifications,
+         punchSlots[name, expectedTime, punchTime ...], requiredPhotos,
+         gatePass)                                      every 15 s
+  - POST /on-duty-sessions/request  {destination, capturedAt}
+         -> also starts route tracking (startOnDutyTracking)
+  - POST /on-duty-sessions/punch    multipart photo, photo2?, latitude,
+         longitude, accuracy?, isMocked, punchNumber, capturedAt, sessionId?,
+         autoEnd=false (the 4th punch keeps the session open; an older app
+         without it still ends the session at the 4th punch)
+  - POST /on-duty-sessions/ot-punch multipart photo, photo2?, latitude,
+         longitude, accuracy?, isMocked, capturedAt, sessionId?
+         (409 regular_punches_missing before the four); status carries
+         otPunches[], otMinutes, regularPunchesDone
+  - GET  /on-duty-overtime-punches/{id}/photo?n=1|2
+  - POST /on-duty-sessions/complete {sessionId, capturedAt}
+  - GET  /on-duty-sessions/mine (records, recent list)
+  - GET  /tracking/my-journeys (live strip / distance)
+  All three writes go through the offline queue (Idempotency-Key; the
+  server records an offline punch at its capturedAt, within limits).
 
 --------------------------------------------------------------------
 PAGE: On-Duty Journey
@@ -1211,51 +1247,62 @@ API calls:
 
 
 --------------------------------------------------------------------
-PAGE: Outpass
+PAGE: Gate Outpass (+ Tea Break)  (card redesigned 2026-11-24)
 --------------------------------------------------------------------
-Route:    /outpass
-File:     app/outpass/index.tsx
-Purpose:  Request and track gate-exit outpasses; view the active
-          pass as a scannable card.
+Route:    /outpass  (form: /outpass/request)
+Files:    app/outpass/index.tsx, app/outpass/request.tsx,
+          src/components/outpass/GatePassCard.tsx, OpenPassBanner.tsx,
+          src/components/tea-break/TeaBreakPanel.tsx; rules in
+          src/lib/gatePass.ts, src/lib/outpassOpen.ts
+Purpose:  Gate passes (manual and On-Duty) and the Tea Break QR.
 
 UI:
-  - OutpassFlipCard for the current active/valid pass (if any),
-    pinned at the top of the list:
-      Front: employee, destination, date/time, QR ("SHOW THIS QR AT
-             THE GATE"), countdown timer pill
-      Back:  approver, comment, source, gate-exit info
-  - Live / Confirmed Requests tab switch
-  - FlatList of request cards: destination, status Badge, reason,
-    date/time, "(from On-Duty)" tag if auto-generated, approver note,
-    "Preview" button
-  - EmptyState / skeletons
-  - FAB (+)
-  - "Request an Outpass" BottomSheet: destination Input, reason
-    TextArea, submit
-  - Outpass card preview BottomSheet (reuses OutpassFlipCard for
-    any request tapped, regardless of status)
-  - Toast, SuccessOverlay
+  - Header "Gate Outpass / Digital Transit Clearance"; section switch
+    Outpass | Tea Break; month switcher shared by both.
+  - Pinned "OPEN GATE PASS": OpenPassBanner (exit window / time outside)
+    and the GatePassCard of the pass that is out now or valid now.
+  - "Not sent yet" (outpass requests saved offline).
+  - Waiting / This month / Approved / Rejected views; cards: destination,
+    pass type, badge (Pending approval / Ready to use / Out now /
+    Returned / Not used / Not Approved), reason, who decided, Out/Back
+    times, "On-Duty, waiting for approval" / "from On-Duty", "Open card"
+    -> GatePassCard in a sheet. FAB (+) -> /outpass/request.
+  - GatePassCard (static, no flip): navy band (logo, UK TEXTILES, GATE
+    PASS, PASS NO. OUT-<id>), "WAITING FOR APPROVAL · USABLE AT THE GATE"
+    ribbon "PENDING APPROVAL · NOT VALID AT THE GATE YET" on any pending
+    pass, status block (Valid at the gate / Pending approval with a ringing
+    bell / Out of the gate / Ready to come back in / Back in / Not valid
+    now / Not approved), employee (photo, name, code,
+    designation · department), one row per detail (Purpose, Going to,
+    Reason, Issued, Valid until, Expected back, Approval, Gate exit, Gate
+    return), the QR (exit or return) - ONLY once approved - or, while
+    pending, a "QR after approval" placeholder with a Refresh button, or why
+    there is none; footer line.
+    Buttons: Return QR (after exit), Download (PNG to the gallery; share
+    sheet fallback).
+  - Tea Break: permanent personal QR + this month's breaks (remarks
+    Overtime / On Time / Still Out / Not Returned).
+  - Request form (/outpass/request): pass classification (Official / Mill
+    Duty, Personal Emergency, Early Shift Dismissal), destination, purpose,
+    expected return time, Submit (offline: saved on the phone).
 
-Actions:
-  - Submit an outpass request
-  - Preview any request's flip-card (flip between trip details and
-    the approval trail)
-  - Pull-to-refresh
-  - Switch Live/Confirmed tab
+QR only after approval (owner 2026-11-24): no pass - manual or On-Duty -
+has a QR, or is accepted at the gate (gate scan: "waiting for approval"),
+before HR / the HOD approved it. The newest pending pass of today is
+pinned under "WAITING FOR APPROVAL" with Refresh; the list polls every 30 s
+so the QR appears by itself once approved.
+On-Duty passes: raised the moment the On-Duty is submitted (pending, no
+QR), linked to it (onDutySessionId / onDutyStatus); approved with the
+On-Duty's final approval (QR valid until the session ends, latest that
+day's end), voided if it is rejected; never decided on their own (HR /
+HOD outpass queues leave them out).
 
 API calls:
-  - useOutpassRequests(employeeId) -> GET /outpass-requests
-    (polls every 30 seconds)
-  - useSubmitOutpassRequest(employeeId) -> POST /outpass-requests
-  - useEmployee(employeeId) -> GET /employees/{id} (for the card's
-    avatar/name/code)
-
-Conditional content:
-  - The active-pass card only shows if an approved, unexpired
-    request exists
-  - The QR block on a card only shows if a qrToken is present
-    (i.e. the pass is currently presentable at a gate)
-
+  - GET  /outpass-requests                         every 30 s
+  - POST /outpass-requests                         (offline queue)
+  - POST /outpass-requests/{id}/generate-return-qr
+  - GET  /tea-break/qr-token, /tea-break/my-status
+  - GET  /employees/{id} (card photo / name)
 
 --------------------------------------------------------------------
 PAGE: Permission Requests
@@ -1507,6 +1554,105 @@ Conditional content:
     assigned
 
 
+--------------------------------------------------------------------
+PAGE: Casual Leave (staff only)
+--------------------------------------------------------------------
+Route:    /casual-leave   File: app/casual-leave/index.tsx (+ components/casualLeave/*)
+UI:       hero with this month's state and the year's days taken, "Apply for
+          Casual Leave" (ClApplySheet: date, full / first half / second half,
+          reason), "Your year" (month grid + month calendar, legend), "Not sent
+          yet", month switcher + Waiting / This month / Approved / Rejected,
+          "Your applications" (ClRequestCard, Withdraw while pending, not for an
+          HR-raised one), "Balance history".
+API:      GET /casual-leaves, /casual-leaves/my-eligibility, /casual-leaves/history;
+          POST /casual-leaves (offline queue); POST /my/requests/casual_leave/{id}/withdraw
+
+--------------------------------------------------------------------
+PAGE: New Permission Request / Report Missing Punch (forms)
+--------------------------------------------------------------------
+Routes:   /requests/new (app/requests/new.tsx): permission type (Morning Late-In /
+          Evening Early-Out / Middle One-Hour), date, time, fixed 1-hour duration,
+          reason, cap warning, Submit.
+          /missing-punch/report (app/missing-punch/report.tsx): which punch, date,
+          time of the missed punch, why, overlap reminder, Submit.
+          Both: request-window check (this month; last month on the 1st-5th),
+          offline -> "Saved on your phone".
+API:      POST /permissions, POST /missing-punch-requests (offline queue)
+
+--------------------------------------------------------------------
+PAGE: Advances & Loans (apply, detail)
+--------------------------------------------------------------------
+Routes:   /settlement (list: Salary Advance · Term Loan, still owed / repaid,
+          waiting for HR, "My applications"), /settlement/apply (Salary Advance
+          or Term Loan: amount, repay in N months, monthly EMI / first EMI
+          preview, purpose, "What happens next", Sent to HR), /settlement/[id]
+          (asked vs approved, repayment months, "What happened").
+API:      GET /my/advances, /my/advances/eligibility, /my/advances/{id};
+          POST /my/advances
+
+--------------------------------------------------------------------
+PAGE: Tracking set-up / Tracking health
+--------------------------------------------------------------------
+Routes:   /tracking-setup (?step=consent|foreground...): notice to accept, allow
+          location (always), notifications, background activity / battery,
+          "You are all set". /tracking-setup/health: "Is your route being
+          recorded?" checks, Upload now, Restart tracking, Run set-up again.
+API:      GET /tracking/state, POST /tracking/consent, POST /tracking/batch
+
+--------------------------------------------------------------------
+PAGE: Help & Support
+--------------------------------------------------------------------
+Route:    /help (app/help/index.tsx): HR contact and software-support contact
+          (Call / WhatsApp / Email), HR's note, last updated. GET /support-contact
+          (saved on the phone, works offline).
+
+--------------------------------------------------------------------
+PAGE: Enquiries  (NEW 2026-11-24, replaced "Ask HR")
+--------------------------------------------------------------------
+Route:    /enquiries (?focus=<id> from a notification)   File: app/enquiries/index.tsx,
+          src/hooks/useEnquiries.ts
+Purpose:  Raise a question / concern to HR and follow it to the end.
+UI:       header with "New"; intro; filters All / Pending / On Hold / Done (counts);
+          "Not sent yet" (offline queue); one card per enquiry: topic, status pill,
+          subject, details, "Waiting for HR / HR put it on hold / Resolved by HR",
+          HR's reply (who, when), "Updates (n)" history; "New enquiry" sheet: topic
+          (General question, Salary & deductions, Attendance & shift, Leave &
+          holidays, Documents & letters, Something else), subject (3-200), your
+          question (up to 2000), Send to HR.
+API:      GET /my/enquiries, POST /my/enquiries {category, subject, message}
+          (offline queue, kind enquiry.submit)
+Push:     every HR status change / reply -> Notification type "enquiry" (target
+          kind "enquiry", id) -> View opens /enquiries on that enquiry.
+HR side:  HR portal -> HR Operations -> Enquiries (/hr/enquiries): a to-do list
+          (Pending / On Hold / Done tabs with counts, topic filter, search), tick
+          to mark Done, status switch, reply (Send / Reply & mark Done / Reply &
+          put On Hold), history; sidebar badge = pending count, a toast "New
+          enquiry" while HR is in the portal. Permission: the Requests module.
+Entry:    drawer HR Operations "Enquiries", Home quick action "Enquiries".
+
+--------------------------------------------------------------------
+PAGE: Sync  (NEW 2026-11-24)
+--------------------------------------------------------------------
+Route:    /sync   File: app/sync/index.tsx
+UI:       state card Online / Offline / Syncing (n of N) / Pending sync, last
+          sync time, "Sync now" (offline: "Reconnect / Retry"), every item saved
+          on this phone (QueuedOpsList: Waiting to sync / Waiting for internet /
+          Could not be sent + the server's reason, Send now / Try again, Delete
+          with confirmation), explanation of offline mode.
+Entry:    the sync strip under the connection bar, drawer "Sync".
+
+--------------------------------------------------------------------
+WITHDRAW (Leave, Permission, Casual Leave; NEW 2026-11-24)
+--------------------------------------------------------------------
+Each Leave (LeaveCard), Permission (/requests card) and Casual Leave
+(ClRequestCard) request shows "Withdraw" while it is still pending at any
+step of its approval ("Withdraw this request?" -> Keep it / Withdraw).
+Not offered for On-Duty, missing punch, On-Duty punches or outpass.
+Compensation claims keep their own withdraw. Server refuses a decided one
+(409 not_pending). POST /my/requests/{leave|permission|casual_leave}/{id}/withdraw
+(src/hooks/useWithdraw.ts, src/components/requests/WithdrawButton.tsx).
+
+
 ====================================================================
 3. REUSABLE SHARED COMPONENTS (src/components/)
 ====================================================================
@@ -1610,11 +1756,29 @@ Non-"ui/" components (feature-level, cross-page):
     to a plain sentence with no numbers.
     Used by: Compensation (Ask tab), HOD Assignment.
 
-  outpass/OutpassFlipCard
-    Two-sided animated flip card for an outpass request. Front =
-    trip/employee details + QR code; back = approval trail. Card
-    height auto-sizes to whichever face's content is taller.
-    Used by: Outpass screen (active pass banner + preview sheet).
+  outpass/GatePassCard
+    The static gate pass card (header band, status, employee, one row per
+    detail, QR, Return QR, Download as PNG). Used by: Gate Outpass (pinned
+    pass + "Open card" sheet) and the On-Duty page. Replaced the flip card.
+
+  onduty/PunchTiles, onduty/EndOnDutySheet, onduty/RecentOnDuty,
+  onduty/OnDutyToday
+    The redesigned On-Duty Apply tab (see PAGE: On-Duty).
+
+  offline/OfflineSyncBar
+    Strip under the connection bar on signed-in screens: "n saved on your
+    phone · will sync when online" / "Syncing n of N..." / "n waiting to
+    sync" + Sync now / "n could not be sent" -> /sync; and the "No internet
+    connection" popup (once per offline episode) with "Reconnect / Retry"
+    and "Continue offline". Mounted in the root layout.
+
+  offline/QueuedOpsList
+    "Not sent yet" list of queued items (optionally filtered by kind) with
+    Send now / Try again / Delete. Used by: Sync, Leave, Permission, Casual
+    Leave, Missing Punch, Outpass, On-Duty, Enquiries.
+
+  requests/WithdrawButton
+    "Withdraw" on a pending Leave / Permission / Casual Leave request.
 
 
 UI primitives (src/components/ui/):
@@ -1711,83 +1875,37 @@ Tab order, label, icon (focused/unfocused), route, notes:
 --------------------------------------------------------------------
 4b. Side Drawer (src/components/SideDrawer.tsx)
 --------------------------------------------------------------------
-Slide-in drawer (78% width, max 300px), opened via the hamburger
-icon on Home/Attendance/Leave/Notifications/Profile.
-
 Group: Home & Attendance
-  - Home                    -> /(tabs)/home
-  - Attendance               -> /(tabs)/attendance
-  - Attendance Request       -> /geo-punch
-  - On-Duty                  -> /on-duty
-    (badge if a session is pending_hod/pending_hr/active)
-  - On-Duty Journey           -> /my-journeys
-  - Tracking Health           -> /tracking-setup/health
-  - Outpass                  -> /outpass
-  - Live Tracking             -> /geo-tracking
-  - My Shift                  -> /shift
-  - Missing Punch             -> /missing-punch
-  - Holidays                  -> /holidays
-
-Group: HR Operations   (Leave, Permissions and Compensation are staffOnly —
-                        hidden for production employees; HOD Assignment is
-                        for everybody)
-  - Leave                     -> /(tabs)/leave
-  - Permissions                -> /requests
-  - Compensation               -> /compensation
-  - HOD Assignment              -> /hod-assignment
-
+  Home, Attendance, Attendance Request (/geo-punch), On-Duty (badge while a
+  session is open), On-Duty Journey, Tracking Health, Outpass, Live
+  Tracking, My Shift, Missing Punch, Holidays
+Group: HR Operations
+  Leave*, Casual Leave*, Permissions*, Compensation (staff profile only),
+  HOD Assignment, Enquiries (/enquiries), Sync (/sync)
+  (* staffOnly: hidden for a production employee)
 Group: Payroll & Salary
-  - Salary Slips               -> /salary
-  - Advances                    -> /settlement
-
-Group: Other
-  - Digital ID Card             -> /idcard
-  - My Documents                 -> /documents
-  - Chat                          -> /chat
-
-Group: Alerts & Profile   (separate section)
-  - Notifications                -> /(tabs)/notifications
-    (badge = unread count)
-  - My Profile                    -> /(tabs)/profile
-  - About Company                  -> /company
-  - Resignation (red)              -> /resignation/warning
-
-Footer:
-  - Dark Mode toggle (Switch + "Auto" chip to follow system theme)
-  - Logout button
-  - Version text ("uktextiles v2.0")
+  Salary Slips, Advances & Loans
+Group: Records & Community
+  Digital ID Card, My Documents, Team Chat
+Bottom section: Notifications (unread badge), My Profile, About Company,
+  Help & Support; Dark mode (follow phone appearance), Log out, version.
 
 --------------------------------------------------------------------
 4c. Home Screen "Quick Actions" grid (app/(tabs)/home.tsx)
 --------------------------------------------------------------------
-22 tiles total (21 for a production employee: Compensation is staff only).
-First 6 shown by default; a "Show all N / Show less" toggle reveals the rest.
-
-TOP SIX (shown by default):
-  1. On-Duty              briefcase-outline               -> /on-duty              #815600
-  2. On-Duty Journey      map-marker-path                  -> /my-journeys          #0e7490
-  3. Missing Punch        fingerprint                      -> /missing-punch        #5e35b1
-  4. Leave                umbrella-outline                 -> /(tabs)/leave         #8e44ad
-  5. Permission           hand-pointing-right               -> /requests             #2980b9
-  6. Outpass              door-open                         -> /outpass              #009688
-
-BEHIND "Show all":
-  7.  Salary Slips         cash-multiple                     -> /salary               #27ae60
-  8.  Attendance           calendar-check-outline            -> /(tabs)/attendance    theme primary
-  9.  Attendance Request   map-marker-radius-outline          -> /geo-punch            #0891b2
-  10. My Shift             clock-outline                      -> /shift                #e67e22
-  11. Live Tracking        crosshairs-gps                     -> /geo-tracking         #0369a1
-  12. Advances             bank-transfer                      -> /settlement           #7f8c8d
-  13. Digital ID Card      card-account-details-outline        -> /idcard               #2c3e50
-  14. My Documents         folder-outline                      -> /documents            #00897b
-  15. Holidays             flag-outline                        -> /holidays             #c0392b
-  16. Compensation         briefcase-clock-outline (staff only) -> /compensation        #047857
-  17. HOD Assignment       shield-account-outline               -> /hod-assignment      #6D28D9
-  18. Notifications        bell-outline                        -> /(tabs)/notifications #735c00
-  19. Chat                 chat-outline                        -> /chat                 #0984e3
-  20. My Profile           account-circle-outline               -> /(tabs)/profile      #2c3e50
-  21. About Company        office-building-outline               -> /company            theme primary
-  22. Resignation          file-sign                             -> /resignation/warning #c62828
+First 6 shown; "Show all / Show less" toggles the rest. Gates: Compensation
+staff profile only; Apply Leave and Permission staffOnly.
+  1 On-Duty  2 On-Duty Journey  3 Missing Punch  4 Apply Leave
+  5 Permission  6 Gate Outpass  | 7 Salary Slips  8 Attendance
+  9 Attendance Request  10 My Shift  11 Live Tracking  12 Advances
+  13 Digital ID Card  14 My Documents  15 Holidays  16 Compensation
+  17 HOD Assignment  18 Enquiries  19 Notifications  20 Chat  21 My Profile
+  22 About Company  23 Resignation
+Home also shows: header (menu, greeting, clock, bell), "Needs your
+attention" (AttentionStrip: open gate pass, On-Duty running, requests
+waiting, advance applications, unused Casual Leave), Today panel, month
+overview, last salary card, live feed, location, ID card mini, upcoming
+holidays, Slide-to-Punch.
 
 
 ====================================================================
@@ -1939,6 +2057,73 @@ useShift.ts
 
 useShiftStats.ts
   useShiftStats(month, year)                 GET /attendance/employee-shift-stats
+
+
+Added / changed 2026-11-24 (and earlier additions now listed):
+
+useAuth.ts / src/lib/tokenRefresh.ts
+  POST /auth/refresh   renew the sign-in (180-day server session); legacy
+                       7-day tokens are upgraded
+  POST /auth/logout    end the session on the server at sign-out
+
+useWithdraw.ts
+  useWithdrawRequest()                     POST /my/requests/{module}/{id}/withdraw
+
+useHrTickets.ts
+  useMyHrTickets()                         GET  /employee-requests (own)
+  useSubmitHrTicket()                      POST /employee-requests
+
+useOnDutyActions.ts
+  useRequestOnDuty()                       POST /on-duty-sessions/request
+  useRecordOnDutyPunch()                   POST /on-duty-sessions/punch (multipart)
+  useEndOnDuty()                           POST /on-duty-sessions/complete
+
+useOutpass.ts
+  useGenerateReturnOutpassQr()             POST /outpass-requests/{id}/generate-return-qr
+
+Other endpoints in use: GET /approval-summary; GET /manager/requests,
+/manager/requests/summary, PATCH /manager/on-duty-sessions/{id}/status;
+GET /my/pending-requests, POST /my/pending-requests/{module}/{id}/remind;
+GET /my/salary-slips/{id}/breakdown, /my/salary-insights;
+GET /my/compensation-history; GET /casual-leaves/history;
+GET /my/advances, /my/advances/eligibility, /my/advances/{id}, POST /my/advances;
+GET /tea-break/qr-token, /tea-break/my-status; GET /support-contact;
+GET /mobile-app/latest-version; GET /dashboard/mobile-home-summary;
+GET /on-duty-sessions/mine; /tracking/state, /tracking/consent,
+/tracking/batch, /tracking/my-journeys, /tracking/journeys/{id}.
+
+
+====================================================================
+6. OFFLINE MODE AND SIGN-IN (NEW 2026-11-24)
+====================================================================
+
+Sign-in: lasts until the employee signs out. Each sign-in is a server
+session (backend EmployeeLoginSession, 180-day token renewed by POST
+/auth/refresh whenever the app is online and the token is older than ~10
+days). Sign-out calls POST /auth/logout (best effort) then clears the
+phone. Only the server can end a session (401 "Session revoked"); no
+internet, timeouts and server errors never sign anyone out.
+
+Offline queue (src/offline): leave, casual leave, permission, missing
+punch, outpass, compensation claim / use balance, Enquiries, withdraw, and
+On-Duty request / punch (selfies copied into app storage) / end. Each is
+sent with an Idempotency-Key (backend api/idempotency.py replays the first
+answer, so nothing is created twice). Offline or no answer -> kept in a
+SQLite queue on the phone and shown as "Saved on your phone".
+Sync: oldest first, at app start, sign-in, foreground, when the internet
+comes back, every ~45 s while items wait, and in the background via
+expo-background-task (Android WorkManager, >= 15 min, network required).
+Only a 2xx removes an item; a refusal stays as "Could not be sent" with
+the server's reason (Try again / Delete); 5xx / timeouts retry with
+backoff (30 s .. 15 min). Items belong to the employee who made them and
+stay on the phone across sign-out.
+Status: connection bar (No internet connection. Please turn on your
+network to sync your data. / Reconnecting... / Connected / Can't reach the
+server), OfflineSyncBar strip, "No internet" popup, /sync page.
+Reading offline: React Query cache persisted to AsyncStorage for 3 days
+(cleared at sign-out, reset by a new app version).
+Native modules added (need a new APK): expo-background-task,
+expo-media-library, react-native-view-shot.
 
 
 ====================================================================

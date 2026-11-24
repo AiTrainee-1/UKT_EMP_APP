@@ -6,6 +6,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  loginChannelStates,
+  codesForChannel,
+  purposeCodes,
   CODE_EXPIRED_NOTICE,
   OTP_LENGTH_BY_CHANNEL,
   askAgainLabel,
@@ -376,3 +379,17 @@ test('other refusals (unknown code, no mobile number, already has a password) sh
   assert.equal(describeOtpRequestError(http(400, {}), FALLBACK).message, FALLBACK)
   assert.equal(describeOtpRequestError(undefined, FALLBACK).kind, 'network')
 })
+
+test('login page: both OTP options are listed; a switched-off one is locked, never hidden (2026-11-24)', () => {
+  const both = loginChannelStates({ otpChannels: { login: ['whatsapp', 'sms'] }, passwordLogin: true });
+  assert.deepEqual(both.map((s) => [s.channel, s.enabled]), [['whatsapp', true], ['sms', true]]);
+  const smsOnly = loginChannelStates({ otpChannels: { login: ['sms'] } });
+  assert.deepEqual(smsOnly.map((s) => [s.label, s.enabled]), [['WhatsApp OTP', false], ['SMS OTP', true]]);
+  assert.match(smsOnly[0].lockedReason ?? '', /Not enabled/);
+  const none = loginChannelStates({ otpChannels: { login: [] } });
+  assert.ok(none.every((s) => !s.enabled));
+  const unknown = loginChannelStates(null, false);
+  assert.ok(unknown.every((s) => !s.enabled && /Checking/.test(s.lockedReason ?? '')));
+  const codes = purposeCodes({ otpChannels: { login: ['whatsapp', 'sms'] } }, 'login');
+  assert.deepEqual(codesForChannel(codes, 'sms').channels, ['sms']);
+});

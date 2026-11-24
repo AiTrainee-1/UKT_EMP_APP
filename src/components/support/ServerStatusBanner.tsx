@@ -35,7 +35,7 @@ const ICON: Record<Exclude<BannerView, 'none'>, keyof typeof MaterialCommunityIc
  * The connection bar, one strip above the navigator (so it never covers the tab bar or an input; the screens simply
  * start below it). Four states (src/lib/networkBanner.ts decides which):
  *
- *  - "No internet connection. Please turn on your internet." while the phone is offline. Persistent, not dismissable,
+ *  - "No internet connection. Please turn on your network to sync your data." while the phone is offline. Persistent, not dismissable,
  *    shown on every screen including Login.
  *  - "Reconnecting..." with a spinner once the internet is back, while the session is re-checked and screens refetch.
  *  - "Connected" briefly once the server has answered, then the bar goes away.

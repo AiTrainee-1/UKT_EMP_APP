@@ -34,6 +34,7 @@ export const TARGET_KINDS = [
   'approvals',
   'my_requests',
   'request',
+  'enquiry',
   'shift',
   'holidays',
   'profile',
@@ -154,6 +155,7 @@ const DEFAULT_LABEL: Record<TargetKind, string> = {
   approvals: 'Open approvals',
   my_requests: 'View my requests',
   request: 'View request',
+  enquiry: 'View enquiry',
   shift: 'View shift',
   holidays: 'View holidays',
   profile: 'View profile',
@@ -179,6 +181,7 @@ const SCREEN_NAME: Record<TargetKind, string> = {
   approvals: 'approvals',
   my_requests: 'your waiting requests',
   request: 'your waiting requests',
+  enquiry: 'your enquiries',
   shift: 'your shift',
   holidays: 'the holiday list',
   profile: 'your profile',
@@ -313,6 +316,9 @@ export function routeForTarget(t: NotificationTarget, viewer: TargetViewer = {})
       // My Requests on HOD Assignment: every request still waiting, and the attendance changes HR raised (this app has no
       // screen of its own for a general request either). With an id it scrolls to that row.
       return myRequestsRoute(t);
+    case 'enquiry':
+      // Enquiries (2026-11-24): HR changed one of the employee's enquiries or replied; it opens on that one.
+      return withFocus('/enquiries', t.id);
     case 'shift':
       return { pathname: '/shift', params: {} };
     case 'holidays':
@@ -343,6 +349,7 @@ const TYPE_KIND: Record<string, TargetKind> = {
   missing_punch: 'missing_punch',
   attendance: 'attendance',
   employee_request: 'request',
+  enquiry: 'enquiry',
   resignation: 'resignation',
   advance: 'advance',
   outpass: 'outpass',

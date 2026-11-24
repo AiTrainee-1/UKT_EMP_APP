@@ -111,6 +111,11 @@ export function isNetworkOnline(): boolean {
   return isOnline(state);
 }
 
+/** "Retry" on the no-internet notice: read the phone's network again now (an event may have been missed). */
+export function checkConnectionNow(): Promise<void> {
+  return readNow();
+}
+
 /** Called by the API client on every answer from our server. */
 export function noteServerAnswered() {
   dispatch({ type: 'server-answered' });

@@ -10,7 +10,8 @@ import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
 import { FormScrollView } from '../../src/components/FormScrollView';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { prefillDate } from '../../src/lib/dayPunches';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,6 +20,7 @@ import { MotiView } from 'moti';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { useShift } from '../../src/hooks/useShift';
+import { isQueued, QUEUED_MESSAGE } from '../../src/offline/submit';
 import { useMissingPunch, useSubmitMissingPunch, PUNCH_SLOT_LABEL, type MissingPunchSlot } from '../../src/hooks/useRequests';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { pipelineSentence, waitingPhrase, workflowOff } from '../../src/lib/approval';
@@ -72,6 +74,9 @@ export default function ReportMissingPunchScreen() {
   // days, and the request window moves on the 1st-3rd of a month. A punch cannot be missed tomorrow, so it ends today.
   const now = new Date();
   const limits = requestPickerLimits(now, { noFuture: true });
+  // Opened from the attendance day sheet: that day (owner 2026-11-24).
+  const params = useLocalSearchParams<{ date?: string }>();
+  const startDate = prefillDate(params.date, now) ?? limits.defaultDate;
 
   const { user } = useAuth();
   const employeeId = user?.employeeId ?? null;
@@ -95,7 +100,7 @@ export default function ReportMissingPunchScreen() {
   const { control, handleSubmit, watch, setValue, setError, clearErrors, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      date: limits.defaultDate,
+      date: startDate,
       punchTime: toHHmm(startTimeFor(null, 'morning_in', initialNow)),
       punchSlot: 'morning_in',
       reason: '',
@@ -165,6 +170,11 @@ export default function ReportMissingPunchScreen() {
     }
     try {
       const created = await submit.mutateAsync(data);
+      if (isQueued(created)) {
+        setSuccessMsg(QUEUED_MESSAGE);
+        setShowSuccess(true);
+        return;
+      }
       // Who it went to first comes from the request the server just created (HR's pipeline decides).
       const firstApprover = waitingPhrase(created?.approval);
       setSuccessMsg(

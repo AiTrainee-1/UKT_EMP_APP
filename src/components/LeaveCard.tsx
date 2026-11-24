@@ -10,6 +10,7 @@ import { BorderRadius } from '../constants/theme';
 import { Badge } from './ui/Badge';
 import { ApprovalTrail, WaitingChip } from './approval/ApprovalTrail';
 import { deciderFromFields } from '../lib/approvalsDecider';
+import { WithdrawButton } from './requests/WithdrawButton';
 import { LeaveRequest } from '../hooks/useLeave';
 import { leaveTitle, reasonCategoryIcon } from '../lib/leaveForm';
 
@@ -86,6 +87,7 @@ export function LeaveCard({ request, index = 0 }: Props) {
         })}
       />
       <ApprovalTrail approval={request.approval} />
+      <WithdrawButton module="leave" id={Number(request.id)} status={request.status} label={`leave request (${dateLabel})`} />
     </MotiView>
   );
 }

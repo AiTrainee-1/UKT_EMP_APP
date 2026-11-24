@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { sendOrQueue } from '../offline/submit';
 import {
   hasCapInfo,
   permissionOutcome,
@@ -116,8 +117,14 @@ export function useSubmitPermission(employeeId: number | null) {
       reason: string;
     }) => {
       const { time, ...rest } = data;
-      const res = await api.post('/permissions', { employeeId, ...rest, permissionTime: time });
-      return res.data;
+      return sendOrQueue<any>({
+        kind: 'permission.submit',
+        label: `Permission · ${data.type} · ${data.date}`,
+        url: '/permissions',
+        body: { employeeId, ...rest, permissionTime: time },
+        invalidate: [['permissions', employeeId], ['employee-shift-stats'], ['my-pending-requests']],
+        meta: { date: data.date, time, type: data.type, reason: data.reason },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['permissions', employeeId] });
@@ -178,8 +185,14 @@ export function useSubmitMissingPunch(employeeId: number | null) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (data: { date: string; punchTime: string; punchSlot: MissingPunchSlot; reason: string }) => {
-      const res = await api.post('/missing-punch-requests', { employeeId, ...data });
-      return res.data;
+      return sendOrQueue<any>({
+        kind: 'missingPunch.submit',
+        label: `Missing punch · ${data.date} ${data.punchTime}`,
+        url: '/missing-punch-requests',
+        body: { employeeId, ...data },
+        invalidate: [['missing-punch-requests', employeeId], ['my-pending-requests']],
+        meta: { date: data.date, punchTime: data.punchTime, punchSlot: data.punchSlot, reason: data.reason },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['missing-punch-requests', employeeId] });

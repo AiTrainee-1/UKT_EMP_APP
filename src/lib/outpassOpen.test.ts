@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { formatSpan, formatTicker, openKind, openPassClock, outpassRowLabel, pickOpenPass } from './outpassOpen.ts'
+import { formatSpan, formatTicker, openKind, openPassClock, outpassRowLabel, pickOpenPass, pickPendingPass } from './outpassOpen.ts'
 
 const NOW = Date.parse('2026-10-31T06:00:00Z')
 const iso = (minutesFromNow: number) => new Date(NOW + minutesFromNow * 60_000).toISOString()
@@ -51,7 +51,7 @@ test('the clock of an open pass', () => {
 })
 
 test('list badges say where the pass is at the gate', () => {
-  assert.equal(outpassRowLabel({ status: 'pending' }).label, 'Waiting')
+  assert.equal(outpassRowLabel({ status: 'pending' }).label, 'Pending approval')
   assert.equal(outpassRowLabel({ status: 'rejected' }).label, 'Not Approved')
   assert.equal(outpassRowLabel({ status: 'approved', scanStatus: 'pending_exit' }).label, 'Ready to use')
   for (const s of ['exited', 'pending_return', 'return_expired']) assert.equal(outpassRowLabel({ status: 'approved', scanStatus: s }).label, 'Out now')
@@ -69,3 +69,13 @@ test('plain time words', () => {
   assert.equal(formatTicker(59 * 60_000 + 5_000), '59:05')
   assert.equal(formatTicker(3_725_000), '1:02:05')
 })
+
+
+test('a pass waiting for approval is never open at the gate; it is pinned as pending instead (2026-11-24)', () => {
+  const now = Date.parse('2026-11-24T10:00:00Z');
+  const base = { createdAt: '2026-11-24T09:00:00Z', expiresAt: '2026-11-24T18:29:59Z' };
+  assert.equal(openKind({ id: 1, status: 'pending', source: 'on_duty', ...base }, now), null);
+  assert.equal(pickPendingPass([{ id: 1, status: 'pending', source: 'on_duty', ...base }], now)?.id, 1);
+  assert.equal(pickPendingPass([{ id: 2, status: 'approved', ...base }], now), null);
+  assert.deepEqual(outpassRowLabel({ status: 'pending', source: 'on_duty' }), { label: 'Pending approval', variant: 'pending' });
+});

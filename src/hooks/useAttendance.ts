@@ -1,3 +1,4 @@
+import type { DayPunchWire } from '../lib/dayPunches';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 import { readDayFlags } from '../lib/attendanceFlags';
@@ -64,6 +65,10 @@ export interface AttendanceRecord {
   punchCount?: number;
   source?: string;
   punches?: AttendancePunch[];
+  /** Since 2026-11-24: every punch of the day with its source (biometric, Office Geo Punch, On-Duty incl. waiting ones, OT
+   *  punches, missing punch, HR) and the shift the day earned (1.00 / 0.50 ...). Absent on an older backend. */
+  allPunches?: DayPunchWire[];
+  shiftsEarned?: number | null;
   /** The latest HR attendance edit of the day (any stage), or null. Absent on an older backend (= not edited). The
    *  calendar puts a "!" on the day and, once the edit is applied, the "Edited by HR" colour (src/lib/hrEdit.ts). */
   hrEdit?: HrEdit | null;
@@ -175,6 +180,8 @@ function transformAttendance(raw: any): AttendanceSummary {
         punchCount: r.totalPunches ?? r.punchCount ?? undefined,
         source: r.source ?? undefined,
         punches: r.punches ?? undefined,
+        allPunches: Array.isArray(r.allPunches) ? r.allPunches : undefined,
+        shiftsEarned: r.shiftsEarned == null ? null : Number(r.shiftsEarned),
         hrEdit: readHrEdit(r.hrEdit),
       };
     });

@@ -18,7 +18,7 @@ import { teaBreakDay } from '../../lib/myRequests';
  * server itself decides whether a scan means "going out" or "coming back"
  * based on whether an open break already exists -see
  * backend/api/tea_break_views.py::resolve_tea_break_scan. No approval, no
- * expiry to watch for here, unlike OutpassFlipCard.
+ * expiry to watch for here, unlike a gate pass (GatePassCard).
  */
 
 const REMARK_LABEL: Record<TeaBreakLogItem['remark'], string> = {

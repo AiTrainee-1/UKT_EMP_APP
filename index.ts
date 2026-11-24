@@ -6,4 +6,6 @@
 // `@expo/metro-runtime` stays first, as in expo-router's own entry (it must be the first import for web Fast Refresh).
 import '@expo/metro-runtime';
 import './src/tracking/collector';
+// The same reason for the offline queue's background sync task (src/offline/backgroundTask.ts).
+import './src/offline/backgroundTask';
 import 'expo-router/entry';

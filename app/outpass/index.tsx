@@ -33,11 +33,12 @@ import { outpassPassDay, outpassViewOptions } from '../../src/lib/myRequests';
 import { useSelectedMonth } from '../../src/hooks/useSelectedMonth';
 import { MonthSwitcher } from '../../src/components/MonthSwitcher';
 import { WaitingElsewhereNote } from '../../src/components/requests/WaitingElsewhereNote';
-import { outpassRowLabel, pickOpenPass } from '../../src/lib/outpassOpen';
+import { outpassRowLabel, pickOpenPass, pickPendingPass } from '../../src/lib/outpassOpen';
 import { WaitingChip } from '../../src/components/approval/ApprovalTrail';
 import { deciderFromFields } from '../../src/lib/approvalsDecider';
 import { WorkflowOffNote } from '../../src/components/approval/WorkflowOffNote';
-import { OutpassFlipCard } from '../../src/components/outpass/OutpassFlipCard';
+import { GatePassCard, type GatePassPerson } from '../../src/components/outpass/GatePassCard';
+import { QueuedOpsList } from '../../src/components/offline/QueuedOpsList';
 import { OpenPassBanner } from '../../src/components/outpass/OpenPassBanner';
 import { TeaBreakPanel } from '../../src/components/tea-break/TeaBreakPanel';
 import { RequestViewSwitcher } from '../../src/components/requests/RequestViewSwitcher';
@@ -77,6 +78,16 @@ export default function OutpassScreen() {
   const now = useNow(10_000);
 
   const items = data ?? [];
+  // Who the pass is for, on the card (the employee's own list carries no employee block).
+  const person: GatePassPerson | null = employee
+    ? {
+        name: employee.name,
+        employeeCode: employee.employeeCode,
+        department: employee.departmentName,
+        designation: employee.designationTitle,
+        photoUrl: employee.photoUrl ?? null,
+      }
+    : null;
   // The month switcher (owner 2026-11-02), shared by the Outpass and Tea Break sections: the outpass views list and count
   // only the passes of the month on screen (by the day of the pass: the day the employee went out, else the day it was
   // asked), and the Tea Break section lists that month's breaks. The open gate pass stays pinned whatever the month.
@@ -99,6 +110,9 @@ export default function OutpassScreen() {
   // The gate pass open right now - out and not back yet, or approved and its exit QR still valid (either source:
   // a manual request, or one an On-Duty approval raised). Pinned at the top (owner, 2026-10-31).
   const openPass = pickOpenPass(items, now);
+  // Nothing open: the newest pass still waiting for approval is pinned instead (no QR until it is approved).
+  const pendingPass = openPass ? null : pickPendingPass(items, now);
+  const refresh = () => refetch();
 
   // One month is on screen, so no month headings: the switcher already names it.
   const visible = rowsForView(items, view, opts);
@@ -176,7 +190,7 @@ export default function OutpassScreen() {
             <View style={styles.cardBottom}>
               <Text style={styles.dateTime}>
                 {format(new Date(item.createdAt), 'dd MMM yyyy · h:mm a')}
-                {item.source === 'on_duty' && ' · from On-Duty'}
+                {item.source === 'on_duty' && (item.status === 'pending' ? ' · On-Duty, QR after approval' : ' · from On-Duty')}
                 {item.approverRole && item.status === 'approved' && ` · Approved by ${APPROVER_LABEL[item.approverRole] ?? item.approverRole}`}
               </Text>
               <TouchableOpacity
@@ -258,11 +272,21 @@ export default function OutpassScreen() {
                     <Text style={styles.openHeadText}>OPEN GATE PASS</Text>
                   </View>
                   <OpenPassBanner pass={openPass} />
-                  <OutpassFlipCard request={openPass} employee={employee} />
+                  <GatePassCard pass={openPass} person={person} style={styles.openCard} onRefresh={refresh} refreshing={isRefetching} />
+                </Reveal>
+              )}
+              {pendingPass && (
+                <Reveal index={0} offsetY={14}>
+                  <View style={styles.openHead}>
+                    <MaterialCommunityIcons name="bell-ring-outline" size={14} color={Colors.statusOrange} />
+                    <Text style={[styles.openHeadText, { color: Colors.statusOrange }]}>WAITING FOR APPROVAL</Text>
+                  </View>
+                  <GatePassCard pass={pendingPass} person={person} style={styles.openCard} onRefresh={refresh} refreshing={isRefetching} />
                 </Reveal>
               )}
 
               <WorkflowOffNote workflow={approvalSummary?.outpass} style={styles.offNote} />
+              <QueuedOpsList kinds={['outpass.submit']} title="Not sent yet" style={styles.offNote} />
 
               {!failedFirstLoad && (
                 <>
@@ -315,8 +339,15 @@ export default function OutpassScreen() {
           </TouchableOpacity>
 
           {/* Outpass card preview - any request, any status, opened from its row */}
-          <BottomSheet visible={!!previewItem} onClose={() => setPreviewItem(null)} title="Outpass Card">
-            {previewItem && <OutpassFlipCard request={previewItem} employee={employee} />}
+          <BottomSheet visible={!!previewItem} onClose={() => setPreviewItem(null)} title="Gate Pass">
+            {previewItem && (
+              <GatePassCard
+                pass={items.find((i) => i.id === previewItem.id) ?? previewItem}
+                person={person}
+                onRefresh={refresh}
+                refreshing={isRefetching}
+              />
+            )}
           </BottomSheet>
         </>
       )}
@@ -358,6 +389,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   sectionLabelActive: { color: '#fff' },
 
   openHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  openCard: { marginTop: 10, marginBottom: 16 },
   openHeadText: { color: Colors.primary, fontSize: 10.5, fontWeight: '900', letterSpacing: 0.8 },
 
   card: { backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl, borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 10, gap: 6 },

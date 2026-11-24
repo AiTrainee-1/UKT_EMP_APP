@@ -30,7 +30,8 @@ import { BorderRadius } from '../../src/constants/theme';
 import { useAuth } from '../../src/hooks/useAuth';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
 import { isServerProblem } from '../../src/lib/supportContact';
-import { codeLengthFor, nextLoginMode, otpCopy, purposeCodes, singleChannel, type LoginMode } from '../../src/lib/otp';
+import { codesForChannel, loginChannelStates, purposeCodes, type OtpChannel } from '../../src/lib/otp';
+import { LoginMethodOption } from '../../src/components/auth/LoginMethodOption';
 import { loginRequest, otpLoginRequest } from '../../src/hooks/useAuth';
 import { useLoginOptions } from '../../src/hooks/useLoginOptions';
 
@@ -69,26 +70,22 @@ export default function LoginScreen() {
   // The last sign-in attempt got no answer from the server (or a 5xx): show the software-support contact.
   const [serverDown, setServerDown] = useState(false);
   const [rememberedCode, setRememberedCode] = useState('');
-  const [mode, setMode] = useState<LoginMode>('password');
-  // Which sign-in methods the server offers, asked again whenever this screen or the app comes back to the front (HR
-  // switches WhatsApp and SMS codes on and off separately). Until it answers (or if it can't), password sign-in works
-  // as before. A reload keeps the form the employee chose unless codes just went off / came on (nextLoginMode).
-  const { options, reload: reloadOptions } = useLoginOptions((next, previous) => {
-    setMode((current) =>
-      nextLoginMode(
-        current,
-        previous ? purposeCodes(previous, 'login').available : null,
-        purposeCodes(next, 'login').available,
-        next.passwordLogin,
-      ),
-    );
+  // Employee Code + Password is the default and always works (owner 2026-11-24). "Continue with SMS OTP" / "Continue with
+  // WhatsApp OTP" sit under it; the one chosen opens the code form for that channel only (null = the password form).
+  const [codeChannel, setCodeChannel] = useState<OtpChannel | null>(null);
+  // Which code channels the server offers, asked again whenever this screen or the app comes back to the front (HR
+  // switches WhatsApp and SMS codes on and off separately). A channel switched off while its form is open: back to password.
+  const { options, reload: reloadOptions } = useLoginOptions((next) => {
+    setCodeChannel((current) => {
+      if (!current) return current;
+      const still = loginChannelStates(next).find((st) => st.channel === current)?.enabled;
+      return still ? current : null;
+    });
   });
   const loginCodes = purposeCodes(options, 'login');
-  const showOtp = mode === 'otp' && loginCodes.available;
-  const canSwitch = loginCodes.available && !!options?.passwordLogin;
-  // Says "SMS" or "WhatsApp" when that is the one way on offer, or just "a code" (both on, or an older server).
-  const only = singleChannel(loginCodes);
-  const copy = otpCopy(only, codeLengthFor(loginCodes, only));
+  const channelStates = loginChannelStates(options, !!options);
+  const anyLocked = channelStates.some((st) => !st.enabled);
+  const showOtp = !!codeChannel;
 
   const { control, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -200,13 +197,14 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-        {showOtp ? (
+        {showOtp && codeChannel ? (
           <OtpFlow
+            key={codeChannel}
             purpose="login"
             submitLabel="Verify & Sign In"
-            codes={loginCodes}
+            codes={codesForChannel(loginCodes, codeChannel)}
             onChannelsChanged={reloadOptions}
-            onUsePassword={canSwitch ? () => setMode('password') : undefined}
+            onUsePassword={() => setCodeChannel(null)}
             initialIdentifier={rememberedCode}
             onSubmit={async (identifier, otp) => {
               const result = await otpLoginRequest(identifier, otp);
@@ -274,13 +272,29 @@ export default function LoginScreen() {
           </>
         )}
 
-        {canSwitch && (
-          <TouchableOpacity onPress={() => setMode(showOtp ? 'password' : 'otp')} style={styles.switchRow} activeOpacity={0.8}>
-            <MaterialCommunityIcons name={showOtp ? 'lock-outline' : copy.icon} size={16} color={AuthColors.accentDark} />
-            <Text style={styles.switchText}>
-              {showOtp ? 'Use my password instead' : copy.loginSwitchLink}
-            </Text>
+        {showOtp ? (
+          <TouchableOpacity onPress={() => setCodeChannel(null)} style={styles.switchRow} activeOpacity={0.8}>
+            <MaterialCommunityIcons name="lock-outline" size={16} color={AuthColors.accentDark} />
+            <Text style={styles.switchText}>Use my password instead</Text>
           </TouchableOpacity>
+        ) : (
+          <View style={styles.methods}>
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>OR CONTINUE WITH</Text>
+              <View style={styles.dividerLine} />
+            </View>
+            {channelStates.map((st) => (
+              <LoginMethodOption key={st.channel} state={st} onPress={() => setCodeChannel(st.channel)} />
+            ))}
+            {anyLocked && (
+              <Text style={styles.lockedNote}>
+                {options
+                  ? 'A locked option is switched off by HR right now. Your Employee Code and password always work.'
+                  : 'Checking which sign-in codes are available... Your Employee Code and password always work.'}
+              </Text>
+            )}
+          </View>
         )}
 
         <View style={styles.dividerRow}>
@@ -421,6 +435,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   signIn: { marginBottom: 6 },
 
   switchRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 14 },
+  methods: { gap: 10, marginTop: 4 },
+  lockedNote: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 11.5, lineHeight: 16, textAlign: 'center' },
   switchText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 13.5 },
 
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, marginBottom: 14 },

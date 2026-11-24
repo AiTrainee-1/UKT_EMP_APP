@@ -2,7 +2,7 @@
   "expo": {
     "name": "uktextiles",
     "slug": "ukt-team",
-    "version": "7.0.0",
+    "version": "7.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -25,7 +25,7 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "versionCode": 6,
+      "versionCode": 7,
       "predictiveBackGestureEnabled": false,
       "package": "net.uktex.employee",
       "permissions": [
@@ -82,6 +82,16 @@
         }
       ],
       "expo-sharing",
+      "expo-background-task",
+      [
+        "expo-media-library",
+        {
+          "savePhotosPermission": "UKTextiles saves your gate pass card to your photos when you tap Download.",
+          "photosPermission": "UKTextiles saves your gate pass card to your photos when you tap Download.",
+          "isAccessMediaLocationEnabled": false,
+          "granularPermissions": ["photo"]
+        }
+      ],
       "expo-status-bar",
       [
         "expo-splash-screen",

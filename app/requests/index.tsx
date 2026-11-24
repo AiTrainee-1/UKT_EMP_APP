@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { QueuedOpsList } from '../../src/components/offline/QueuedOpsList';
 import {
   View,
   Text,
@@ -15,6 +16,7 @@ import { format, parseISO } from 'date-fns';
 import { MotiView } from 'moti';
 
 import { useAuth } from '../../src/hooks/useAuth';
+import { WithdrawButton } from '../../src/components/requests/WithdrawButton';
 import { usePermissions, type PermissionRequest } from '../../src/hooks/useRequests';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { pipelineSentence, workflowOff } from '../../src/lib/approval';
@@ -207,6 +209,12 @@ export default function RequestsScreen() {
               fallback={deciderFromFields({ status: item.status, name: item.approvedBy, role: item.approverRole })}
             />
             <ApprovalTrail approval={item.approval} />
+            <WithdrawButton
+              module="permission"
+              id={Number(item.id)}
+              status={item.status}
+              label={`permission request (${dayLabel(item.date)})`}
+            />
             <View style={styles.cardFooterRow}>
               <Text style={styles.refText}>Req ID: #PR-{item.id}</Text>
               {!!duration && <Text style={styles.durationText}>{duration}</Text>}
@@ -332,6 +340,7 @@ export default function RequestsScreen() {
                   style={styles.monthSwitch}
                   testID="permission-month"
                 />
+                <QueuedOpsList kinds={['permission.submit', 'request.withdraw']} title="Not sent yet" style={{ marginBottom: 10 }} />
                 <View style={styles.switcher}>
                   <RequestViewSwitcher
                     value={view}

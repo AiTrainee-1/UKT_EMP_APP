@@ -18,6 +18,7 @@ import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useEmployee } from '../../src/hooks/useEmployee';
+import { isQueued, QUEUED_MESSAGE } from '../../src/offline/submit';
 import { useOutpassRequests, useSubmitOutpassRequest, OUTPASS_PASS_TYPE_LABEL, type OutpassPassType } from '../../src/hooks/useOutpass';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { pipelineSentence, workflowOff } from '../../src/lib/approval';
@@ -65,6 +66,7 @@ export default function RequestGateOutpassScreen() {
   const outpassFlow = approvalSummary?.outpass;
 
   const [showSuccess, setShowSuccess] = React.useState(false);
+  const [savedOffline, setSavedOffline] = React.useState(false);
   const [toast, setToast] = React.useState({ message: '', type: 'error' as 'success' | 'error', visible: false });
 
   // "Now" is read when the screen renders, never once at module load: the app process lives for days.
@@ -97,12 +99,13 @@ export default function RequestGateOutpassScreen() {
       expectedReturn.setHours(h, m, 0, 0);
       // A return time earlier than now means tomorrow (e.g. asked at 11 PM, back at 1 AM), never a time already past.
       if (expectedReturn.getTime() <= sentAt.getTime()) expectedReturn.setDate(expectedReturn.getDate() + 1);
-      await submit.mutateAsync({
+      const sent = await submit.mutateAsync({
         destination: form.destination,
         reason: form.reason,
         passType: form.passType as OutpassPassType,
         expectedReturnAt: expectedReturn.toISOString(),
       });
+      setSavedOffline(isQueued(sent));
       setShowSuccess(true);
     } catch (err: any) {
       const msg = err?.response?.data?.error || err?.response?.data?.message || 'Failed to submit. Please try again.';
@@ -246,8 +249,8 @@ export default function RequestGateOutpassScreen() {
       <Toast {...toast} />
       <SuccessOverlay
         visible={showSuccess}
-        title="Request Submitted!"
-        message="Your outpass request has been sent for approval."
+        title={savedOffline ? 'Saved on your phone' : 'Request Submitted!'}
+        message={savedOffline ? QUEUED_MESSAGE : 'Your outpass request has been sent for approval.'}
         onDone={() => { setShowSuccess(false); router.back(); }}
       />
     </SafeAreaView>

@@ -1,7 +1,10 @@
 import React, { useState, useEffect, Component, ReactNode, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, LogBox, AppState } from 'react-native';
 import { Stack } from 'expo-router';
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, useQueryClient } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemeProvider } from '../src/theme/ThemeProvider';
 import { StatusBar } from 'expo-status-bar';
 import { AuthContext, AuthUser, pingServer, readStoredSession, useAuth, verifySession } from '../src/hooks/useAuth';
@@ -19,6 +22,11 @@ import { ensureTracking, stopTrackingForSignOut } from '../src/tracking/actions'
 import { useTrackingLifecycle, useTrackingState } from '../src/tracking/useTracking';
 import { useNotificationObserver } from '../src/hooks/useNotifications';
 import { PermissionGate } from '../src/components/PermissionGate';
+import { OfflineSyncBar } from '../src/components/offline/OfflineSyncBar';
+import { refreshOfflineStatus, startOfflineSync, syncNow } from '../src/offline/engine';
+import { registerOfflineSyncTask } from '../src/offline/backgroundTask';
+import { refreshTokenIfDue, revokeSessionOnServer } from '../src/lib/tokenRefresh';
+import { APP_VERSION } from '../src/lib/appVersion';
 
 // Dev-only noise from a dependency (moti 0.29), not from this app: its SafeAreaView wrapper reads React Native's deprecated
 // `SafeAreaView` export, and it passes a dependency array to Reanimated's useAnimatedStyle. The app's own screens do neither.
@@ -106,12 +114,28 @@ const eb = StyleSheet.create({
 // Queries pause while the phone is offline and pick up when it is back (src/lib/networkStatus.ts wires onlineManager).
 // Mutations keep failing straight away offline ('always'), so a button never spins until the internet returns and the
 // screens keep showing their own "could not reach the server" errors.
+// What the screens last showed is kept on the phone (AsyncStorage) for OFFLINE_CACHE_MS, so the app still shows the
+// employee's data with no internet (owner 2026-11-24: "the app must be usable offline"); it refreshes as soon as the
+// server answers. Signing out clears it (queryClient.clear() below), and a new app version starts afresh (`buster`).
+const OFFLINE_CACHE_MS = 1000 * 60 * 60 * 24 * 3;
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 1, staleTime: 1000 * 60 * 5 },
+    queries: { retry: 1, staleTime: 1000 * 60 * 5, gcTime: OFFLINE_CACHE_MS },
     mutations: { networkMode: 'always' },
   },
 });
+
+const queryPersister = createAsyncStoragePersister({ storage: AsyncStorage, key: 'uktextiles-query-cache', throttleTime: 2000 });
+const persistOptions = {
+  persister: queryPersister,
+  maxAge: OFFLINE_CACHE_MS,
+  buster: APP_VERSION,
+  dehydrateOptions: {
+    // only answers the server gave (never a failed / still-loading query, never the offline queue's own list)
+    shouldDehydrateQuery: (query: { state: { status: string }; queryKey: readonly unknown[] }) =>
+      query.state.status === 'success' && query.queryKey[0] !== 'offline-queue',
+  },
+};
 
 // Online at start-up with a stored sign-in: give the server this long to confirm it, then open with the stored user
 // and let the check finish in the background (never wait out the 15 s request timeout on the startup screen).
@@ -146,6 +170,27 @@ function ResignationGuard() {
     }
   }, [data?.status]);
 
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Session keeper + offline queue (owner 2026-11-24): the sign-in lasts until the employee signs out. While signed in,
+// the token is renewed now and then (src/lib/tokenRefresh.ts), and the offline queue (src/offline) is sent whenever
+// the server can be reached; the background sync task is scheduled once.
+// ---------------------------------------------------------------------------
+function SessionKeeper() {
+  const { user } = useAuth();
+  useEffect(() => {
+    void refreshOfflineStatus();
+    if (!user?.employeeId) return;
+    void refreshTokenIfDue();
+    void registerOfflineSyncTask();
+    void syncNow('signed-in');
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshTokenIfDue();
+    });
+    return () => subscription.remove();
+  }, [user?.employeeId]);
   return null;
 }
 
@@ -300,6 +345,9 @@ export default function RootLayout() {
     prefetchSupportContact(queryClient).catch(() => {});
   }, []);
 
+  // The offline queue: sent when the internet comes back, when the app comes to the front, and at start.
+  useEffect(() => startOfflineSync(queryClient), []);
+
   // If the fonts fail to load the app still starts, with system fonts, instead of staying blank.
   const fontsReady = fontsLoaded || !!fontError;
 
@@ -330,7 +378,11 @@ export default function RootLayout() {
       await stopTrackingForSignOut();
       await queryClient.cancelQueries();
       router.replace(to);
+      // End the sign-in on the server too (best effort, a few seconds at most), then forget it on the phone. Anything
+      // still waiting in the offline queue stays on the phone and is sent when this employee signs in again.
+      await revokeSessionOnServer(await getToken().catch(() => null));
       await clearAuth();
+      void refreshOfflineStatus();
       setTimeout(() => {
         setUser(null);
         queryClient.clear();
@@ -412,6 +464,7 @@ export default function RootLayout() {
             return true;
           }
           if (check !== 'valid') return false;
+          void refreshTokenIfDue();
           if (action.kind === 'signed-in' && action.user.role !== signedIn.role) {
             const fresh = action.user;
             setUser((prev) => (prev && prev.employeeId === fresh.employeeId ? { ...prev, role: fresh.role } : prev));
@@ -433,19 +486,21 @@ export default function RootLayout() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
+        <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
         <AuthContext.Provider value={{ user, isLoading, login, logout, logoutTo, setUser }}>
           <StatusBar style="light" />
           <PermissionGate />
           <UpdatePrompt />
           <ResignationGuard />
           <PushTokenRegistrar />
+          <SessionKeeper />
           <TrackingBridge />
           <LiveLocationTracker />
           <NotificationTapHandler />
           {/* The server-status bar takes its own strip above the navigator, so it never covers a screen. */}
           <View style={{ flex: 1 }}>
           <ServerStatusBanner />
+          <OfflineSyncBar />
           <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
@@ -471,10 +526,12 @@ export default function RootLayout() {
             <Stack.Screen name="compensation" />
             <Stack.Screen name="hod-assignment" />
             <Stack.Screen name="casual-leave" />
+            <Stack.Screen name="sync" />
+            <Stack.Screen name="enquiries" />
           </Stack>
           </View>
           </AuthContext.Provider>
-        </QueryClientProvider>
+        </PersistQueryClientProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

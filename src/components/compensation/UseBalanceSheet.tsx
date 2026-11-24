@@ -11,6 +11,7 @@ import { Button } from '../ui/Button';
 import { TextArea } from '../ui/TextArea';
 import { DatePickerField } from '../ui/DatePickerField';
 import { ShiftPicker } from './ShiftPicker';
+import { isQueued, QUEUED_MESSAGE } from '../../offline/submit';
 import { useUseCompensationBalance } from '../../hooks/useCompensation';
 import { shiftsLabel, type UseBalanceInfo } from '../../lib/compensation';
 import {
@@ -76,7 +77,11 @@ export function UseBalanceSheet({
     }
     setErrors({});
     try {
-      await send.mutateAsync(built.body);
+      const sent = await send.mutateAsync(built.body);
+      if (isQueued(sent)) {
+        onSubmitted(QUEUED_MESSAGE);
+        return;
+      }
       onSubmitted(`Request to use ${shiftsLabel(built.body.shifts)} sent to your Department Head.`);
     } catch (err) {
       setErrors({ server: claimErrorMessage(err, 'Could not send the request. Please try again.') });

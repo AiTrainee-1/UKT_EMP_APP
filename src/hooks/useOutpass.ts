@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { sendOrQueue } from '../offline/submit';
 import type { ApprovalProgress } from '../lib/approval';
 
 // See backend/api/outpass_request_views.py::_outpass_request_json. The final
@@ -49,6 +50,20 @@ export interface OutpassRequestItem {
   // pipeline. Null for a pass an On-Duty approval raised (no pipeline of its
   // own), absent on an older backend.
   approval?: ApprovalProgress | null;
+  /** Since 2026-11-24: when the exit QR becomes valid (an On-Duty pass: the moment the On-Duty was submitted). */
+  validFrom?: string | null;
+  /** The On-Duty request this pass belongs to, and that request's own state (its pass is raised at submission). */
+  onDutySessionId?: number | null;
+  onDutyStatus?: string | null;
+  /** The employee block (HR lists and the On-Duty status carry it; the employee's own list does not). */
+  employee?: {
+    id: number;
+    employeeCode?: string | null;
+    name?: string | null;
+    department?: string | null;
+    designation?: string | null;
+    photoUrl?: string | null;
+  } | null;
 }
 
 // GET/POST both self-scope to the logged-in employee token server-side —
@@ -75,8 +90,14 @@ export function useSubmitOutpassRequest(employeeId: number | null) {
       passType?: OutpassPassType;
       expectedReturnAt?: string;
     }) => {
-      const res = await api.post('/outpass-requests', data);
-      return res.data;
+      return sendOrQueue<any>({
+        kind: 'outpass.submit',
+        label: `Gate outpass · ${data.destination}`,
+        url: '/outpass-requests',
+        body: data,
+        invalidate: [['outpass-requests', employeeId], ['my-pending-requests']],
+        meta: { destination: data.destination, reason: data.reason, passType: data.passType ?? null },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['outpass-requests', employeeId] });
@@ -96,6 +117,8 @@ export function useGenerateReturnOutpassQr(employeeId: number | null) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['outpass-requests', employeeId] });
+      // an On-Duty's pass is also shown on the On-Duty page
+      queryClient.invalidateQueries({ queryKey: ['on-duty-session-status'] });
     },
   });
 }

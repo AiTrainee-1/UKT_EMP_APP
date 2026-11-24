@@ -560,3 +560,45 @@ export function describeOtpRequestError(err: unknown, fallback: string): OtpRequ
   if (status === 403) return { kind: 'turned_off', message, waitSeconds: 0, serverDown: false, offerHr: true };
   return { kind: 'rejected', message, waitSeconds: 0, serverDown: false, offerHr: true };
 }
+
+// ── The sign-in methods on the login page (owner 2026-11-24) ───────────────────────────────────────────────────────────
+// Employee Code + Password is the default and always works. "Continue with SMS OTP" and "Continue with WhatsApp OTP" sit
+// under it: a channel HR switched on is open; one that is off (or cannot send right now) stays on screen, LOCKED.
+
+export interface LoginChannelState {
+  channel: OtpChannel;
+  /** "SMS OTP" / "WhatsApp OTP". */
+  label: string;
+  enabled: boolean;
+  /** Under a locked option: why it cannot be used. */
+  lockedReason: string | null;
+}
+
+/**
+ * One row per channel (WhatsApp first). `options` null = the server could not be asked yet: both are shown locked with
+ * "Checking..." words (password sign-in still works). An older server that does not name its channel: the one code it
+ * offers is open for both (the server picks the channel).
+ */
+export function loginChannelStates(options: CodeOptionsSource | null | undefined, loaded = true): LoginChannelState[] {
+  const codes = purposeCodes(options, 'login');
+  const unnamed = codes.available && codes.channels.length === 0;
+  return OTP_CHANNELS.map((channel) => {
+    const enabled = !!options && (unnamed || codes.channels.includes(channel));
+    return {
+      channel,
+      label: `${channelName(channel)} OTP`,
+      enabled,
+      lockedReason: enabled
+        ? null
+        : !loaded || !options
+          ? 'Checking if it is available...'
+          : `Not enabled. ${channelName(channel)} sign-in codes are switched off by HR right now.`,
+    };
+  });
+}
+
+/** The sign-in options restricted to one channel (the employee chose "Continue with SMS OTP" / "... WhatsApp OTP"). */
+export function codesForChannel(codes: PurposeCodes, channel: OtpChannel): PurposeCodes {
+  if (codes.channels.length === 0) return codes; // an older server picks the channel itself
+  return { ...codes, channels: codes.channels.includes(channel) ? [channel] : [], available: codes.channels.includes(channel) };
+}

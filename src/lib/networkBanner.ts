@@ -2,7 +2,7 @@
  * The connection banner's state machine. Pure (no React Native, no expo-network), tested in networkBanner.test.ts;
  * src/lib/networkStatus.ts feeds it the phone's network events and runs the re-check it asks for.
  *
- *   online --(internet lost)--> OFFLINE "No internet connection. Please turn on your internet."
+ *   online --(internet lost)--> OFFLINE "No internet connection. Please turn on your network to sync your data."
  *   OFFLINE --(internet back)--> RECONNECTING "Reconnecting..." (the session is re-checked, screens refetch)
  *   RECONNECTING --(re-check answered)--> CONNECTED "Connected" (briefly) --> hidden
  *   RECONNECTING --(server did not answer)--> hidden, and the server-status store shows "Can't reach the server"
@@ -119,7 +119,7 @@ export function bannerView(f: BannerViewFacts): BannerView {
 }
 
 export const BANNER_TEXT: Record<Exclude<BannerView, 'none'>, string> = {
-  offline: 'No internet connection. Please turn on your internet.',
+  offline: 'No internet connection. Please turn on your network to sync your data.',
   reconnecting: 'Reconnecting...',
   connected: 'Connected',
   'server-down': "Can't reach the server",

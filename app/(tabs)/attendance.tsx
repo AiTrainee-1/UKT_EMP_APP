@@ -328,6 +328,7 @@ export default function AttendanceScreen() {
               openDate={openDay?.refreshed && !isFetching && data ? openDay : null}
               onOpenDate={onOpenDate}
               futureHrEdits={data?.futureHrEdits}
+              isStaff={showCompensationLegend}
             />
           )}
         </View>

@@ -73,6 +73,8 @@ const NAV_GROUPS: NavGroup[] = [
       // employee while it loads); the Department Head card is for everybody.
       { icon: 'briefcase-clock-outline', label: 'Compensation', route: '/compensation', color: '#047857', staffProfileOnly: true },
       { icon: 'shield-account-outline', label: 'HOD Assignment', route: '/hod-assignment', color: '#6D28D9' },
+      { icon: 'message-question-outline', label: 'Enquiries', route: '/enquiries', color: '#0F766E' },
+      { icon: 'cloud-sync-outline', label: 'Sync', route: '/sync', color: '#1D4ED8' },
     ],
   },
   {

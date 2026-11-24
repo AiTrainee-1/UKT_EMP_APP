@@ -75,6 +75,7 @@ const makeQuickActions = (Colors: Palette) => ([
   { label: 'Holidays', icon: 'flag-outline', route: '/holidays' as const, iconColor: '#c0392b', bg: Colors.badgeRedBg },
   { label: 'Compensation', icon: 'briefcase-clock-outline', route: '/compensation' as const, iconColor: '#047857', bg: '#E1F5EC' },
   { label: 'HOD Assignment', icon: 'shield-account-outline', route: '/hod-assignment' as const, iconColor: '#6D28D9', bg: '#EFEBFF' },
+  { label: 'Enquiries', icon: 'message-question-outline', route: '/enquiries' as any, iconColor: '#0F766E', bg: '#E0F2F1' },
   { label: 'Notifications', icon: 'bell-outline', route: '/(tabs)/notifications' as const, iconColor: Colors.secondary, bg: Colors.secondaryFixed },
   { label: 'Chat', icon: 'chat-outline', route: '/chat' as const, iconColor: Colors.categoryChat, bg: Colors.badgeBlueBg },
   { label: 'My Profile', icon: 'account-circle-outline', route: '/(tabs)/profile' as const, iconColor: '#2c3e50', bg: Colors.bgSurfaceLow },

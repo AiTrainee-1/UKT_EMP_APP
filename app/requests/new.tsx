@@ -10,13 +10,15 @@ import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
 import { FormScrollView } from '../../src/components/FormScrollView';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { prefillDate } from '../../src/lib/dayPunches';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { format } from 'date-fns';
 
 import { useAuth } from '../../src/hooks/useAuth';
+import { isQueued, QUEUED_MESSAGE } from '../../src/offline/submit';
 import { usePermissions, useSubmitPermission } from '../../src/hooks/useRequests';
 import { useShiftStats, permissionLimitFromStats } from '../../src/hooks/useShiftStats';
 import { useApprovalSummary } from '../../src/hooks/useApproval';
@@ -63,6 +65,10 @@ export default function NewPermissionRequestScreen() {
   // days, and the request window moves on the 1st-3rd of a month.
   const now = new Date();
   const limits = requestPickerLimits(now);
+  // Opened from the attendance day sheet: that day and the kind of permission that fits it (owner 2026-11-24).
+  const params = useLocalSearchParams<{ date?: string; type?: string }>();
+  const startDate = prefillDate(params.date, now) ?? limits.defaultDate;
+  const startType = PERMISSION_TYPE_OPTIONS.find((t) => t.wire === params.type) ?? PERMISSION_TYPE_OPTIONS[0];
 
   const { user } = useAuth();
   const { data: shiftStats } = useShiftStats(now.getMonth() + 1, now.getFullYear());
@@ -73,14 +79,15 @@ export default function NewPermissionRequestScreen() {
   const permissionFlow = approvalSummary?.permission;
 
   const [showSuccess, setShowSuccess] = React.useState(false);
+  const [savedOffline, setSavedOffline] = React.useState(false);
   const [toast, setToast] = React.useState({ message: '', type: 'error' as 'success' | 'error', visible: false });
 
   const { control, handleSubmit, watch, setValue, setError, clearErrors, formState: { errors, dirtyFields } } = useForm<FormData>({
     resolver: zodResolver(schema),
     defaultValues: {
-      type: PERMISSION_TYPE_OPTIONS[0].wire,
-      date: limits.defaultDate,
-      time: PERMISSION_TYPE_OPTIONS[0].defaultTime,
+      type: startType.wire,
+      date: startDate,
+      time: startType.defaultTime,
       reason: '',
     },
   });
@@ -118,7 +125,8 @@ export default function NewPermissionRequestScreen() {
       return;
     }
     try {
-      await submit.mutateAsync(form);
+      const sent = await submit.mutateAsync(form);
+      setSavedOffline(isQueued(sent));
       setShowSuccess(true);
     } catch (err: any) {
       // Server text wins (a 409 is a duplicate request for that day/type and carries its own message).
@@ -296,8 +304,8 @@ export default function NewPermissionRequestScreen() {
       <Toast {...toast} />
       <SuccessOverlay
         visible={showSuccess}
-        title="Request Submitted!"
-        message="Your permission request has been sent for approval."
+        title={savedOffline ? 'Saved on your phone' : 'Request Submitted!'}
+        message={savedOffline ? QUEUED_MESSAGE : 'Your permission request has been sent for approval.'}
         onDone={() => { setShowSuccess(false); router.back(); }}
       />
     </SafeAreaView>

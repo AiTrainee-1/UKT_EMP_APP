@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { sendOrQueue } from '../offline/submit';
 import { useAuth } from './useAuth';
 import { normalizeCompensation, type EmployeeCompensation } from '../lib/compensation';
 import { normalizeMyClaims, type ClaimBody, type MyClaim, type UseBody } from '../lib/compensationClaims';
@@ -88,8 +89,14 @@ export function useSubmitCompensationClaim() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (body: ClaimBody) => {
-      const res = await api.post('/employee/compensation/claims', body);
-      return res.data;
+      return sendOrQueue<any>({
+        kind: 'compensation.claim',
+        label: `Compensation claim · ${String((body as any).date ?? '')}`,
+        url: '/employee/compensation/claims',
+        body: body as unknown as Record<string, unknown>,
+        invalidate: [['employee-compensation'], ['compensation-history'], [MY_CLAIMS_KEY], ['my-pending-requests']],
+        meta: { ...(body as unknown as Record<string, unknown>) },
+      });
     },
     onSuccess: () => invalidateCompensation(queryClient),
   });
@@ -100,8 +107,14 @@ export function useUseCompensationBalance() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (body: UseBody) => {
-      const res = await api.post('/employee/compensation/use', body);
-      return res.data;
+      return sendOrQueue<any>({
+        kind: 'compensation.use',
+        label: `Use compensation balance · ${String((body as any).date ?? '')}`,
+        url: '/employee/compensation/use',
+        body: body as unknown as Record<string, unknown>,
+        invalidate: [['employee-compensation'], ['compensation-history'], [MY_CLAIMS_KEY], ['my-pending-requests']],
+        meta: { ...(body as unknown as Record<string, unknown>) },
+      });
     },
     onSuccess: () => invalidateCompensation(queryClient),
   });

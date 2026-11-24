@@ -15,7 +15,30 @@ export type OpenPassInput = {
   enteredAt?: string | null;
   expectedReturnAt?: string | null;
   createdAt: string;
+  /** 'on_duty': the pass of an On-Duty request (shown from submission, usable only once approved). */
+  source?: string | null;
 };
+
+/** Only an approved pass can be used at the gate (owner 2026-11-24: no QR before HR / HOD approval). */
+function decidedForTheGate(p: OpenPassInput): boolean {
+  return p.status === 'approved';
+}
+
+/**
+ * The newest pass still waiting for approval, asked for today: pinned under "Waiting for approval" when no pass is open
+ * (the card is shown at once; its QR comes with the approval).
+ */
+export function pickPendingPass<T extends OpenPassInput>(items: readonly T[], nowMs: number): T | null {
+  const today = new Date(nowMs).toDateString();
+  let best: T | null = null;
+  for (const item of items) {
+    if (item.status !== 'pending') continue;
+    const at = ms(item.createdAt);
+    if (at == null || new Date(at).toDateString() !== today) continue;
+    if (!best || at > (ms(best.createdAt) ?? 0)) best = item;
+  }
+  return best;
+}
 
 export type OpenPassKind = 'out' | 'ready';
 
@@ -26,7 +49,7 @@ function ms(value: string | null | undefined): number | null {
 }
 
 export function openKind(p: OpenPassInput, nowMs: number): OpenPassKind | null {
-  if (p.status !== 'approved') return null;
+  if (!decidedForTheGate(p)) return null;
   if (p.exitedAt && !p.enteredAt) return 'out';
   if (p.exitedAt) return null; // went out and came back: done
   const exp = ms(p.expiresAt);
@@ -97,8 +120,14 @@ export type OutpassRowLabel = { label: string; variant: 'pending' | 'approved' |
  * The plain-English badge of a pass in the list, from its status and where it is at the gate (`scanStatus`):
  * Waiting / Not Approved / Ready to use / Out now / Returned / Not used (the 60 minutes ran out) / Approved.
  */
-export function outpassRowLabel(p: { status: string; scanStatus?: string | null; exitedAt?: string | null; enteredAt?: string | null }): OutpassRowLabel {
-  if (p.status === 'pending') return { label: 'Waiting', variant: 'pending' };
+export function outpassRowLabel(p: {
+  status: string;
+  scanStatus?: string | null;
+  exitedAt?: string | null;
+  enteredAt?: string | null;
+  source?: string | null;
+}): OutpassRowLabel {
+  if (p.status === 'pending') return { label: 'Pending approval', variant: 'pending' };
   if (p.status === 'rejected') return { label: 'Not Approved', variant: 'rejected' };
   if (p.status !== 'approved') return { label: p.status, variant: 'pending' };
   switch (p.scanStatus) {

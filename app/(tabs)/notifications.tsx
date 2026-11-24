@@ -60,6 +60,7 @@ const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: stri
   missing_punch: { icon: 'fingerprint', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Missing Punch Update' },
   attendance: { icon: 'calendar-check-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Attendance Update' },
   employee_request: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
+  enquiry: { icon: 'message-question-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Enquiry Update' },
   resignation: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Update' },
   // Compensation, to the employee: the Department Head decided one of their claims, of any kind, raised by them or by HR
   // (type "compensation"; its View opens the claim on the Compensation screen).

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,12 +16,15 @@ import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router, type Href } from 'expo-router';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { prefillDate } from '../../src/lib/dayPunches';
 import { format } from 'date-fns';
 import { MotiView } from 'moti';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useConfirmSignOut } from '../../src/hooks/useSignOut';
+import { QueuedOpsList } from '../../src/components/offline/QueuedOpsList';
+import { isQueued, QUEUED_MESSAGE } from '../../src/offline/submit';
 import { useLeaveRequests, useApplyLeave, LeaveRequest } from '../../src/hooks/useLeave';
 import { useCasualLeaves, useCLEligibility } from '../../src/hooks/useCasualLeave';
 import { useHolidays } from '../../src/hooks/useHolidays';
@@ -222,6 +225,20 @@ export default function LeaveScreen() {
     setShowApply(true);
   };
 
+  // Opened from the attendance day sheet (?applyDate=YYYY-MM-DD, owner 2026-11-24): the apply sheet opens on that day.
+  // The parameter is cleared once used, so coming back to this tab later does not open it again.
+  const routeParams = useLocalSearchParams<{ applyDate?: string }>();
+  useEffect(() => {
+    const day = prefillDate(routeParams.applyDate, new Date(), { allowFuture: true });
+    if (!routeParams.applyDate) return;
+    router.setParams({ applyDate: undefined } as any);
+    if (!day) return;
+    reset(makeDefaults(day));
+    setFormError('');
+    setShowApply(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeParams.applyDate]);
+
   const closeSheet = () => {
     setShowApply(false);
     setMultiDay(false);
@@ -268,7 +285,7 @@ export default function LeaveScreen() {
         return;
       }
       try {
-        await applyLeave.mutateAsync({
+        const sentHalf = await applyLeave.mutateAsync({
           type: PLAIN_LEAVE_TYPE,
           reasonCategory,
           startDate: data.date,
@@ -281,7 +298,7 @@ export default function LeaveScreen() {
         setView('waiting');
         // Show the month the new request is for, so it is right there under Waiting.
         setMonth(monthOf(data.date) ?? currentMonth());
-        setSuccessMsg('Your half-day leave request has been sent for approval.');
+        setSuccessMsg(isQueued(sentHalf) ? QUEUED_MESSAGE : 'Your half-day leave request has been sent for approval.');
         setShowSuccess(true);
       } catch (err) {
         failInSheet(approvalErrorMessage(err, 'Failed to submit. Please try again.'));
@@ -310,11 +327,11 @@ export default function LeaveScreen() {
     }
     try {
       // A plain "Leave" with the reason category: never a Casual Leave type, never an id the app made up.
-      await applyLeave.mutateAsync({ type: PLAIN_LEAVE_TYPE, reasonCategory, startDate, endDate, reason: data.reason });
+      const sent = await applyLeave.mutateAsync({ type: PLAIN_LEAVE_TYPE, reasonCategory, startDate, endDate, reason: data.reason });
       closeSheet();
       setView('waiting');
       setMonth(monthOf(startDate) ?? currentMonth());
-      setSuccessMsg('Your leave request has been sent for approval.');
+      setSuccessMsg(isQueued(sent) ? QUEUED_MESSAGE : 'Your leave request has been sent for approval.');
       setShowSuccess(true);
     } catch (err) {
       failInSheet(approvalErrorMessage(err, 'Failed to submit. Please try again.'));
@@ -387,6 +404,7 @@ export default function LeaveScreen() {
           </TouchableOpacity>
         </View>
         <WorkflowOffNote workflow={approvalSummary?.leave} style={styles.offNote} />
+        <QueuedOpsList kinds={['leave.apply', 'request.withdraw']} title="Not sent yet" style={styles.offNote} />
 
         {/* Casual Leave: this month and the year, opens its own screen. (`as Href`: typed routes learn the new screen on
             the next Metro start; the cast is harmless after that.) */}

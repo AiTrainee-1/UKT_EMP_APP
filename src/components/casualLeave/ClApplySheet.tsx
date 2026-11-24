@@ -12,6 +12,7 @@ import { Button } from '../ui/Button';
 import { TextArea } from '../ui/TextArea';
 import { DatePickerField } from '../ui/DatePickerField';
 import { WorkflowOffNote } from '../approval/WorkflowOffNote';
+import { isQueued, QUEUED_MESSAGE } from '../../offline/submit';
 import { useApplyCasualLeave, type CLEligibilityMonth } from '../../hooks/useCasualLeave';
 import { checkRequestDate } from '../../lib/requestWindow';
 import { casualLeaveDefaultDate, casualLeaveMonthBlock, requestPickerLimits } from '../../lib/requestWindowForm';
@@ -47,6 +48,7 @@ const PORTION_ICON: Record<CLPortion, string> = {
  */
 export function ClApplySheet({
   visible,
+  initialDate,
   onClose,
   employeeId,
   months,
@@ -55,6 +57,8 @@ export function ClApplySheet({
   onSubmitted,
 }: {
   visible: boolean;
+  /** Open on this day (the attendance day sheet sends the employee here with it); today / the open month otherwise. */
+  initialDate?: string | null;
   onClose: () => void;
   employeeId: number | null;
   months: CLEligibilityMonth[] | undefined;
@@ -81,7 +85,7 @@ export function ClApplySheet({
   // Every opening starts fresh: today (or the open month), the first part still allowed, no reason, no messages.
   useEffect(() => {
     if (!visible) return;
-    const start = casualLeaveDefaultDate(new Date(), months);
+    const start = initialDate ?? casualLeaveDefaultDate(new Date(), months);
     setDate(start);
     setPortion(firstAllowed(portionChoices(monthOfDate(months, start), start)));
     setReason('');
@@ -105,7 +109,11 @@ export function ClApplySheet({
     }
     setErrors({});
     try {
-      await apply.mutateAsync({ date, reason: reason.trim(), portion: portion! });
+      const sent = await apply.mutateAsync({ date, reason: reason.trim(), portion: portion! });
+      if (isQueued(sent)) {
+        onSubmitted(QUEUED_MESSAGE);
+        return;
+      }
       onSubmitted(
         portion === 'full'
           ? 'Your Casual Leave request has been sent for approval.'

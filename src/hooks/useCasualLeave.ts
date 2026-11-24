@@ -2,6 +2,7 @@ import { useCallback, useEffect } from 'react';
 import { useFocusEffect } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { sendOrQueue } from '../offline/submit';
 import type { ApprovalProgress } from '../lib/approval';
 import {
   asPortion,
@@ -237,8 +238,19 @@ export function useApplyCasualLeave(employeeId: number | null) {
     mutationFn: async (data: { date: string; reason: string; portion?: CLPortion }) => {
       const { portion, ...rest } = data;
       const body = portion && portion !== 'full' ? { employeeId, ...rest, portion } : { employeeId, ...rest };
-      const res = await api.post('/casual-leaves', body);
-      return res.data;
+      return sendOrQueue<any>({
+        kind: 'casualLeave.apply',
+        label: `Casual Leave · ${data.date}`,
+        url: '/casual-leaves',
+        body,
+        invalidate: [
+          ['casual-leaves', employeeId],
+          ['casual-leave-eligibility', employeeId],
+          ['casual-leave-history', employeeId],
+          ['my-pending-requests'],
+        ],
+        meta: { date: data.date, reason: data.reason, portion: portion ?? 'full' },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['casual-leaves', employeeId] });

@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
+import { sendOrQueue } from '../offline/submit';
 import type { ApprovalProgress } from '../lib/approval';
 
 export interface LeaveBalance {
@@ -111,8 +112,15 @@ export function useApplyLeave(employeeId: number | null) {
       isHalfDay?: boolean;
       halfDaySlot?: 'morning' | 'afternoon';
     }) => {
-      const res = await api.post('/leave-requests', { employeeId, ...data });
-      return res.data;
+      // Sent now, or kept on the phone when offline and sent later (src/offline/submit.ts).
+      return sendOrQueue<any>({
+        kind: 'leave.apply',
+        label: `Leave request · ${data.startDate}${data.endDate && data.endDate !== data.startDate ? ` to ${data.endDate}` : ''}`,
+        url: '/leave-requests',
+        body: { employeeId, ...data },
+        invalidate: [['leave-requests', employeeId], ['leave-balances', employeeId], ['my-pending-requests']],
+        meta: { startDate: data.startDate, endDate: data.endDate, type: data.type ?? null, reason: data.reason },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['leave-requests', employeeId] });

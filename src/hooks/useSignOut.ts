@@ -8,6 +8,7 @@ import { fetchTrackingState } from '../tracking/api';
 import { trackingAvailable } from '../tracking/actions';
 import { LOCATION_TASK_NAME } from '../tracking/constants';
 import { decideSignOut, type SignOutFacts } from '../lib/signOutGuard';
+import { getOfflineStatus } from '../offline/engine';
 
 const SERVER_CHECK_MS = 5000;
 
@@ -46,7 +47,13 @@ export function useConfirmSignOut(): () => void {
         ]);
         return;
       }
-      Alert.alert('Logout', 'Are you sure you want to logout?', [
+      // Anything still waiting in the offline queue stays on this phone and is sent when this employee signs in again.
+      const { pending, failed } = getOfflineStatus();
+      const waiting = pending + failed;
+      const message = waiting
+        ? `${waiting} item(s) you did offline are still saved on this phone and not sent yet. They are kept and sent when you sign in again on this phone. Logout anyway?`
+        : 'Are you sure you want to logout?';
+      Alert.alert('Logout', message, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Logout', style: 'destructive', onPress: () => { void logout(); } },
       ]);

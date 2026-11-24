@@ -10,6 +10,7 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
 import { TextArea } from '../ui/TextArea';
 import { ShiftPicker } from './ShiftPicker';
+import { isQueued, QUEUED_MESSAGE } from '../../offline/submit';
 import { useSubmitCompensationClaim } from '../../hooks/useCompensation';
 import { kindTone, shiftsLabel } from '../../lib/compensation';
 import { REASON_MAX, REASON_MIN, buildClaimBody, claimErrorMessage, type ClaimDraft } from '../../lib/compensationClaims';
@@ -60,8 +61,8 @@ export function ClaimSheet({
     }
     setErrors({});
     try {
-      await submit.mutateAsync(built.body);
-      onSubmitted('Claim sent to your Department Head.');
+      const sent = await submit.mutateAsync(built.body);
+      onSubmitted(isQueued(sent) ? QUEUED_MESSAGE : 'Claim sent to your Department Head.');
     } catch (err) {
       setErrors({ server: claimErrorMessage(err, 'Could not send the claim. Please try again.') });
     }

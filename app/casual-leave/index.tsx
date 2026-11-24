@@ -1,8 +1,10 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { QueuedOpsList } from '../../src/components/offline/QueuedOpsList';
 import { Platform, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, type ScrollViewInstance } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { prefillDate } from '../../src/lib/dayPunches';
 import { MotiView } from 'moti';
 
 import { useAuth } from '../../src/hooks/useAuth';
@@ -86,6 +88,17 @@ export default function CasualLeaveScreen() {
   const selectedMonth = selected.month;
   const [view, setView] = useState<RequestView | null>(null);
   const [showApply, setShowApply] = useState(false);
+  // Opened from the attendance day sheet (?applyDate=YYYY-MM-DD, owner 2026-11-24): the apply sheet opens on that day.
+  const routeParams = useLocalSearchParams<{ applyDate?: string }>();
+  const [applyDate, setApplyDate] = useState<string | null>(null);
+  useEffect(() => {
+    if (!routeParams.applyDate) return;
+    const day = prefillDate(routeParams.applyDate, new Date(), { allowFuture: true });
+    router.setParams({ applyDate: undefined } as any);
+    if (!day) return;
+    setApplyDate(day);
+    setShowApply(true);
+  }, [routeParams.applyDate]);
   const [success, setSuccess] = useState<string | null>(null);
 
   const all = list.data ?? [];
@@ -350,6 +363,7 @@ export default function CasualLeaveScreen() {
           style={styles.monthSwitch}
           testID="cl-month"
         />
+        <QueuedOpsList kinds={['casualLeave.apply', 'request.withdraw']} title="Not sent yet" style={{ marginBottom: 10 }} />
         <View style={styles.switcherWrap}>
           <RequestViewSwitcher
             value={activeView}
@@ -382,7 +396,11 @@ export default function CasualLeaveScreen() {
 
       <ClApplySheet
         visible={showApply}
-        onClose={() => setShowApply(false)}
+        initialDate={applyDate}
+        onClose={() => {
+          setShowApply(false);
+          setApplyDate(null);
+        }}
         employeeId={employeeId}
         months={elig.data?.months}
         shift={elig.data?.shift}

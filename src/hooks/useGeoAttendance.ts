@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Location from 'expo-location';
 import api from '../lib/api';
 import type { ApprovalProgress } from '../lib/approval';
+import type { OutpassRequestItem } from './useOutpass';
 import { punchFormEntries } from '../lib/onDutyPhotos';
 import { ensureTracking, startOnDutyTracking } from '../tracking/actions';
 import type { EnsureResult } from '../tracking/controller';
@@ -106,6 +107,15 @@ export interface PunchSlot {
   punchType: 'IN' | 'OUT';
   status: 'available' | 'pending' | 'approved' | 'recorded';
   available: boolean;
+  /** Since 2026-11-24: "Morning Punch" / "Lunch Out" / "Lunch In" / "Night Punch" and the time it is expected ("09:00",
+   *  from the employee's shift, or the usual day when `expectedSource` is "default"). Absent on an older server. */
+  name?: string;
+  expectedTime?: string | null;
+  expectedSource?: 'shift' | 'default';
+  punchTime?: string | null;
+  punchSource?: string | null;
+  sessionId?: number | null;
+  verificationId?: number | null;
 }
 
 export interface GeoPunchStatus {
@@ -169,6 +179,29 @@ export interface OnDutySessionStatusResult {
   punchSlots: PunchSlot[];
   /** How many photos a punch needs now (HR's Geo-tracking rules): 1 or 2. Absent on an older backend, which means 1. */
   requiredPhotos?: number;
+  /** Since 2026-11-24: the session's gate pass (raised when the On-Duty was submitted), as the Gate Outpass page shows it. */
+  gatePass?: OutpassRequestItem | null;
+  /** Since 2026-11-24: overtime punches after the four (never attendance), and how far past the Night Punch time. */
+  otPunches?: OnDutyOtPunch[];
+  otMinutes?: number;
+  /** All four of the day's punches are in. */
+  regularPunchesDone?: boolean;
+}
+
+export interface OnDutyOtPunch {
+  id: number;
+  sessionId: number;
+  sequence: number;
+  punchDate: string;
+  punchTime: string;
+  latitude: number;
+  longitude: number;
+  accuracyM: number | null;
+  isMocked: boolean;
+  hasPhoto: boolean;
+  hasPhoto2: boolean;
+  status: 'pending' | 'approved' | 'rejected';
+  isOvertime: true;
 }
 
 /** The employee's current/most recent On-Duty session (pending/active, or
@@ -239,6 +272,8 @@ export interface OnDutyPunchResult {
   /** True when this punch filled the day's last slot and the server closed
    *  the session there and then. */
   sessionEnded: boolean;
+  /** Since 2026-11-24: all four punches are in and the session stays open (the app asks Complete / Continue Duty). */
+  allPunchesIn?: boolean;
   punchSlots: PunchSlot[];
 }
 

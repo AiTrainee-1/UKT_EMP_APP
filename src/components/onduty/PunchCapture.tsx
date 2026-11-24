@@ -17,6 +17,8 @@ export type LocationState =
 interface Props {
   punchNumber: number;
   punchTypeLabel: string;
+  /** The punch's name ("Night Punch"); "Punch N" when not given. */
+  title?: string;
   plan: PhotoPlan;
   location: LocationState;
   /** A photo is being taken or the punch is being sent: nothing else can be tapped. */
@@ -34,7 +36,7 @@ interface Props {
  * on its own, your location with its accuracy, and ONE confirm button that stays off until every photo is taken and the
  * location is known. Controlled by the On-Duty page, which owns the camera, the location and the submit.
  */
-export function PunchCapture({ punchNumber, punchTypeLabel, plan, location, busy, submitting, onTakePhoto, onRefreshLocation, onConfirm, onCancel }: Props) {
+export function PunchCapture({ punchNumber, punchTypeLabel, title, plan, location, busy, submitting, onTakePhoto, onRefreshLocation, onConfirm, onCancel }: Props) {
   const { C } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const slots = photoSlotViews(plan);
@@ -46,7 +48,7 @@ export function PunchCapture({ punchNumber, punchTypeLabel, plan, location, busy
     <View style={styles.wrap}>
       <View style={styles.headRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.heading}>Punch {punchNumber} · {punchTypeLabel}</Text>
+          <Text style={styles.heading}>{title ?? `Punch ${punchNumber}`} · {punchTypeLabel}</Text>
           <Text style={styles.progress}>{photoProgressText(plan)}</Text>
         </View>
         <TouchableOpacity

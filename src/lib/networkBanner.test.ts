@@ -136,7 +136,7 @@ test('banner view: network phases win, then the server notice for a signed-in em
 })
 
 test("the owner's wording", () => {
-  assert.equal(BANNER_TEXT.offline, 'No internet connection. Please turn on your internet.')
+  assert.equal(BANNER_TEXT.offline, 'No internet connection. Please turn on your network to sync your data.')
   assert.equal(BANNER_TEXT.reconnecting, 'Reconnecting...')
   assert.equal(BANNER_TEXT.connected, 'Connected')
   assert.equal(BANNER_TEXT['server-down'], "Can't reach the server")

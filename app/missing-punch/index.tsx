@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { QueuedOpsList } from '../../src/components/offline/QueuedOpsList';
 import {
   View,
   Text,
@@ -297,6 +298,7 @@ export default function MissingPunchScreen() {
             </Reveal>
 
             <WorkflowOffNote workflow={approvalSummary?.missingPunch} style={styles.offNote} />
+            <QueuedOpsList kinds={['missingPunch.submit']} title="Not sent yet" style={styles.offNote} />
 
             {!failedFirstLoad && (
               <>

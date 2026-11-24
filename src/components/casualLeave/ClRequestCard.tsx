@@ -12,6 +12,7 @@ import { ApprovalTrail, WaitingChip } from '../approval/ApprovalTrail';
 import { deciderFromFields } from '../../lib/approvalsDecider';
 import type { CasualLeaveRequest } from '../../hooks/useCasualLeave';
 import { PORTION_LONG, longDate, shortDate } from '../../lib/casualLeave';
+import { WithdrawButton } from '../requests/WithdrawButton';
 import { hrTone } from '../../lib/hrEdit';
 
 const PORTION_ICON = { full: 'weather-sunny', first_half: 'weather-sunset-up', second_half: 'weather-sunset-down' } as const;
@@ -64,6 +65,14 @@ export function ClRequestCard({ request, index = 0 }: { request: CasualLeaveRequ
           })}
         />
         <ApprovalTrail approval={request.approval} />
+        {request.source !== 'hr_edit' && (
+          <WithdrawButton
+            module="casual_leave"
+            id={Number(request.id)}
+            status={request.status}
+            label={`casual leave request (${longDate(request.date)})`}
+          />
+        )}
       </View>
     </Reveal>
   );
