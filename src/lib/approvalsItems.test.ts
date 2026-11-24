@@ -116,3 +116,15 @@ test('On-Duty: the recorded route of the day, for "View route"', () => {
   assert.equal(onDutyJourneyId({ journeyId: 1.5 }), null)
   assert.equal(onDutyJourneyId({ journeyId: 'abc' }), null)
 })
+
+test('Compensation: every kind of claim has its own label and date line; an older server (no kind) is holiday work', () => {
+  assert.equal(itemTypeLabel('holidayWork', { kind: 'holiday_work', dayKind: 'holiday' }), 'Holiday work')
+  assert.equal(itemTypeLabel('holidayWork', { kind: 'ot_allowance' }), 'OT allowance')
+  assert.equal(itemTypeLabel('holidayWork', { kind: 'ot_shift' }), 'OT credit')
+  assert.equal(itemTypeLabel('holidayWork', { kind: 'birthday' }), 'Birthday credit')
+  assert.equal(itemTypeLabel('holidayWork', { kind: 'use_balance' }), 'Use balance')
+  assert.equal(itemTypeLabel('holidayWork', {}), 'Holiday work')
+  assert.equal(itemDateLabel('holidayWork', { kind: 'ot_allowance', workDate: '2026-11-12', minutes: 60 }), '12 Nov 2026 · 1 h allowance')
+  assert.equal(itemDateLabel('holidayWork', { kind: 'use_balance', workDate: '2026-11-24', useDate: '2026-11-24', shifts: 1 }), 'Day off 24 Nov 2026 · 1.00 shift')
+  assert.equal(itemDateLabel('holidayWork', { dayKind: 'sunday', workDate: '2026-11-15', shifts: 0.5 }), '15 Nov 2026 · 0.50 shift')
+})

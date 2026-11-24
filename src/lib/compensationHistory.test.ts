@@ -84,3 +84,29 @@ test('facts, looks and wording', () => {
   assert.equal(monthLabel('2026-13'), '')
   assert.equal(otPayLine(h.otPayByMonth[0]), 'Overtime pay in your March 2026 salary: ₹384.62 (0.50 shift)')
 })
+
+test('self-claims: a year item carries the same claim fields as the 90-day list (all off on an older server)', () => {
+  const h = normalizeHistory({
+    year: 2026,
+    items: [
+      { key: 'ot-41', kind: 'ot_shift', date: '2026-11-09', status: 'claimable', source: 'automatic', claimable: true, claimKind: 'ot_shift', suggestedShifts: 0.5 },
+      { key: 'ot-42', kind: 'ot_allowance', date: '2026-11-10', status: 'claim_pending', source: 'automatic', claim: { id: 90, kind: 'ot_allowance', status: 'pending', raisedByRole: 'employee' } },
+      { key: 'hw-7', kind: 'holiday_work', date: '2026-11-01', status: 'approved', source: 'hr' },
+    ],
+  })!
+  const [credit, allowance, sunday] = h.items
+  assert.equal(credit.claimable, true)
+  assert.equal(credit.claimKind, 'ot_shift')
+  assert.equal(credit.suggestedShifts, 0.5)
+  assert.equal(credit.overtimeRecordId, 41)
+  assert.equal(allowance.claimable, false)
+  assert.equal(allowance.claim?.id, 90)
+  assert.equal(allowance.claim?.statusLabel, 'Waiting for your Department Head')
+  assert.equal(allowance.claim?.raisedByRole, 'employee')
+  assert.equal(sunday.claimable, false)
+  assert.equal(sunday.claim, null)
+  assert.equal(sunday.overtimeRecordId, null)
+  // an older server's items (no claim fields at all)
+  const old = normalizeHistory(REPLY)!
+  assert.ok(old.items.every((i) => i.claimable === false && i.claim === null && i.claimKind === null))
+})

@@ -41,7 +41,7 @@ export interface ShownApprovalTabs {
   missingPunch: boolean;
   /** Outpass reuses the Permissions switch (manager_update_outpass_status shares can_approve_permissions). */
   outpass: boolean;
-  /** Holiday / Sunday work compensation claims. */
+  /** Compensation claims of every kind (`pendingCompensationCount` counts them all on a current backend). */
   holidayWork: boolean;
   /** On-Duty requests (the switch "can approve On-Duty"). */
   onDuty: boolean;

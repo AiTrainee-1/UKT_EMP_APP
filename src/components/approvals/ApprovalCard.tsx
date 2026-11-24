@@ -28,6 +28,7 @@ import {
   itemTypeLabel,
   onDutyPunchLine,
 } from '../../lib/approvalsItems';
+import { raisedByLabel, readRaisedByRole, type ClaimLike } from '../../lib/compensation';
 import { categoryMeta } from './categoryMeta';
 import { TrailStrip } from './TrailStrip';
 import type { ApprovalItem } from './types';
@@ -46,7 +47,8 @@ export function ApprovalCard({
   category: ApprovalCategory;
   status: ApprovalStatus;
   item: ApprovalItem;
-  onOpen: () => void;
+  /** Opens the decision sheet; 'reject' (the card's Reject) opens it asking for the reason for rejecting. */
+  onOpen: (intent?: 'reject') => void;
   now: Date;
 }) {
   const { C: Colors } = useTheme();
@@ -61,6 +63,9 @@ export function ApprovalCard({
   const outcome = normalizeOutcome(item.outcome);
   const line = outcomeLine(outcome);
   const punchLine = category === 'onDuty' ? onDutyPunchLine(item) : null;
+  // Compensation: who raised the claim (the employee themselves, or HR for them). An older backend's claims were HR's.
+  const raisedBy = category === 'holidayWork' ? raisedByLabel(item as ClaimLike) : null;
+  const raisedByEmployee = category === 'holidayWork' && readRaisedByRole(item.raisedByRole) === 'employee';
 
   const waited = pending ? waitingFor(item.createdAt, now) : null;
   const tone = waitTone(item.createdAt, now);
@@ -74,10 +79,10 @@ export function ApprovalCard({
   return (
     <TouchableOpacity
       style={[styles.card, { borderLeftColor: meta.color }]}
-      onPress={onOpen}
+      onPress={() => onOpen()}
       activeOpacity={0.88}
       accessibilityRole="button"
-      accessibilityLabel={`${name}, ${itemTypeLabel(category, item)}, ${badge.label}`}
+      accessibilityLabel={`${name}, ${itemTypeLabel(category, item)}${raisedBy ? `, ${raisedBy}` : ''}, ${badge.label}`}
       accessibilityHint="Opens the request"
       testID={`approval-card-${item.id}`}
     >
@@ -117,6 +122,16 @@ export function ApprovalCard({
             <Text style={styles.whenText} numberOfLines={1}>{punchLine}</Text>
           </View>
         )}
+        {!!raisedBy && (
+          <View style={styles.when}>
+            <MaterialCommunityIcons
+              name={raisedByEmployee ? 'account-outline' : 'account-tie-outline'}
+              size={13}
+              color={Colors.textMuted}
+            />
+            <Text style={styles.whenText} numberOfLines={1}>{raisedBy}</Text>
+          </View>
+        )}
       </View>
 
       {pending ? (
@@ -152,13 +167,20 @@ export function ApprovalCard({
       {(canApprove || canReject) && (
         <View style={styles.actions}>
           {canApprove && (
-            <TouchableOpacity style={[styles.actionBtn, styles.approve]} onPress={onOpen} accessibilityRole="button" accessibilityLabel={`Approve ${name}'s request`}>
+            <TouchableOpacity style={[styles.actionBtn, styles.approve]} onPress={() => onOpen()} accessibilityRole="button" accessibilityLabel={`Approve ${name}'s request`}>
               <MaterialCommunityIcons name="check" size={15} color={Colors.statusGreen} />
               <Text style={[styles.actionText, { color: Colors.statusGreen }]}>Approve</Text>
             </TouchableOpacity>
           )}
           {canReject && (
-            <TouchableOpacity style={[styles.actionBtn, styles.reject]} onPress={onOpen} accessibilityRole="button" accessibilityLabel={`Reject ${name}'s request`}>
+            // Opens the sheet with the box already asking for the reason (a rejection cannot be sent without one).
+            <TouchableOpacity
+              style={[styles.actionBtn, styles.reject]}
+              onPress={() => onOpen('reject')}
+              accessibilityRole="button"
+              accessibilityLabel={`Reject ${name}'s request`}
+              accessibilityHint="Opens the request to write the reason for rejecting"
+            >
               <MaterialCommunityIcons name="close" size={15} color={Colors.statusRed} />
               <Text style={[styles.actionText, { color: Colors.statusRed }]}>Reject</Text>
             </TouchableOpacity>

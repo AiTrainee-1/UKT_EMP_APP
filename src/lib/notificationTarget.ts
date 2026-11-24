@@ -294,7 +294,9 @@ export function routeForTarget(t: NotificationTarget, viewer: TargetViewer = {})
     case 'id_card':
       return { pathname: '/idcard', params: {} };
     case 'compensation':
-      // `id` is a holiday / Sunday work claim; the Compensation screen lists it as the row "hw-<id>".
+      // `id` is a compensation claim of any kind (one claim table: Sunday / holiday work, OT allowance, OT credit, birthday
+      // credit, use balance). The Compensation screen finds it as the row "hw-<id>", the item it was made for (its
+      // `claim`), or the claim on My claims (compensationClaims.claimFocusIds).
       return viewer.isStaff === false ? null : withFocus('/compensation', t.id);
     case 'advance':
       return t.id != null ? { pathname: `/settlement/${t.id}`, params: {} } : { pathname: '/settlement', params: {} };

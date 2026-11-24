@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { AuthInput } from './AuthInput';
@@ -11,40 +11,52 @@ import { isServerProblem } from '../../lib/supportContact';
 import {
   CODE_EXPIRED_NOTICE,
   askAgainLabel,
+  channelChoices,
+  channelUnavailable,
+  chooseButtonLabel,
+  chooseHint,
   codeLabel,
+  codeLengthFor,
   describeOtpRequestError,
   enterCodeMessage,
+  fallbackChannels,
+  fallbackOffer,
   haveCodeNotice,
   isCompleteOtp,
+  normalizeOtpChannel,
   otpCopy,
   otpDigits,
   otpHelpLine,
   otpLength,
   positiveSeconds,
+  requestChannel,
   resendLabel,
   resolveOtpChannel,
   sentNotice,
   sentNoticeText,
+  singleChannel,
+  type OtpChannel,
+  type PurposeCodes,
 } from '../../lib/otp';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import { useCountdown } from '../../hooks/useCountdown';
+import { useRememberedOtpChannel } from '../../hooks/useLoginOptions';
 import { authErrorMessage, requestOtp, type OtpPurpose, type OtpRequestResult } from '../../hooks/useAuth';
 
 interface Props {
   purpose: OtpPurpose;
   submitLabel: string;
   /**
-   * How the server says codes are delivered ('sms' | 'whatsapp'), from GET /auth/login-options. Used for the wording
-   * until the request itself names the channel; missing or unknown on an older server, which gives a neutral "a code".
+   * What the server offers for this purpose (purposeCodes() / unknownCodes() in src/lib/otp.ts, from GET
+   * /auth/login-options): the channels a code can go by (WhatsApp and SMS are switched on separately; with both on the
+   * employee picks), each one's code length, and whether the server takes a `channel` at all (an older one does not:
+   * then nothing is named until the request's answer does, and a server from before the SMS channel gives "a code").
    */
-  channel?: string | null;
-  /**
-   * How many digits the code has (4 by SMS, 6 on WhatsApp), from GET /auth/login-options `codeLength`. Missing on an
-   * older server: the channel decides (see otpLength in src/lib/otp.ts). The request's own `codeLength` wins once sent.
-   */
-  codeLength?: number | null;
+  codes: PurposeCodes;
+  /** The server refused the channel asked for (HR switched it off meanwhile): reload the sign-in options. */
+  onChannelsChanged?: () => void;
   /** False while the extra fields (e.g. a new password) aren't valid yet. */
   extraValid?: boolean;
   /** Whatever else the last step needs — nothing for sign-in, a new-password pair for a reset. */
@@ -63,18 +75,20 @@ interface Props {
 }
 
 /**
- * The two steps every one-time-code flow shares: ask for a code by Employee Code, then enter it. The code arrives by SMS
- * or WhatsApp - HR's choice, reported by the server - and the wording follows (see src/lib/otp.ts). The server decides
- * where the code goes (the number HR has on file), so the app never sees or types a phone number.
+ * The two steps every one-time-code flow shares: ask for a code by Employee Code, then enter it. The code arrives by
+ * WhatsApp or SMS - whichever HR has switched on; with both on, the employee picks ("Send code by WhatsApp" / "Send code
+ * by SMS", the last pick first) and, once a code went out, may ask for it the other way instead. The wording follows
+ * the channel (see src/lib/otp.ts). The server decides where the code goes (the number HR has on file), so the app never
+ * sees or types a phone number.
  *
  * The code is only ever held in this component's state: it is never logged, stored or sent anywhere but the sign-in
- * request itself.
+ * request itself. (The channel picked is remembered on the phone - a preference, not the code.)
  */
 export function OtpFlow({
   purpose,
   submitLabel,
-  channel: channelFromOptions,
-  codeLength: codeLengthFromOptions,
+  codes,
+  onChannelsChanged,
   extraValid = true,
   extraFields,
   initialIdentifier,
@@ -84,10 +98,13 @@ export function OtpFlow({
 }: Props) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const remembered = useRememberedOtpChannel();
 
   const [identifier, setIdentifier] = useState('');
   const [otp, setOtp] = useState('');
   const [sent, setSent] = useState<OtpRequestResult | null>(null);
+  // The channel the code on screen was asked for (the answer's own `channel` wins when it names one).
+  const [sentVia, setSentVia] = useState<OtpChannel | null>(null);
   // The employee still has a code from a moment ago (asking again was too soon): step 2 without a fresh "sent" notice.
   const [haveCode, setHaveCode] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,17 +112,28 @@ export function OtpFlow({
   const [serverProblem, setServerProblem] = useState(false);
   // A code could not be asked for: offer the HR contact (and the password, where the screen has that way in).
   const [offerHr, setOfferHr] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<false | 'ask' | 'submit'>(false);
+  // Which channel's request is running (its button shows the spinner).
+  const [askingVia, setAskingVia] = useState<OtpChannel | null>(null);
+  // The channel the resend wait belongs to (null = not known: it holds every button).
+  const [waitFor, setWaitFor] = useState<OtpChannel | null>(null);
   const resend = useCountdown();
   const expiry = useCountdown();
 
-  // What the request said wins over what the sign-in options said.
-  const channel = resolveOtpChannel(sent?.channel, channelFromOptions);
+  // Step 1: the ways on offer, the remembered one first. One way: it is used as before; none named: "a code".
+  const choices = channelChoices(codes.channels, remembered.channel);
+  const only = singleChannel(codes);
+  const askCopy = otpCopy(only, codeLengthFor(codes, only));
+
+  // Step 2: what the request said wins over what was asked for / what the sign-in options said.
+  const channel = resolveOtpChannel(sent?.channel, sentVia ?? only);
   // The same for the code's length: what the request said, else the sign-in options, else what the channel implies.
-  const length = otpLength(sent?.codeLength ?? codeLengthFromOptions, channel);
+  const length = otpLength(sent?.codeLength ?? codeLengthFor(codes, channel), channel);
   const copy = otpCopy(channel, length);
   const expiryKnown = !!sent && positiveSeconds(sent.expiresInSeconds) > 0;
   const codeExpired = expiryKnown && expiry.seconds === 0;
+  // "Didn't get it? Send by SMS instead": the other ways the answer offered that are still on offer.
+  const fallback = sent && !haveCode ? fallbackChannels(sent.otherChannels, channel, codes.choosable ? codes.channels : undefined) : [];
 
   // The remembered code arrives after mount; never overwrite something the employee already typed.
   useEffect(() => {
@@ -118,35 +146,58 @@ export function OtpFlow({
     setOfferHr(false);
   };
 
-  const ask = async () => {
+  /** Whether the server's resend wait holds this channel's button. */
+  const waitingFor = (via: OtpChannel | null) =>
+    resend.seconds > 0 && (waitFor === null || via === null || waitFor === via);
+
+  /** Asks for a code by `via` (null = the server's choice). `switching` = the step-2 "send it the other way instead". */
+  const ask = async (via: OtpChannel | null, switching = false) => {
     clearProblem();
     if (!identifier.trim()) return setError('Enter your employee code.');
-    setBusy(true);
+    setBusy('ask');
+    setAskingVia(via);
     try {
-      const result = await requestOtp(identifier.trim(), purpose);
+      const result = await requestOtp(identifier.trim(), purpose, requestChannel(codes, via));
+      const used = normalizeOtpChannel(result.channel) ?? via;
       setSent(result);
+      setSentVia(used);
       setHaveCode(false);
       setOtp('');
+      setWaitFor(used);
       resend.start(positiveSeconds(result.resendAfterSeconds));
       expiry.start(positiveSeconds(result.expiresInSeconds));
+      // Remembered only when the employee had a choice.
+      if (used && codes.choosable && (codes.channels.length > 1 || switching)) remembered.remember(used);
       onStepChange?.(2);
     } catch (err: any) {
+      const gone = channelUnavailable(err);
+      if (gone) {
+        // HR switched that way off meanwhile: say so, and let the screen reload what is on offer now.
+        setError(gone.message);
+        setOfferHr(gone.available.length === 0);
+        onChannelsChanged?.();
+        return;
+      }
       // The server's own sentence says what happened (too soon, SMS unavailable, could not send, turned off ...);
-      // asking again too soon also says how long to wait.
+      // asking again too soon also says how long to wait (for that channel: the other one has its own wait).
       const problem = describeOtpRequestError(err, 'Could not send the code. Please try again.');
-      if (problem.waitSeconds) resend.start(problem.waitSeconds);
+      if (problem.waitSeconds && !switching) {
+        setWaitFor(via);
+        resend.start(problem.waitSeconds);
+      }
       setError(problem.message);
       setServerProblem(problem.serverDown);
       setOfferHr(problem.offerHr);
     } finally {
       setBusy(false);
+      setAskingVia(null);
     }
   };
 
   const submit = async () => {
     clearProblem();
     if (!isCompleteOtp(otp, length)) return setError(enterCodeMessage(length));
-    setBusy(true);
+    setBusy('submit');
     try {
       await onSubmit(identifier.trim(), otp);
     } catch (err: any) {
@@ -166,7 +217,8 @@ export function OtpFlow({
 
   const useExistingCode = () => {
     clearProblem();
-    setSent({ maskedPhone: '', expiresInSeconds: 0, resendAfterSeconds: 0 });
+    setSent({ maskedPhone: '', expiresInSeconds: 0, resendAfterSeconds: 0, channel: waitFor ?? undefined });
+    setSentVia(waitFor);
     setHaveCode(true);
     setOtp('');
     expiry.start(0);
@@ -175,6 +227,7 @@ export function OtpFlow({
 
   const changeEmployee = () => {
     setSent(null);
+    setSentVia(null);
     setHaveCode(false);
     setOtp('');
     clearProblem();
@@ -214,7 +267,10 @@ export function OtpFlow({
   ) : null;
 
   if (!sent) {
-    const waiting = resend.seconds > 0;
+    const anyWaiting = resend.seconds > 0;
+    const picking = choices.length > 1;
+    const main = choices[0] ?? null;
+    const mainWaiting = waitingFor(main);
     return (
       <View>
         <AuthInput
@@ -224,20 +280,44 @@ export function OtpFlow({
           value={identifier}
           onChangeText={onIdentifierChange}
           returnKeyType="send"
-          onSubmitEditing={waiting ? undefined : ask}
+          onSubmitEditing={mainWaiting || busy ? undefined : () => void ask(main)}
           leftIconName="badge-account-outline"
           containerStyle={{ marginBottom: 10 }}
         />
-        <Text style={styles.hint}>{copy.askHint}</Text>
+        <Text style={styles.hint}>{picking ? chooseHint(codes) : askCopy.askHint}</Text>
         {errorNote}
         <AuthButton
-          title={askAgainLabel(copy.askButton, resend.seconds)}
-          onPress={ask}
-          loading={busy}
-          disabled={waiting}
-          icon={<MaterialCommunityIcons name={copy.icon} size={18} color={AuthColors.pillCircle} />}
+          title={askAgainLabel(picking && main ? chooseButtonLabel(main) : askCopy.askButton, mainWaiting ? resend.seconds : 0)}
+          onPress={() => void ask(main)}
+          loading={busy === 'ask' && askingVia === main}
+          disabled={mainWaiting || busy !== false}
+          icon={<MaterialCommunityIcons name={otpCopy(main).icon} size={18} color={AuthColors.pillCircle} />}
         />
-        {waiting && !!identifier.trim() && (
+        {picking &&
+          choices.slice(1).map((via) => {
+            const waiting = waitingFor(via);
+            const loading = busy === 'ask' && askingVia === via;
+            const disabled = waiting || busy !== false;
+            return (
+              <TouchableOpacity
+                key={via}
+                onPress={() => void ask(via)}
+                disabled={disabled}
+                style={[styles.altButton, disabled && !loading && styles.altButtonDisabled]}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityState={{ disabled, busy: loading }}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color={AuthColors.accentDark} />
+                ) : (
+                  <MaterialCommunityIcons name={otpCopy(via).icon} size={17} color={AuthColors.accentDark} />
+                )}
+                <Text style={styles.altButtonText}>{askAgainLabel(chooseButtonLabel(via), waiting ? resend.seconds : 0)}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        {anyWaiting && !!identifier.trim() && (
           <TouchableOpacity onPress={useExistingCode} hitSlop={8} style={styles.haveCodeRow} accessibilityRole="button">
             <Text style={[styles.footerLink, styles.footerAccent]}>I already have a code</Text>
           </TouchableOpacity>
@@ -247,6 +327,9 @@ export function OtpFlow({
   }
 
   const notice = sentNotice(channel, sent.maskedPhone, sent.expiresInSeconds);
+  const other = fallback[0] ?? null;
+  const offer = other ? fallbackOffer(other) : null;
+  const switchingNow = busy === 'ask' && other !== null && askingVia === other;
 
   return (
     <View>
@@ -294,8 +377,8 @@ export function OtpFlow({
       <AuthButton
         title={submitLabel}
         onPress={submit}
-        loading={busy}
-        disabled={!extraValid || otp.length !== length}
+        loading={busy === 'submit'}
+        disabled={!extraValid || otp.length !== length || busy === 'ask'}
         icon={<MaterialCommunityIcons name="arrow-right" size={17} color="#fff" />}
       />
 
@@ -304,17 +387,34 @@ export function OtpFlow({
           <Text style={styles.footerLink}>Change employee code</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          disabled={resend.seconds > 0 || busy}
-          onPress={ask}
+          disabled={resend.seconds > 0 || busy !== false}
+          onPress={() => void ask(channel)}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityState={{ disabled: resend.seconds > 0 || busy }}
+          accessibilityState={{ disabled: resend.seconds > 0 || busy !== false }}
         >
           <Text style={[styles.footerLink, styles.footerAccent, resend.seconds > 0 && styles.footerDisabled]}>
             {resendLabel(resend.seconds)}
           </Text>
         </TouchableOpacity>
       </View>
+
+      {offer && other && (
+        <TouchableOpacity
+          onPress={() => void ask(other, true)}
+          disabled={busy !== false}
+          hitSlop={8}
+          style={styles.fallbackRow}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: busy !== false, busy: switchingNow }}
+        >
+          <MaterialCommunityIcons name={otpCopy(other).icon} size={15} color={AuthColors.accentDark} />
+          <Text style={styles.helpText}>
+            {offer.prefix}
+            <Text style={styles.helpAccent}>{switchingNow ? 'Sending…' : offer.action}</Text>
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <SupportInlineLink
         situation="hr"
@@ -353,6 +453,21 @@ const makeStyles = (Colors: Palette) =>
       marginBottom: 12,
     },
     passwordButtonText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 13.5 },
+    // The second way to get the code while the employee picks (the main one is the dark pill above it).
+    altButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      backgroundColor: AuthColors.accentSoft,
+      borderRadius: BorderRadius.full,
+      minHeight: 48,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      marginTop: 10,
+    },
+    altButtonDisabled: { opacity: 0.6 },
+    altButtonText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 14 },
     sentBox: {
       flexDirection: 'row',
       alignItems: 'flex-start',
@@ -370,6 +485,7 @@ const makeStyles = (Colors: Palette) =>
     footerLink: { color: Colors.textMuted, fontFamily: AuthFont.bodyBold, fontSize: 13 },
     footerAccent: { color: AuthColors.accentDark },
     footerDisabled: { color: Colors.textMuted },
+    fallbackRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingTop: 16 },
     helpRow: { alignItems: 'center', paddingTop: 16 },
     helpText: { color: Colors.textMuted, fontFamily: AuthFont.body, fontSize: 12.5 },
     helpAccent: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold },

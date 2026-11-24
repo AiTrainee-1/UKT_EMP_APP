@@ -10,14 +10,17 @@ import {
   useResignationAction,
 } from '../../hooks/useManager';
 import { approvalErrorMessage, decisionMessage } from '../../lib/approval';
-import { claimCreditedMessage } from '../../lib/compensation';
+import { claimApprovedMessage } from '../../lib/compensation';
+import { decisionComment, isRemarkRequiredError, rejectRemarkProblem } from '../../lib/rejectRemark';
 import type { SelectedApproval } from './types';
 
 export type DecisionResult =
   | { ok: true; message: string; tone: 'success' | 'error' }
   // `refused`: the server said no (not this head's turn any more, HR changed the pipeline, already decided ...), so what
   // is on screen is out of date: refresh and close the sheet. Otherwise (no answer, 5xx) the sheet stays for another try.
-  | { ok: false; message: string; refused: boolean };
+  // `remarkRequired`: a rejection without its reason (caught here before sending, or the server's 400 "remark_required"):
+  // nothing was decided, so the sheet stays open with the message under the reason box.
+  | { ok: false; message: string; refused: boolean; remarkRequired?: boolean };
 
 /**
  * Approve / reject one request through the existing PATCH endpoints (unchanged), with the toast wording the tab always
@@ -52,7 +55,11 @@ export function useApprovalDecision() {
     rawComment: string,
   ): Promise<DecisionResult> => {
     const { category, item } = selected;
-    const comment = rawComment.trim() ? rawComment : undefined;
+    // Approving needs no remark; rejecting needs the reason (at least REJECT_REMARK_MIN characters), checked before
+    // anything is sent. The reason goes in the same `comment` field the optional comment always used.
+    const problem = status === 'rejected' ? rejectRemarkProblem(rawComment) : null;
+    if (problem) return { ok: false, message: problem, refused: false, remarkRequired: true };
+    const comment = decisionComment(status, rawComment);
     try {
       if (category === 'resignation') {
         const result = await resignationAction.mutateAsync({
@@ -81,20 +88,24 @@ export function useApprovalDecision() {
       }[category];
       const result: any = await mutation.mutateAsync(args);
       if (status === 'rejected') return { ok: true, message: 'Request rejected.', tone: 'error' };
-      // A compensation claim is decided by the head alone: its approval is final, and says what it added to whom.
+      // A compensation claim (any kind) is decided by the head alone: its approval is final, and says what it did - the
+      // shifts added to whose balance, the late-in allowance, the day off taken from the balance (the reply's `effect`).
+      const claimMessage = category === 'holidayWork' ? claimApprovedMessage({ ...(item as any), ...(result ?? {}) }) : null;
       const message =
-        category === 'holidayWork' && result?.credited
-          ? claimCreditedMessage({ ...(item as any), ...result })
-          : // Worded from the request the server sent back. Without its `approval` (an older backend, whose pipeline is
-            // fixed) it is the old two-stage wording.
-            (decisionMessage('approved', result?.approval) ??
-            (category === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.'));
+        claimMessage ??
+        // Worded from the request the server sent back. Without its `approval` (an older backend, whose pipeline is
+        // fixed) it is the old two-stage wording.
+        (decisionMessage('approved', result?.approval) ??
+          (category === 'missingPunch' ? 'Forwarded to HR for final approval.' : 'Request approved successfully.'));
       return { ok: true, message, tone: 'success' };
     } catch (err: any) {
+      const remarkRequired = isRemarkRequiredError(err);
       return {
         ok: false,
         message: approvalErrorMessage(err, 'Action failed. Please try again.'),
-        refused: [400, 403, 404, 409].includes(err?.response?.status),
+        // The server's "write the reason" is not a sign the list is out of date: the head only has to add the reason.
+        refused: !remarkRequired && [400, 403, 404, 409].includes(err?.response?.status),
+        remarkRequired,
       };
     }
   };

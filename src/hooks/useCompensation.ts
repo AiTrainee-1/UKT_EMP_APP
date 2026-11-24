@@ -1,10 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuth } from './useAuth';
 import { normalizeCompensation, type EmployeeCompensation } from '../lib/compensation';
+import { normalizeMyClaims, type ClaimBody, type MyClaim, type UseBody } from '../lib/compensationClaims';
 import { normalizeHod, type HodAssignment } from '../lib/hodAssignment';
 
 export type { EmployeeCompensation } from '../lib/compensation';
+export type { MyClaim } from '../lib/compensationClaims';
 export type { HodAssignment } from '../lib/hodAssignment';
 
 /**
@@ -46,5 +48,74 @@ export function useEmployeeHod() {
     },
     enabled: !!user,
     staleTime: 60_000,
+  });
+}
+
+// ── self-claims (2026-11-19; only used when GET /employee/compensation says `canClaim`) ─────────────────────────────
+
+const MY_CLAIMS_KEY = 'employee-compensation-claims';
+
+/** After a claim, a use-balance request or a withdrawal: the page, the year, My claims and the waiting-requests list. */
+function invalidateCompensation(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: ['employee-compensation'] });
+  void queryClient.invalidateQueries({ queryKey: ['compensation-history'] });
+  void queryClient.invalidateQueries({ queryKey: [MY_CLAIMS_KEY] });
+  void queryClient.invalidateQueries({ queryKey: ['my-pending-requests'] });
+}
+
+/**
+ * GET /employee/compensation/claims: the employee's own claims of every kind (raised by them or by HR), newest first.
+ * Asked only when the server supports self-claims (`enabled` = canClaim known). A reply that is not a list is an ERROR.
+ */
+export function useMyCompensationClaims(enabled: boolean) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: [MY_CLAIMS_KEY, user?.employeeId ?? null],
+    queryFn: async (): Promise<MyClaim[]> => {
+      const res = await api.get('/employee/compensation/claims');
+      const data = normalizeMyClaims(res.data);
+      if (!data) throw new Error('Unexpected reply from /employee/compensation/claims');
+      return data;
+    },
+    enabled: !!user && enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** POST /employee/compensation/claims: claim an item (Sunday / holiday work, OT allowance, OT credit, birthday credit). It
+ *  goes to the employee's Department Head. Refusals are plain sentences in `error` (claimErrorMessage). */
+export function useSubmitCompensationClaim() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: ClaimBody) => {
+      const res = await api.post('/employee/compensation/claims', body);
+      return res.data;
+    },
+    onSuccess: () => invalidateCompensation(queryClient),
+  });
+}
+
+/** POST /employee/compensation/use: ask to use part of the balance for a day off (to the Department Head). */
+export function useUseCompensationBalance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: UseBody) => {
+      const res = await api.post('/employee/compensation/use', body);
+      return res.data;
+    },
+    onSuccess: () => invalidateCompensation(queryClient),
+  });
+}
+
+/** DELETE /employee/compensation/claims/<id>: withdraw one of the employee's own claims that still waits. A refusal (it
+ *  was decided meanwhile) refreshes the lists too, so the screen shows where it stands now. */
+export function useWithdrawCompensationClaim() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await api.delete(`/employee/compensation/claims/${id}`);
+      return res.data;
+    },
+    onSettled: () => invalidateCompensation(queryClient),
   });
 }

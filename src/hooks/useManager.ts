@@ -27,8 +27,8 @@ export interface ManagerProfile {
   canApproveCasualLeave?: boolean;
   canApproveAttendance?: boolean;
   canApproveMissingPunch?: boolean;
-  /** Holiday / Sunday work compensation claims (the HR User Management switch "Can approve compensation"). Absent on an
-   *  older backend, which reads as "cannot": the tab stays hidden. */
+  /** Compensation claims of every kind (the HR User Management switch "Can approve compensation"). Absent on an older
+   *  backend, which reads as "cannot": the tab stays hidden. */
   canApproveCompensation?: boolean;
   /** On-Duty requests (the HR User Management switch "Can approve On-Duty"). */
   canApproveOnDuty?: boolean;
@@ -46,7 +46,7 @@ export interface ManagerProfile {
   pendingOutpassCount?: number;
   /** On-Duty requests waiting for this head (the Approvals tab's On-Duty category). */
   pendingOnDutyCount?: number;
-  /** Claims waiting for this head: already inside `pendingApprovalsCount`. */
+  /** Compensation claims (every kind) waiting for this head: already inside `pendingApprovalsCount`. */
   pendingCompensationCount?: number;
 }
 
@@ -170,9 +170,14 @@ export interface TeamMissingPunchRequest {
 }
 
 /**
- * A Holiday / Sunday work compensation claim HR raised for someone on this Department Head's team: the employee worked on a
- * Sunday or a company holiday, HR claims 0.25 / 0.5 / 0.75 / 1 shift for them, and the shifts go onto the employee's
- * compensation balance only once the head approves (backend/api/holiday_work_views.py::claim_json).
+ * A compensation claim of someone on this Department Head's team (backend/api/holiday_work_views.py::claim_json; one claim
+ * table for every kind since 2026-11-19), raised by the employee or by HR on their behalf:
+ *   holiday_work  worked on a Sunday / company holiday: 0.25..1 shift onto the balance once approved
+ *   ot_allowance  an OT day's late-in allowance (`minutes`), applied on the next working day once approved
+ *   ot_shift      an OT day's credit (quarters of a shift) onto the balance
+ *   birthday      worked on their birthday: a 1.00 credit onto the balance
+ *   use_balance   take `shifts` of the balance as time off on `useDate`
+ * An OLDER backend sends no `kind`, `raisedByRole`, `overtime`, `useDate`: every claim there is holiday work HR raised.
  */
 export interface TeamHolidayWorkClaim {
   id: number;
@@ -180,19 +185,33 @@ export interface TeamHolidayWorkClaim {
   employeeCode?: string;
   employee?: { id?: number; name?: string; code?: string; employeeCode?: string };
   department?: string | null;
-  /** The day the work was done (YYYY-MM-DD). */
+  /** The claim's date (YYYY-MM-DD): the work day, the OT day, the birthday, or the day off of a use-balance request. */
   workDate: string;
-  /** "sunday" | "holiday" */
+  /** holiday_work | ot_allowance | ot_shift | birthday | use_balance (absent on an older backend = holiday_work). */
+  kind?: string | null;
+  /** The server's name for the kind ("OT credit"). */
+  kindLabel?: string | null;
+  /** "sunday" | "holiday" (holiday work) */
   dayKind?: string | null;
   holidayName?: string | null;
   shifts: number;
+  /** OT allowance: the allowance minutes. */
+  minutes?: number | null;
+  /** OT kinds: the OT day, the shift end, the last punch and the extra minutes past the shift end. */
+  overtime?: { date?: string | null; shiftEnd?: string | null; lastPunch?: string | null; extraMinutes?: number | null } | null;
+  /** Use balance: the day the employee takes off. */
+  useDate?: string | null;
+  /** "employee" | "hr": who raised it (absent on an older backend, where HR raised every claim). */
+  raisedByRole?: string | null;
   reason: string;
   status: string;
-  /** Who in HR raised it. */
+  /** Who raised it (the HR user's name for a claim HR raised). */
   requestedBy?: string | null;
   createdAt?: string;
   /** True once the approval added the shifts to the employee's balance (a reply to the head's own approval). */
   credited?: boolean;
+  /** What the approval did, in one sentence (a reply to the head's own approval; newer backends). */
+  effect?: string | null;
   approval?: ApprovalProgress | null;
 }
 
@@ -432,10 +451,11 @@ export function useApproveOutpass() {
 }
 
 /**
- * PATCH /manager/holiday-work/{id}/status: the Department Head approves (the claimed shifts go onto the employee's
- * compensation balance, once) or rejects (final) a holiday / Sunday work claim, with an optional comment. Refusals come
- * back as plain sentences in `error` (the head's profile switch is off, the claim was already decided, it is not in their
- * team) and are shown as they are. After a refusal the manager profile is refetched: the switch that was just turned off
+ * PATCH /manager/holiday-work/{id}/status: the Department Head approves or rejects (final) a compensation claim of ANY kind
+ * (the same endpoint for every kind), with an optional comment. A credit (holiday work, OT credit, birthday) goes onto the
+ * employee's balance once and the reply says `credited: true`; the reply's `effect` says what an approval did. Refusals
+ * come back as plain sentences in `error` (the head's profile switch is off, the claim was already decided, it is not in
+ * their team, the payroll month is locked) and are shown as they are. After a refusal the manager profile is refetched: the switch that was just turned off
  * is what hides the tab.
  */
 export function useApproveHolidayWork() {

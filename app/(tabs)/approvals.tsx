@@ -9,6 +9,8 @@
 // unchanged PATCH /manager/.../status endpoints. An older backend without the history endpoint gets the old pending list
 // (searchable on the phone) and a note on Approved / Rejected.
 // Pieces: src/components/approvals/*, wording and rules: src/lib/approvalsHistory.ts + approvalsItems.ts.
+// Approving needs no comment; rejecting needs the reason, at least 3 characters (owner 2026-11-21, src/lib/rejectRemark.ts),
+// checked before sending and again by the server (400 "remark_required").
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, RefreshControl, StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -101,6 +103,10 @@ export default function ApprovalsScreen() {
   const search = useDebounced(searchText.trim(), 300);
   const [selected, setSelected] = useState<SelectedApproval | null>(null);
   const [comment, setComment] = useState('');
+  // The open sheet's Reject state: the box asks for the reason (required for a rejection, src/lib/rejectRemark.ts), and
+  // what went wrong while the sheet stays open (`reason`: the rejection's reason is missing / too short).
+  const [rejecting, setRejecting] = useState(false);
+  const [sheetError, setSheetError] = useState<{ message: string; reason: boolean } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
     message: '',
     type: 'success',
@@ -183,6 +189,17 @@ export default function ApprovalsScreen() {
   const closeSheet = () => {
     setSelected(null);
     setComment('');
+    setRejecting(false);
+    setSheetError(null);
+  };
+  const openSheet = (next: SelectedApproval, intent?: 'reject') => {
+    setSelected(next);
+    setRejecting(intent === 'reject');
+    setSheetError(null);
+  };
+  const onCommentChange = (text: string) => {
+    setComment(text);
+    if (sheetError) setSheetError(null);
   };
   const { decide, busy } = useApprovalDecision();
 
@@ -214,18 +231,31 @@ export default function ApprovalsScreen() {
 
   const onDecide = async (decision: 'approved' | 'rejected') => {
     if (!selected) return;
+    // Reject asks for the reason (the box is relabelled "Reason for rejecting (required)"); Approve never needs one.
+    setRejecting(decision === 'rejected');
+    setSheetError(null);
     const result = await decide(selected, decision, comment);
     if (result.ok) {
       showToast(result.message, result.tone);
       closeSheet();
       return;
     }
+    // No reason (checked before sending) or the server's "remark_required": nothing was decided. The message stays in the
+    // sheet under the reason box - a toast would be drawn behind the sheet's Modal.
+    if (result.remarkRequired) {
+      setRejecting(true);
+      setSheetError({ message: result.message, reason: true });
+      return;
+    }
+    // A refusal means what is on screen is out of date: refresh it and drop the sheet (the toast is then visible). A
+    // network or server failure says nothing about the request, so the sheet stays for another try, with the message
+    // shown inside it as well.
     showToast(result.message, 'error');
-    // A refusal means what is on screen is out of date: refresh it and drop the sheet. A network or server failure says
-    // nothing about the request, so the sheet stays for another try.
     if (result.refused) {
       void refreshAll();
       closeSheet();
+    } else {
+      setSheetError({ message: result.message, reason: false });
     }
   };
 
@@ -353,7 +383,7 @@ export default function ApprovalsScreen() {
                 status={status}
                 item={item}
                 now={now}
-                onOpen={() => setSelected({ category, status, item })}
+                onOpen={(intent) => openSheet({ category, status, item }, intent)}
               />
             </FocusFrame>
           </Reveal>
@@ -363,11 +393,14 @@ export default function ApprovalsScreen() {
       <DecisionSheet
         selected={selected}
         comment={comment}
-        onCommentChange={setComment}
+        onCommentChange={onCommentChange}
         onDecide={onDecide}
         busy={busy}
         onClose={closeSheet}
         onViewRoute={onViewRoute}
+        rejecting={rejecting}
+        reasonError={sheetError?.reason ? sheetError.message : null}
+        error={sheetError && !sheetError.reason ? sheetError.message : null}
       />
 
       <Toast {...toast} />

@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Platform,
+  Alert,
   type ScrollViewInstance,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -15,22 +16,28 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { format } from 'date-fns';
 
-import { useEmployeeCompensation } from '../../src/hooks/useCompensation';
+import {
+  useEmployeeCompensation,
+  useMyCompensationClaims,
+  useWithdrawCompensationClaim,
+} from '../../src/hooks/useCompensation';
 import { useCompensationHistory } from '../../src/hooks/useCompensationHistory';
 import { ContactBlockCard } from '../../src/components/support/ContactBlockCard';
+import { ClaimSheet } from '../../src/components/compensation/ClaimSheet';
+import { UseBalanceSheet } from '../../src/components/compensation/UseBalanceSheet';
+import { MyClaimCard, statusColors as claimStatusColors } from '../../src/components/compensation/MyClaimCard';
+import { Toast } from '../../src/components/ui/Toast';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { Skeleton, SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Reveal } from '../../src/components/Reveal';
 import { FocusFrame, FocusMissingNote } from '../../src/components/focus/FocusFrame';
 import { useFocusItem, useFocusParam } from '../../src/hooks/useFocusItem';
-import { idFromKey } from '../../src/lib/focusItem';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
 import { COMPENSATION_TONES } from '../../src/lib/attendanceVisual';
 import {
-  ASK_HR_NOT_SELF_SERVICE,
   STAFF_ONLY_MESSAGE,
   allowanceView,
   askHrOf,
@@ -40,12 +47,29 @@ import {
   groupItems,
   itemFacts,
   kindTone,
+  selfServiceNote,
   shiftsLabel,
   statusTone,
   type AllowanceNotice,
   type CompensationItem,
-  type StatusTone,
 } from '../../src/lib/compensation';
+import {
+  CLAIM_FILTERS,
+  canClaimItem,
+  claimCounts,
+  claimDraftFor,
+  claimErrorMessage,
+  claimFocusIds,
+  claimableItems,
+  filterClaims,
+  itemClaimState,
+  myClaimTitle,
+  useBalanceLine,
+  useBalanceState,
+  type ClaimDraft,
+  type ClaimFilter,
+  type MyClaim,
+} from '../../src/lib/compensationClaims';
 import {
   FILTERS,
   groupByMonth,
@@ -58,6 +82,9 @@ import {
 import { formatInr } from '../../src/lib/salaryInsights';
 
 type Tab = 'mine' | 'ask';
+
+/** How many claimable items "Can be claimed" lists before "Show all". */
+const CLAIMABLE_PREVIEW = 4;
 
 export default function CompensationScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -72,6 +99,29 @@ export default function CompensationScreen() {
   // The whole year (every kind, HR's marked), staff only: asked only once the 90-day reply says this is a staff member.
   const history = useCompensationHistory(year, data?.isStaff === true);
 
+  // Self-claims: `canClaim` true = the employee may claim and use their balance; false = not now; null = an older server
+  // without self-claims (the read-only screen and its texts, exactly as before; My claims is not even asked).
+  const canClaim = data?.isStaff ? data.canClaim : null;
+  const claimsKnown = canClaim !== null;
+  const claims = useMyCompensationClaims(claimsKnown);
+  const withdraw = useWithdrawCompensationClaim();
+  const [claimDraft, setClaimDraft] = useState<ClaimDraft | null>(null);
+  const [useOpen, setUseOpen] = useState(false);
+  const [claimFilter, setClaimFilter] = useState<ClaimFilter>('all');
+  const [showAllClaimable, setShowAllClaimable] = useState(false);
+  const [withdrawingId, setWithdrawingId] = useState<number | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error'; visible: boolean }>({
+    message: '',
+    type: 'success',
+    visible: false,
+  });
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type, visible: true });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3200);
+  };
+
   // "Today" is read at render: the screen can stay open past midnight, and the allowance banners are about today / tomorrow.
   const todayIso = format(new Date(), 'yyyy-MM-dd');
 
@@ -80,35 +130,71 @@ export default function CompensationScreen() {
     [history.data, filter],
   );
 
-  // A notification's View opens this screen with ?focus=<holiday / Sunday work claim id> (src/lib/notificationTarget.ts):
-  // My Compensation opens (with a filter that shows it), the page scrolls to the claim's row "hw-<id>" and it pulses once
-  // (src/hooks/useFocusItem.ts). Looked for in the year on screen, or in the 90-day list when the year did not load.
+  // A notification's View opens this screen with ?focus=<claim id> (src/lib/notificationTarget.ts; every kind of claim is
+  // in the one claim table, so the id is the same as before): My Compensation opens (with a filter that shows it), the page
+  // scrolls to the claim's row and it pulses once (src/hooks/useFocusItem.ts). The row is "hw-<id>", or the item the
+  // claim was made for (an OT day, a birthday: its `claim`), looked for in the year on screen (or the 90-day list when the
+  // year did not load); else the claim on My claims. Each claim id belongs to ONE card (claimFocusIds), so one card pulses.
   const scrollRef = useRef<ScrollViewInstance>(null);
-  const focus = useFocusItem<HistoryItem | CompensationItem, SourceFilter>({
+  const timelineRows: (HistoryItem | CompensationItem)[] | undefined = history.data
+    ? history.data.items
+    : history.isError
+      ? data?.items
+      : undefined;
+  const focusIds = useMemo(() => claimFocusIds(timelineRows ?? []), [timelineRows]);
+  const focusRows = useMemo(() => {
+    if (!timelineRows) return undefined;
+    if (!claimsKnown) return timelineRows;
+    if (claims.isLoading) return undefined;
+    const owned = new Set(focusIds.values());
+    return [...timelineRows, ...(claims.data ?? []).filter((c) => !owned.has(c.id))];
+  }, [timelineRows, claimsKnown, claims.isLoading, claims.data, focusIds]);
+  const focus = useFocusItem<HistoryItem | CompensationItem | MyClaim, SourceFilter>({
     request: useFocusParam(),
-    rows: history.data ? history.data.items : history.isError ? data?.items : undefined,
-    idOf: (it) => idFromKey(it.key, 'hw') ?? -1,
+    rows: focusRows,
+    idOf: (it) => ('key' in it ? (focusIds.get(it.key) ?? -1) : it.id),
     views: {
       order: ['all'],
       current: filter,
       set: setFilter,
       has: (it, f) => f === 'all' || ('source' in it && it.source === f),
     },
-    reveal: () => setTab('mine'),
-    refresh: () => Promise.all([refetch(), data?.isStaff ? history.refetch() : undefined]),
-    fetching: isFetching || history.isFetching,
+    reveal: (it) => {
+      if ('key' in it) {
+        setTab('mine');
+      } else {
+        setTab('ask');
+        setClaimFilter('all');
+      }
+    },
+    refresh: () =>
+      Promise.all([refetch(), data?.isStaff ? history.refetch() : undefined, claimsKnown ? claims.refetch() : undefined]),
+    fetching: isFetching || history.isFetching || (claimsKnown && claims.isFetching),
     ready: !!data,
     scrollRef,
   });
 
-  const statusColors = (tone: StatusTone) => {
-    switch (tone) {
-      case 'good': return { bg: Colors.badgeGreenBg, fg: Colors.badgeGreenText };
-      case 'info': return { bg: Colors.badgeBlueBg, fg: Colors.badgeBlueText };
-      case 'warn': return { bg: Colors.badgeYellowBg, fg: Colors.badgeYellowText };
-      case 'bad': return { bg: Colors.badgeRedBg, fg: Colors.badgeRedText };
-      default: return { bg: Colors.badgePendingBg, fg: Colors.badgePendingText };
-    }
+  const statusColors = (tone: ReturnType<typeof statusTone>) => claimStatusColors(Colors, tone);
+
+  const onWithdraw = (claim: MyClaim) => {
+    Alert.alert('Withdraw this claim?', `${myClaimTitle(claim)}. It will no longer wait for your Department Head.`, [
+      { text: 'Keep it', style: 'cancel' },
+      {
+        text: 'Withdraw',
+        style: 'destructive',
+        onPress: async () => {
+          setWithdrawingId(claim.id);
+          try {
+            await withdraw.mutateAsync(claim.id);
+            showToast('Claim withdrawn.');
+          } catch (err) {
+            showToast(claimErrorMessage(err, 'Could not withdraw the claim. Please try again.'), 'error');
+          } finally {
+            setWithdrawingId(null);
+          }
+        },
+      },
+    ]);
   };
 
   const header = (
@@ -124,7 +210,9 @@ export default function CompensationScreen() {
       </TouchableOpacity>
       <View style={{ flex: 1 }}>
         <Text style={styles.headerTitle} accessibilityRole="header">Compensation</Text>
-        <Text style={styles.headerSubtitle}>Everything detected for you and given by HR</Text>
+        <Text style={styles.headerSubtitle}>
+          {canClaim === true ? 'Detected for you, claimed by you, given by HR' : 'Everything detected for you and given by HR'}
+        </Text>
       </View>
     </View>
   );
@@ -182,14 +270,26 @@ export default function CompensationScreen() {
 
   const ask = askHrOf(data);
   const hist = history.data;
-  const balance = balanceView(hist?.balance?.shifts ?? data.balanceShifts);
+  const balanceShifts = hist?.balance?.shifts ?? data.balanceShifts;
+  const balance = balanceView(balanceShifts);
   const today = data.todayAllowance;
   const tomorrow = data.tomorrowAllowance;
+  // Self-claims (all off on an older server): "Use my balance" and the items that can be claimed now (the 90-day list).
+  const balanceUse = useBalanceState(canClaim, data.useBalance, balanceShifts);
+  const readyToClaim = claimableItems(canClaim, data.items);
+  const openClaim = (item: HistoryItem | CompensationItem) => {
+    const draft = claimDraftFor(item);
+    if (draft) setClaimDraft(draft);
+  };
 
   const refresh = (
     <RefreshControl
-      refreshing={isRefetching || history.isRefetching}
-      onRefresh={() => { void refetch(); void history.refetch(); }}
+      refreshing={isRefetching || history.isRefetching || (claimsKnown && claims.isRefetching)}
+      onRefresh={() => {
+        void refetch();
+        void history.refetch();
+        if (claimsKnown) void claims.refetch();
+      }}
       tintColor={Colors.primary}
       colors={[Colors.primary]}
     />
@@ -222,19 +322,35 @@ export default function CompensationScreen() {
     );
   };
 
-  /** One card of the timeline (a year item) or of the 90-day fallback list. */
-  const renderCard = (item: HistoryItem | CompensationItem, hrMark: { givenByHr: boolean; sourceLabel: string } | null) => {
+  /** One card of the timeline (a year item), of the 90-day fallback list, or of "Can be claimed" (`focusable` false: that
+   *  list repeats items of the timeline, and only the timeline's card is the one a notification points at). With
+   *  self-claims a card shows where its claim stands and, while it can be claimed, a Claim button. */
+  const renderCard = (
+    item: HistoryItem | CompensationItem,
+    hrMark: { givenByHr: boolean; sourceLabel: string } | null,
+    focusable = true,
+  ) => {
     const tone = 'source' in item ? historyKindTone(item.kind) : kindTone(item.kind);
     const sc = statusColors(statusTone(item.status));
     const facts = 'source' in item ? historyFacts(item) : itemFacts(item);
     const date = formatLongDate(item.date);
     const earlier = earlierRecordLabel(item);
-    return (
-      <FocusFrame key={item.key} {...focus.frame(idFromKey(item.key, 'hw') ?? -1)}>
+    const claimable = canClaimItem(canClaim, item);
+    // The claim of an item whose own status does not already say it (an OT day HR claimed for the employee, say).
+    const claim = claimsKnown && item.claim && !item.status.startsWith('claim_') ? item.claim : null;
+    const claimState = claim ? itemClaimState(item) : null;
+    const claimLine = claim
+      ? `${claim.raisedByRole === 'hr' ? 'HR claimed it for you' : 'Your claim'}: ${claim.statusLabel}`
+      : null;
+    const claimColors = statusColors(
+      claimState === 'pending' ? 'warn' : claimState === 'approved' ? 'good' : claimState === 'rejected' ? 'bad' : 'neutral',
+    );
+    const card = (
+      <View style={[styles.itemCard, { borderLeftColor: tone.solid }]}>
         <View
-          style={[styles.itemCard, { borderLeftColor: tone.solid }]}
+          style={styles.itemBody}
           accessible
-          accessibilityLabel={`${tone.label}${date ? `, ${date}` : ''}. ${item.title}. ${item.statusLabel}.${hrMark ? ` ${hrMark.sourceLabel}.` : ''}${earlier ? ` ${earlier}.` : ''}`}
+          accessibilityLabel={`${tone.label}${date ? `, ${date}` : ''}. ${item.title}. ${item.statusLabel}.${hrMark ? ` ${hrMark.sourceLabel}.` : ''}${earlier ? ` ${earlier}.` : ''}${claimLine ? ` ${claimLine}.` : ''}`}
         >
           <View style={styles.itemTop}>
             <View style={[styles.kindChip, { backgroundColor: isDark ? tone.softDark : tone.softLight }]}>
@@ -287,7 +403,32 @@ export default function CompensationScreen() {
               ))}
             </View>
           )}
+          {!!claimLine && (
+            <View style={[styles.claimLine, { backgroundColor: claimColors.bg }]}>
+              <MaterialCommunityIcons name="clipboard-text-clock-outline" size={13} color={claimColors.fg} />
+              <Text style={[styles.claimLineText, { color: claimColors.fg }]}>{claimLine}</Text>
+            </View>
+          )}
         </View>
+        {claimable && (
+          <TouchableOpacity
+            style={styles.claimBtn}
+            onPress={() => openClaim(item)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={`Claim ${tone.label}${date ? ` of ${date}` : ''}`}
+            testID={`compensation-claim-${item.key}`}
+          >
+            <MaterialCommunityIcons name="hand-coin-outline" size={16} color="#fff" />
+            <Text style={styles.claimBtnText}>Claim</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+    if (!focusable) return <View key={item.key}>{card}</View>;
+    return (
+      <FocusFrame key={item.key} {...focus.frame(focusIds.get(item.key) ?? -1)}>
+        {card}
       </FocusFrame>
     );
   };
@@ -385,18 +526,19 @@ export default function CompensationScreen() {
             </View>
             <Text style={styles.emptyTitle}>{filter === 'all' ? `Nothing in ${hist.year}` : `Nothing of this kind in ${hist.year}`}</Text>
             <Text style={styles.emptyText}>
-              When you work extra hours, or on a Sunday or a company holiday, it is detected and listed here. Anything HR
-              gives you or announces appears here too.
+              {canClaim === true
+                ? 'When you work extra hours, or on a Sunday or a company holiday, it is detected and listed here, and you can claim it. Anything HR gives you or announces appears here too.'
+                : 'When you work extra hours, or on a Sunday or a company holiday, it is detected and listed here. Anything HR gives you or announces appears here too.'}
             </Text>
             <TouchableOpacity
               style={styles.emptyBtn}
               onPress={() => setTab('ask')}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel="How to ask HR for compensation"
+              accessibilityLabel={claimsKnown ? 'Open my claims' : 'How to ask HR for compensation'}
             >
-              <MaterialCommunityIcons name="headset" size={15} color={Colors.primary} />
-              <Text style={styles.emptyBtnText}>How to ask HR</Text>
+              <MaterialCommunityIcons name={claimsKnown ? 'clipboard-text-clock-outline' : 'headset'} size={15} color={Colors.primary} />
+              <Text style={styles.emptyBtnText}>{claimsKnown ? 'My claims' : 'How to ask HR'}</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -437,15 +579,152 @@ export default function CompensationScreen() {
     );
   };
 
+  /** "Use my balance": what can be used now and the button (only with self-claims). */
+  const useBalanceBlock = () =>
+    balanceUse.shown ? (
+      <View style={styles.useCard}>
+        <View style={styles.useHead}>
+          <View style={styles.useIcon}>
+            <MaterialCommunityIcons name="calendar-arrow-left" size={18} color={Colors.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.useTitle} accessibilityRole="header">Use my balance</Text>
+            <Text style={[styles.useLine, TabularNums]}>{useBalanceLine(data.useBalance, balanceShifts)}</Text>
+          </View>
+        </View>
+        {!!balanceUse.why && <Text style={styles.useWhy}>{balanceUse.why}</Text>}
+        <TouchableOpacity
+          style={[styles.useBtn, !balanceUse.enabled && styles.useBtnOff]}
+          onPress={() => setUseOpen(true)}
+          disabled={!balanceUse.enabled}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !balanceUse.enabled }}
+          accessibilityLabel="Use my balance for a day off"
+          testID="compensation-use-balance"
+        >
+          <MaterialCommunityIcons name="calendar-check-outline" size={16} color="#fff" />
+          <Text style={styles.useBtnText}>Take time off from my balance</Text>
+        </TouchableOpacity>
+      </View>
+    ) : null;
+
+  /** "Can be claimed": the items the employee may claim now, newest first (a few, then "Show all"). */
+  const claimableBlock = () => {
+    if (readyToClaim.length === 0) return null;
+    const shown = showAllClaimable ? readyToClaim : readyToClaim.slice(0, CLAIMABLE_PREVIEW);
+    return (
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <Text style={styles.sectionTitle} accessibilityRole="header">Can be claimed</Text>
+          <Text style={styles.sectionCount}>{readyToClaim.length}</Text>
+        </View>
+        <Text style={styles.sectionSub}>
+          {data.claimWindowDays
+            ? `Claim within ${data.claimWindowDays} days. Your Department Head approves every claim.`
+            : 'Your Department Head approves every claim.'}
+        </Text>
+        <View style={styles.itemList}>{shown.map((it) => renderCard(it, null, false))}</View>
+        {readyToClaim.length > shown.length && (
+          <TouchableOpacity
+            style={styles.moreBtn}
+            onPress={() => setShowAllClaimable(true)}
+            accessibilityRole="button"
+            accessibilityLabel={`Show all ${readyToClaim.length} items that can be claimed`}
+          >
+            <Text style={styles.moreBtnText}>Show all {readyToClaim.length}</Text>
+            <MaterialCommunityIcons name="chevron-down" size={16} color={Colors.primary} />
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  /** "My claims": every claim of the employee (theirs and HR's for them), filterable, Withdraw while one waits. */
+  const myClaimsBlock = () => {
+    const all = claims.data ?? [];
+    const counts = claimCounts(all);
+    const list = filterClaims(all, claimFilter);
+    return (
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <Text style={styles.sectionTitle} accessibilityRole="header">My claims</Text>
+          {!!claims.data && <Text style={styles.sectionCount}>{all.length}</Text>}
+        </View>
+        <Text style={styles.sectionSub}>What you or HR claimed for you, and what your Department Head decided.</Text>
+        {claims.isLoading ? (
+          <View>
+            {Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)}
+          </View>
+        ) : !claims.data ? (
+          <View style={styles.inlineError}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={18} color={Colors.statusRed} />
+            <Text style={styles.inlineErrorText}>Your claims could not be loaded.</Text>
+            <TouchableOpacity onPress={() => claims.refetch()} style={styles.inlineRetry} accessibilityRole="button" accessibilityLabel="Try loading your claims again">
+              <Text style={styles.inlineRetryText}>Retry</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            {all.length > 0 && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+                {CLAIM_FILTERS.map((f) => {
+                  const active = claimFilter === f.key;
+                  return (
+                    <TouchableOpacity
+                      key={f.key}
+                      onPress={() => setClaimFilter(f.key)}
+                      style={[styles.filterChip, active && styles.chipActive]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={`Show ${f.label}: ${counts[f.key]}`}
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>{f.label}</Text>
+                      <View style={[styles.countPill, active && styles.countPillActive]}>
+                        <Text style={[styles.countText, active && styles.countTextActive]}>{counts[f.key]}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+            {list.length === 0 ? (
+              <View style={styles.claimsEmpty}>
+                <MaterialCommunityIcons name="clipboard-text-outline" size={22} color={Colors.textMuted} />
+                <Text style={styles.claimsEmptyText}>
+                  {all.length === 0
+                    ? canClaim === true
+                      ? 'No claims yet. Tap Claim on an item on My Compensation to send one.'
+                      : 'No claims yet.'
+                    : 'No claims of this kind.'}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.itemList}>
+                {list.map((c) => (
+                  <FocusFrame key={c.id} {...focus.frame(focusRows?.includes(c) ? c.id : -1)}>
+                    <MyClaimCard claim={c} onWithdraw={onWithdraw} withdrawing={withdrawingId === c.id} />
+                  </FocusFrame>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+      </View>
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {header}
 
-      {/* Two tabs: what the system found / what HR gave, and how to ask HR. */}
+      {/* Two tabs: what the system found / what HR gave, and how to ask HR (with self-claims: My Claims). */}
       <View style={styles.tabs} accessibilityRole="tablist">
         {([
           { key: 'mine' as Tab, label: 'My Compensation', icon: 'briefcase-clock-outline' },
-          { key: 'ask' as Tab, label: 'Ask Request for Compensation', icon: 'headset' },
+          claimsKnown
+            ? { key: 'ask' as Tab, label: 'My Claims', icon: 'clipboard-text-clock-outline' }
+            : { key: 'ask' as Tab, label: 'Ask Request for Compensation', icon: 'headset' },
         ]).map((t) => {
           const active = tab === t.key;
           return (
@@ -489,7 +768,9 @@ export default function CompensationScreen() {
                 <Text style={styles.balanceUnit}>{balance.unit}</Text>
               </View>
               <Text style={styles.balanceHint}>
-                Shifts HR or your Department Head added for extra work, less the days off HR already gave you from it.
+                {canClaim === true
+                  ? 'Shifts your Department Head approved for extra work, less the time off you already took from it.'
+                  : 'Shifts HR or your Department Head added for extra work, less the days off HR already gave you from it.'}
               </Text>
               {!!hist?.balance && !!hist.totals && (
                 <View style={styles.balanceStats}>
@@ -508,6 +789,7 @@ export default function CompensationScreen() {
             </LinearGradient>
           </Reveal>
 
+          {useBalanceBlock()}
           {!!today && allowanceBanner(today, 'today')}
           {!!tomorrow && allowanceBanner(tomorrow, 'tomorrow')}
           {focus.missing && (
@@ -529,15 +811,27 @@ export default function CompensationScreen() {
             </View>
           ) : null}
 
+          {claimableBlock()}
           {timeline()}
         </ScrollView>
       ) : (
         <ScrollView
           key="ask"
+          // the one mounted tab holds the ref, so a notification's claim on My claims scrolls into view too
+          ref={scrollRef}
           contentContainerStyle={styles.pad}
           showsVerticalScrollIndicator={false}
           refreshControl={refresh}
         >
+          {claimsKnown && (
+            <>
+              {focus.missing && (
+                <FocusMissingNote text="That claim is no longer in this list" onDismiss={focus.dismissMissing} />
+              )}
+              {useBalanceBlock()}
+              {myClaimsBlock()}
+            </>
+          )}
           <View style={styles.askCard}>
             <View style={styles.askHead}>
               <View style={styles.askIcon}>
@@ -560,17 +854,42 @@ export default function CompensationScreen() {
 
           <View style={styles.noteBox}>
             <MaterialCommunityIcons name="shield-account-outline" size={16} color={Colors.primary} />
-            <Text style={styles.noteText}>{ASK_HR_NOT_SELF_SERVICE}</Text>
+            <Text style={styles.noteText}>{selfServiceNote(canClaim)}</Text>
           </View>
 
           <ContactBlockCard
             block={ask.contact}
             title="Contact HR"
-            description="Tell HR which day you worked extra. They will check it and raise the compensation for you."
+            description={
+              canClaim === true
+                ? 'For a question about a claim or your balance, or if something you worked is missing, contact HR.'
+                : 'Tell HR which day you worked extra. They will check it and raise the compensation for you.'
+            }
             style={styles.contact}
           />
         </ScrollView>
       )}
+
+      <ClaimSheet
+        draft={claimDraft}
+        onClose={() => setClaimDraft(null)}
+        onSubmitted={(message) => {
+          setClaimDraft(null);
+          showToast(message);
+        }}
+      />
+      <UseBalanceSheet
+        visible={useOpen}
+        onClose={() => setUseOpen(false)}
+        info={data.useBalance}
+        balance={balanceShifts}
+        onSubmitted={(message) => {
+          setUseOpen(false);
+          setClaimFilter('all');
+          showToast(message);
+        }}
+      />
+      <Toast {...toast} />
     </SafeAreaView>
   );
 }
@@ -789,6 +1108,51 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 10, marginTop: 6, minHeight: 44,
   },
   emptyBtnText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+
+  // Self-claims: the Claim button and claim line on a card, "Use my balance", "Can be claimed", "My claims"
+  itemBody: { gap: 8 },
+  claimLine: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start',
+    borderRadius: BorderRadius.full, paddingHorizontal: 10, paddingVertical: 4,
+  },
+  claimLineText: { fontSize: 11.5, fontWeight: '700', flexShrink: 1 },
+  claimBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, alignSelf: 'flex-start',
+    backgroundColor: Colors.primary, borderRadius: BorderRadius.full,
+    paddingHorizontal: 18, minHeight: 40, marginTop: 2,
+  },
+  claimBtnText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  useCard: {
+    backgroundColor: Colors.bgCard, borderRadius: BorderRadius.xl,
+    borderWidth: 1, borderColor: Colors.border,
+    padding: 14, marginBottom: 14, gap: 10,
+    ...cardShadow,
+  },
+  useHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  useIcon: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: Colors.primaryFixed,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  useTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 15 },
+  useLine: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
+  useWhy: { color: Colors.textMuted, fontSize: 12, lineHeight: 17 },
+  useBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7,
+    backgroundColor: Colors.primary, borderRadius: BorderRadius.full, minHeight: 44, paddingHorizontal: 16,
+  },
+  useBtnOff: { opacity: 0.45 },
+  useBtnText: { color: '#fff', fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  moreBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, alignSelf: 'center',
+    minHeight: 40, paddingHorizontal: 14, marginTop: -4, marginBottom: 8,
+  },
+  moreBtnText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  claimsEmpty: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.bgCard, borderRadius: BorderRadius.lg,
+    borderWidth: 1, borderColor: Colors.border, padding: 14, marginBottom: 14,
+  },
+  claimsEmptyText: { flex: 1, color: Colors.textMuted, fontSize: 12.5, lineHeight: 18 },
 
   // Ask tab
   askCard: {

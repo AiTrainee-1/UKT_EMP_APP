@@ -7,7 +7,17 @@
 // times, compensation days), plus the overtime pay each month's salary slip paid. This file reads that reply defensively
 // and groups it for the phone; every figure is the server's.
 
-import { formatLongDate, kindTone, minutesText, parseIsoDate, prettify, shiftsLabel, type KindTone } from './compensation.ts';
+import {
+  formatLongDate,
+  kindTone,
+  minutesText,
+  parseIsoDate,
+  prettify,
+  readClaimFields,
+  shiftsLabel,
+  type ClaimFields,
+  type KindTone,
+} from './compensation.ts';
 import { formatInr } from './salaryInsights.ts';
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -24,7 +34,9 @@ const num = (v: unknown): number | null => {
 export type Source = 'hr' | 'automatic' | 'company';
 export type SourceFilter = 'all' | Source;
 
-export interface HistoryItem {
+/** One item of the year. The claim fields (claimable, claim, ...) are the same as on the 90-day list's items: the server
+ *  builds both lists with the same item builders; an older server sends none of them. */
+export interface HistoryItem extends ClaimFields {
   key: string;
   kind: string;
   group: string;
@@ -80,8 +92,10 @@ function readItem(raw: unknown, index: number): HistoryItem | null {
   const status = str(raw.status);
   const source = (SOURCES as string[]).includes(str(raw.source)) ? (str(raw.source) as Source) : 'hr';
   const date = isoOrNull(raw.date);
+  const key = str(raw.key) || `item-${index}`;
   return {
-    key: str(raw.key) || `item-${index}`,
+    ...readClaimFields(raw, key, kind),
+    key,
     kind,
     group: str(raw.group) || 'other',
     date,

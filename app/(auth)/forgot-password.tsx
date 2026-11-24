@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -12,34 +12,30 @@ import { SupportContactCard } from '../../src/components/support/SupportContactC
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
-import { loginOptionsRequest, otpResetPasswordRequest } from '../../src/hooks/useAuth';
+import { otpResetPasswordRequest } from '../../src/hooks/useAuth';
+import { useLoginOptions } from '../../src/hooks/useLoginOptions';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
-import { otpCopy } from '../../src/lib/otp';
+import { codeLengthFor, otpCopy, purposeCodes, singleChannel, unknownCodes } from '../../src/lib/otp';
 
-/** Forgot / reset password: a one-time code (by SMS or WhatsApp, as HR chose) proves it's really you, then choose a new password. */
+/**
+ * Forgot / reset password: a one-time code (by WhatsApp or SMS - whichever HR has switched on; with both, the employee
+ * picks) proves it's really you, then choose a new password.
+ */
 export default function ForgotPasswordScreen() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  // null until the server answers; if it can't, try anyway and let the request report the problem.
-  const [available, setAvailable] = useState<boolean | null>(null);
-  // How codes are delivered ('sms' | 'whatsapp'), as the server reports it; unknown from an older server or before it answers.
-  const [channel, setChannel] = useState<string | null>(null);
-  const [codeLength, setCodeLength] = useState<number | null>(null);
   const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
-  const copy = otpCopy(channel, codeLength);
-
-  useEffect(() => {
-    loginOptionsRequest()
-      .then((o) => {
-        setChannel(o.otpChannel ?? null);
-        setCodeLength(o.codeLength ?? null);
-        setAvailable(o.otpReset);
-      })
-      .catch(() => setAvailable(true));
-  }, []);
+  // Asked again whenever this screen or the app comes back to the front. Until the server answers (or if it can't),
+  // try anyway with neutral words and let the request report the problem.
+  const { options, reload: reloadOptions } = useLoginOptions();
+  const codes = options ? purposeCodes(options, 'reset') : unknownCodes();
+  const available = codes.available;
+  // Names the channel when it is the one way on offer; "a code" with both on, from an older server or before it answers.
+  const only = singleChannel(codes);
+  const copy = otpCopy(only, codeLengthFor(codes, only));
 
   const mismatch = confirm.length > 0 && password !== confirm;
   const passwordsOk = password.length >= 8 && password === confirm;
@@ -85,8 +81,8 @@ export default function ForgotPasswordScreen() {
           <OtpFlow
             purpose="reset"
             submitLabel="Set new password"
-            channel={channel}
-            codeLength={codeLength}
+            codes={codes}
+            onChannelsChanged={reloadOptions}
             extraValid={passwordsOk}
             extraFields={
               <View>

@@ -61,7 +61,8 @@ const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: stri
   attendance: { icon: 'calendar-check-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Attendance Update' },
   employee_request: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
   resignation: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Update' },
-  // Holiday / Sunday work compensation, to the employee: the Department Head decided the claim HR raised (type "compensation").
+  // Compensation, to the employee: the Department Head decided one of their claims, of any kind, raised by them or by HR
+  // (type "compensation"; its View opens the claim on the Compensation screen).
   compensation: { icon: 'briefcase-clock-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Compensation Update' },
   // ... and to the Department Head: a claim is waiting for their decision (type "holiday_work"); a tap opens Approvals.
   holiday_work: { icon: 'clipboard-clock-outline', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Compensation Approval' },

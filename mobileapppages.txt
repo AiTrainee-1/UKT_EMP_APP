@@ -423,26 +423,44 @@ UI:
     Resignations*
     (starred categories only appear if the manager has that specific
     approval capability) — each shows a pending count, tap to switch tab
-  - "Compensation" = Holiday / Sunday work claims HR raised for the team:
-    employee, work date + shifts, Sunday / holiday, reason, who raised it,
-    approval progress. The sheet says "Approving adds 0.50 shift to <name>'s
-    compensation balance; rejecting is final". The approval is final (the HOD
-    is the only step) and the toast names what was added to whom.
+  - "Compensation" = every compensation claim of the team (one claim table
+    since the 19 Nov 2026 backend), raised by the employee or by HR: Sunday /
+    holiday work (work date, Sunday / holiday, shifts), OT late-in allowance
+    (OT date, shift end, last punch, extra minutes, the allowance minutes), OT
+    shift credit (OT times, shifts), birthday credit (1.00 shift) and use of
+    the balance (the day off, shifts). Each card has its own type label and a
+    "raised by" line (the employee, or the HR user's name); the sheet lists
+    the claim's own rows (claimDetailRows), the reason and the raised-on date,
+    and a hint saying what approving will do (claimPendingHint: shifts added
+    to the balance, the allowance applied on the next working day, the
+    shifts taken off the balance for the day off). The approval is final (the
+    HOD is the only step); the toast is the server's `effect` sentence
+    ("0.75 shift added to Ravi's balance.", "Late-in allowance of 30 min
+    applies on 21 Nov."). A refusal (409 claim_refused: payroll month done,
+    a day HR set by hand, the balance no longer covers it, HR already paid the
+    overtime ...) is shown as the server's sentence. An older backend sends no
+    `kind`: every claim there is HR-raised holiday work.
   - FlatList of request cards for the active category: avatar initial,
     employee name/code, type chip, date, reason preview, inline
     Approve/Reject buttons, staggered entrance animation
   - Empty state: "All caught up!"
   - Detail BottomSheet (generic — leave/permission/casualLeave/
-    attendance/missingPunch/outpass): full fields + optional comment
-    TextInput + Approve/Reject buttons
+    attendance/missingPunch/outpass): full fields + comment TextInput
+    + Approve/Reject buttons. Approve needs no comment; Reject needs the
+    reason (box relabelled "Reason for rejecting (required)", at least 3
+    characters after trimming, src/lib/rejectRemark.ts) - a short reason
+    shows "Write the reason for rejecting (at least 3 characters)." under
+    the box and sends nothing. The server refuses the same (400
+    remark_required); its message is shown in the sheet too
   - Separate detail BottomSheet for resignation: reason, last working
     date, submitted date, survey Q&A, comment, Approve/Reject
   - Toast
 
 Actions:
   - Switch category tab
-  - Tap a card or its inline buttons to open the detail sheet
-  - Approve/reject with an optional comment
+  - Tap a card or its inline buttons to open the detail sheet (the card's
+    Reject opens it already asking for the reason)
+  - Approve (comment optional) / Reject (reason required, sent as `comment`)
   - Pull-to-refresh
 
 API calls:
@@ -456,9 +474,11 @@ API calls:
   - useApproveMissingPunch() -> PATCH /manager/missing-punch-requests/{id}/status
   - useApproveOutpass() -> PATCH /manager/outpass-requests/{id}/status
   - useApproveHolidayWork() -> PATCH /manager/holiday-work/{id}/status
-    body {status, comment}; GET /manager/pending-requests carries
-    holidayWorkClaims, GET /manager/me carries canApproveCompensation and
-    pendingCompensationCount (already inside pendingApprovalsCount). Errors
+    body {status, comment}, any claim kind; the reply adds `credited` and
+    `effect`. GET /manager/pending-requests carries holidayWorkClaims (every
+    kind: kind, kindLabel, raisedByRole, minutes, overtime, useDate), GET
+    /manager/me carries canApproveCompensation and pendingCompensationCount
+    (every kind; already inside pendingApprovalsCount). Errors
     such as APPROVE_COMPENSATION_DISABLED or "already approved" are shown as
     the server's own sentence; a refusal refreshes the list and the profile.
 
@@ -548,8 +568,8 @@ UI:
 
 Actions:
   - Tap an unread notification -> marks it read; a "compensation" one
-    (a holiday / Sunday work claim decided by the Department Head) also
-    opens /compensation. A "holiday_work" one (a claim waits for the
+    (a compensation claim of any kind decided by the Department Head, or one
+    HR raised for the employee) also opens /compensation on that claim. A "holiday_work" one (a claim waits for the
     Department Head's decision; sent to the head only) opens the Approvals
     tab, /(tabs)/approvals, unless the profile says the person is no longer a
     head. A delivered push of either type does the same (the root layout's
@@ -859,21 +879,80 @@ Conditional content: none.
 PAGE: Compensation (STAFF ONLY)
 --------------------------------------------------------------------
 Route:    /compensation
-File:     app/compensation/index.tsx
+File:     app/compensation/index.tsx (+ src/components/compensation/ClaimSheet,
+          UseBalanceSheet, MyClaimCard, ShiftPicker)
 Purpose:  Everything compensation for the signed-in staff employee: what the
-          system DETECTED and what HR ASSIGNED. The employee cannot assign or
-          claim anything from the app; they ask HR.
+          system DETECTED, what the employee or HR CLAIMED, what the
+          Department Head decided and what HR GAVE. Since the 19 Nov 2026
+          backend (compensation claims) the employee CLAIMS compensation
+          themselves and asks to use their balance; every claim goes to their
+          Department Head. Against an older backend (no `canClaim` in the
+          reply) the screen stays read-only, as described under "UI" below
+          (the employee asks HR).
 
-UI:
+CLAIMS (new build; feature-detected by `canClaim` of GET /employee/compensation):
+  - Tabs become "My Compensation" and "My Claims" (an older backend keeps
+    "Ask Request for Compensation").
+  - "Use my balance" card: balance, waiting and free-to-use shifts (the
+    server's useBalance block); "Take time off from my balance" opens
+    UseBalanceSheet: a WORKING day in the request window (this month; last
+    month too on the 1st-5th, the same rule as every request form), 0.25 /
+    0.50 / 0.75 / 1.00 up to what is free (never more than one shift a day)
+    and a reason (5-300 letters). Disabled with the server's reason when
+    useBalance.allowed is false (switched off, no Department Head, nothing
+    free).
+  - "Can be claimed" section: the items with claimable = true (a worked
+    Sunday / holiday "hwd-<date>", a Type 1 OT allowance, a Type 2 OT credit,
+    a worked birthday "birthday_credit"), newest first, a few then
+    "Show all N". The note says "Claim within 45 days. Your Department Head
+    approves every claim." Every claimable item has a Claim button.
+  - ClaimSheet: what is claimed (kind, date, OT times / minutes), the shifts
+    where the employee may choose (quarters; an OT credit never above the
+    item's suggestedShifts; a birthday is fixed at 1.00; an allowance has
+    none) and a reason (5-300 letters). The server's refusal (`{error, code}`:
+    not_eligible, too_old, already_claimed, switched_off, no_hod ...) is shown
+    inside the sheet as it is worded. On success a toast and the lists reload.
+  - Item cards show the claim state: "Ready to claim", "Claimed: waiting for
+    your Department Head", "Approved", "Not approved"; a claim HR raised says
+    "HR claimed it for you". Birthday: absent / on approved leave = "Birthday
+    leave (paid)", worked = "Birthday credit: 1.00 shift" to claim; today's
+    birthday says what happens if they come in or not.
+  - My Claims tab: every claim of the employee and the ones HR raised
+    (MyClaimCard: kind, status, what and when, who raised it, the reason, the
+    Department Head's decision and comment), filter chips by kind, "Withdraw"
+    (with a "Withdraw this claim?" question, "Keep it") on a waiting claim the
+    employee raised (claim.canWithdraw); an HR-raised claim can only be
+    withdrawn by HR. The HR contact card is below it.
+  - Notification focus: a "compensation" notification (hw-<claim id>) opens
+    the item it was made for, or the claim on My Claims.
+
+API calls (claims):
+  - useSubmitCompensationClaim() -> POST /employee/compensation/claims
+    {kind, date, overtime_record_id?, shifts?, reason} (the axios client
+    sends snake_case keys; the server reads both)
+  - useUseCompensationBalance() -> POST /employee/compensation/use
+    {date, shifts, reason}
+  - useMyCompensationClaims(enabled) -> GET /employee/compensation/claims
+  - useWithdrawCompensationClaim() -> DELETE /employee/compensation/claims/{id}
+  Pure rules: src/lib/compensationClaims.ts (+ compensationClaims.test.ts),
+  the item reading in src/lib/compensation.ts.
+
+Release: the claim screens need a new APK build (no OTA); version numbers are
+the owner's call. The backend keeps serving older builds (additive keys).
+
+UI (the read-only part, and everything an older backend shows):
   - Header (back, "Compensation"); two tabs: "My Compensation" and
     "Ask Request for Compensation"
   - My Compensation:
       * Balance card (gradient): the compensation balance in shifts (Sunday /
-        holiday work approved by the Department Head, less what HR took),
+        holiday work, OT credits and birthday credits approved by the
+        Department Head, less the time off already taken),
         written like the web app and the server: two decimals, "0.50 shift",
         "1.00 shift", "1.50 shifts" ("shift" up to 1, "shifts" above it); the
         same text on every title, fact and toast
-      * Banner for today's / tomorrow's next-day LATE-IN ALLOWANCE (lime):
+      * Banner for today's / tomorrow's next-day LATE-IN ALLOWANCE (lime; from
+        19 Nov 2026 the server sends only an allowance whose claim the
+        Department Head APPROVED):
         "Late-in allowance tomorrow: 1 h", the server's sentence, and an
         "On time until 10:15" chip (shift start + allowance + grace). When the
         next working day is a Monday it says the date instead of "tomorrow"
@@ -888,7 +967,9 @@ UI:
         Kinds: ot_allowance, ot_shift,
         ot_shift_relaxation, ot_shift_pay, holiday_work (status pending_hod =
         "Waiting for your Department Head"), redemption, window_late_in,
-        window_early_out, birthday. An unknown kind renders with the server's
+        window_early_out, birthday, and with claims birthday_credit and
+        use_balance (statuses claimable / claim_pending / claim_approved /
+        claim_rejected). An unknown kind renders with the server's
         title / detail and a neutral chip
       * Empty state with a "How to ask HR" button; skeletons while loading; a
         Retry state when the request fails; pull-to-refresh
@@ -934,11 +1015,13 @@ UI:
     + Email button), Designation, Department, Branch
   - "What your Department Head can approve": one row per kind of request
     (Leave, Permission, Casual Leave, Missing Punch, On-Duty, Attendance
-    Correction, Resignation, Outpass, Holiday / Sunday work compensation) with
+    Correction, Resignation, Outpass, and compensation: the server's label,
+    "Compensation claims" since 19 Nov 2026, earlier "Holiday / Sunday work
+    compensation") with
     a green "Can approve" or red "Cannot approve" mark, the reason when not
     ("Switched off by HR.", "HR decides this one.", "Not enabled for your
     Department Head.") and the approval path. Production employees do not get
-    Casual Leave or Holiday / Sunday work
+    Casual Leave or compensation claims
   - The note "For any question about approvals, contact HR." and the HR contact
     card (Call / WhatsApp / Email)
   - assigned:false -> "No Department Head assigned" + the server's message;
@@ -1738,6 +1821,10 @@ useAuth.ts
 useCompensation.ts
   useEmployeeCompensation()                  GET /employee/compensation   (staff only)
   useEmployeeHod()                           GET /employee/hod
+  useMyCompensationClaims(enabled)           GET /employee/compensation/claims
+  useSubmitCompensationClaim()               POST /employee/compensation/claims
+  useUseCompensationBalance()                POST /employee/compensation/use
+  useWithdrawCompensationClaim()             DELETE /employee/compensation/claims/{id}
 
 useCasualLeave.ts
   useCasualLeaves(employeeId, params)        GET /casual-leaves

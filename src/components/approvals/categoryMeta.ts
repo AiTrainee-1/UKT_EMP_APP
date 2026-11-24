@@ -28,7 +28,8 @@ export function categoryMeta(Colors: Palette): Record<ApprovalCategory, Category
     missingPunch: m('missingPunch', 'fingerprint', Colors.categoryPunch, Colors.badgeLeaveBg),
     onDuty: m('onDuty', 'map-marker-path', Colors.categoryOnDuty, Colors.badgeYellowBg),
     outpass: m('outpass', 'exit-run', Colors.categoryOutpass, Colors.badgeBlueBg),
-    // Holiday / Sunday work compensation claims HR raised for the team.
+    // Compensation claims of every kind (Sunday / holiday work, OT allowance, OT credit, birthday credit, use balance),
+    // raised by the employee or by HR for them.
     holidayWork: m('holidayWork', 'briefcase-clock-outline', Colors.categoryDocs, Colors.badgeGreenBg),
     resignation: m('resignation', 'file-sign', Colors.badgeRedText, Colors.badgeRedBg),
   };

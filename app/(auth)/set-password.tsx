@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -26,10 +26,11 @@ import { SupportInlineLink } from '../../src/components/support/SupportInlineLin
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
-import { loginOptionsRequest, otpActivateRequest, setPasswordRequest } from '../../src/hooks/useAuth';
+import { otpActivateRequest, setPasswordRequest } from '../../src/hooks/useAuth';
+import { useLoginOptions } from '../../src/hooks/useLoginOptions';
 import { isServerProblem } from '../../src/lib/supportContact';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
-import { otpCopy } from '../../src/lib/otp';
+import { codeLengthFor, otpCopy, purposeCodes, singleChannel, unknownCodes } from '../../src/lib/otp';
 
 const schema = z
   .object({
@@ -69,26 +70,18 @@ export default function SetPasswordScreen() {
   const [setupError, setSetupError] = useState<{ identifier: string; message: string } | null>(null);
   // The last attempt got no answer from the server (or a 5xx): show the software-support contact.
   const [serverDown, setServerDown] = useState(false);
-  // Whether a one-time code (SMS or WhatsApp) must confirm the employee first. null until the server answers; if it
-  // can't be reached we assume yes - the code request itself then reports the connection problem.
-  const [otpActivate, setOtpActivate] = useState<boolean | null>(null);
-  // How codes are delivered ('sms' | 'whatsapp'), as the server reports it; unknown from an older server or before it answers.
-  const [channel, setChannel] = useState<string | null>(null);
-  const [codeLength, setCodeLength] = useState<number | null>(null);
   const [otpStep, setOtpStep] = useState<1 | 2>(1);
   const [otpPassword, setOtpPassword] = useState('');
   const [otpConfirm, setOtpConfirm] = useState('');
-  const copy = otpCopy(channel, codeLength);
-
-  useEffect(() => {
-    loginOptionsRequest()
-      .then((o) => {
-        setChannel(o.otpChannel ?? null);
-        setCodeLength(o.codeLength ?? null);
-        setOtpActivate(o.otpActivate);
-      })
-      .catch(() => setOtpActivate(true));
-  }, []);
+  // Whether a one-time code (WhatsApp or SMS - switched on separately by HR; with both, the employee picks) must confirm
+  // the employee first. Asked again whenever this screen or the app comes back to the front. null until the server
+  // answers; if it can't be reached we assume yes - the code request itself then reports the connection problem.
+  const { options, failed, reload: reloadOptions } = useLoginOptions();
+  const codes = options ? purposeCodes(options, 'activate') : unknownCodes();
+  const otpActivate: boolean | null = options ? codes.available : failed ? true : null;
+  // Names the channel when it is the one way on offer; "a code" with both on, from an older server or before it answers.
+  const only = singleChannel(codes);
+  const copy = otpCopy(only, codeLengthFor(codes, only));
 
   const {
     control,
@@ -221,8 +214,8 @@ export default function SetPasswordScreen() {
             <OtpFlow
               purpose="activate"
               submitLabel="Set Password & Activate"
-              channel={channel}
-              codeLength={codeLength}
+              codes={codes}
+              onChannelsChanged={reloadOptions}
               extraValid={otpPasswordsOk}
               onStepChange={setOtpStep}
               extraFields={

@@ -6,16 +6,24 @@ import assert from 'node:assert/strict'
 import {
   APPROVALS_ROUTE,
   ASK_HR_FALLBACK_TEXT,
+  ASK_HR_NOT_SELF_SERVICE,
   ASK_HR_TITLE,
+  CLAIMS_CLOSED_TEXT,
+  CLAIM_KIND_LABEL,
+  CLAIM_SELF_SERVICE,
   EARLIER_RECORD_LABEL,
   GROUPS,
   addDaysIso,
   allowanceView,
   askHrOf,
   balanceView,
+  claimApprovedMessage,
   claimCreditedMessage,
   claimDateLabel,
   claimDayLabel,
+  claimDetailRows,
+  claimKindFrom,
+  claimPendingHint,
   claimTypeLabel,
   earlierRecordLabel,
   formatDayMonthYear,
@@ -29,8 +37,13 @@ import {
   notificationRoute,
   parseIsoDate,
   prettify,
+  punchText,
   pushNotificationType,
+  raisedByLabel,
+  raisedByText,
+  readClaimOvertime,
   readContact,
+  selfServiceNote,
   shiftsLabel,
   shiftsText,
   shiftsUnit,
@@ -422,4 +435,184 @@ test('an employee reminder sent to a Department Head opens Approvals; a non-head
   assert.equal(notificationRoute('approval_reminder', { isManager: true }), APPROVALS_ROUTE)
   assert.equal(notificationRoute('approval_reminder', { isManager: false }), null)
   assert.equal(notificationHint('approval_reminder', { isManager: true }), 'Opens approvals')
+})
+
+// ── self-claims (2026-11-19) ────────────────────────────────────────────────
+
+test('an older server (no canClaim) reads as "no self-claims": canClaim null, no use-balance, every item unclaimable', () => {
+  const c = normalizeCompensation(REPLY)!
+  assert.equal(c.canClaim, null)
+  assert.equal(c.claimWindowDays, null)
+  assert.equal(c.useBalance, null)
+  for (const it of c.items) {
+    assert.equal(it.claimable, false, it.key)
+    assert.equal(it.claim, null, it.key)
+    assert.equal(it.claimKind, null, it.key)
+  }
+  // the OT kinds still know their record (from the key), harmlessly
+  assert.equal(c.items.find((i) => i.key === 'ot-3630')!.overtimeRecordId, 3630)
+  assert.equal(c.items.find((i) => i.key === 'hw-2421')!.overtimeRecordId, null)
+  // an older server keeps its words
+  assert.equal(selfServiceNote(c.canClaim), ASK_HR_NOT_SELF_SERVICE)
+  // even a stray useBalance block is ignored without canClaim
+  assert.equal(normalizeCompensation({ ...REPLY, useBalance: { allowed: true, availableShifts: 1 } })!.useBalance, null)
+})
+
+test('a current server: canClaim, the claim window, use-balance and the claim fields of an item', () => {
+  const c = normalizeCompensation({
+    ...REPLY,
+    canClaim: true,
+    claimWindowDays: 45,
+    useBalance: { allowed: true, balanceShifts: '1.25', pendingShifts: 0.25 },
+    items: [
+      { key: 'ot-1', kind: 'ot_shift', date: '2026-11-09', status: 'claimable', claimable: true, claimKind: 'otShift', suggestedShifts: '0.75', overtimeRecordId: 41 },
+      { key: 'bdc-2026-11-03', kind: 'birthday_credit', date: '2026-11-03', status: 'claimable', claimable: true },
+      { key: 'ot-2', kind: 'ot_allowance', date: '2026-11-10', status: 'claim_pending', claimable: false, claimKind: 'ot_allowance', claim: { id: 90, kind: 'ot_allowance', status: 'pending', minutes: 30, raisedByRole: 'HR' } },
+      { key: 'ot-3', kind: 'ot_shift', date: '2026-11-11', status: 'detected', claim: { status: 'rejected', statusLabel: 'Rejected by Kavya' } },
+      { key: 'ot-4', kind: 'ot_shift', date: '2026-11-12', status: 'detected', claim: 'nope', suggestedShifts: -1 },
+    ],
+  })!
+  assert.equal(c.canClaim, true)
+  assert.equal(c.claimWindowDays, 45)
+  assert.deepEqual(c.useBalance, { allowed: true, balanceShifts: 1.25, pendingShifts: 0.25, availableShifts: 1, message: null })
+  const [ot, birthday, allowance, rejected, junk] = c.items
+  assert.deepEqual(
+    { claimable: ot.claimable, claimKind: ot.claimKind, suggested: ot.suggestedShifts, record: ot.overtimeRecordId },
+    { claimable: true, claimKind: 'ot_shift', suggested: 0.75, record: 41 },
+  )
+  assert.equal(birthday.claimKind, 'birthday', 'a claimable birthday credit is claimed as kind birthday')
+  assert.deepEqual(allowance.claim, { id: 90, kind: 'ot_allowance', status: 'pending', statusLabel: 'Waiting for your Department Head', shifts: null, minutes: 30, raisedByRole: 'hr' })
+  assert.equal(allowance.overtimeRecordId, 2)
+  assert.deepEqual(rejected.claim, { id: null, kind: null, status: 'rejected', statusLabel: 'Rejected by Kavya', shifts: null, minutes: null, raisedByRole: null })
+  assert.equal(junk.claim, null)
+  assert.equal(junk.suggestedShifts, null)
+  assert.equal(selfServiceNote(true), CLAIM_SELF_SERVICE)
+  assert.equal(selfServiceNote(false), CLAIMS_CLOSED_TEXT)
+  // canClaim false is still "a current server": its use-balance block is read
+  const closed = normalizeCompensation({ ...REPLY, canClaim: false, useBalance: { allowed: false, message: 'Switched off.' }, balanceShifts: 2 })!
+  assert.equal(closed.canClaim, false)
+  assert.deepEqual(closed.useBalance, { allowed: false, balanceShifts: 2, pendingShifts: 0, availableShifts: 2, message: 'Switched off.' })
+})
+
+test('claim kinds in any spelling, and how the new kinds and claim statuses look', () => {
+  assert.equal(claimKindFrom('ot_shift'), 'ot_shift')
+  assert.equal(claimKindFrom('otAllowance'), 'ot_allowance')
+  assert.equal(claimKindFrom('birthday_credit'), 'birthday')
+  assert.equal(claimKindFrom(' Use-Balance '), 'use_balance')
+  assert.equal(claimKindFrom('holiday'), 'holiday_work')
+  assert.equal(claimKindFrom('night_bonus'), null)
+  assert.equal(claimKindFrom(null), null)
+  assert.deepEqual(Object.keys(CLAIM_KIND_LABEL), ['holiday_work', 'ot_allowance', 'ot_shift', 'birthday', 'use_balance'])
+  assert.equal(kindTone('birthday_credit').label, 'Birthday credit')
+  assert.equal(kindTone('birthday_credit').solid, COMPENSATION_TONES.birthday.solid)
+  assert.equal(kindTone('use_balance').label, 'Use balance')
+  assert.equal(statusTone('claimable'), 'info')
+  assert.equal(statusTone('claim_pending'), 'warn')
+  assert.equal(statusTone('claim_approved'), 'good')
+  assert.equal(statusTone('claim_rejected'), 'bad')
+})
+
+test('every kind of claim on the Approvals tab: its own label, date line and detail rows', () => {
+  const allowance = { kind: 'ot_allowance', workDate: '2026-11-12', minutes: 30, raisedByRole: 'employee', overtime: { date: '2026-11-12', shiftEnd: '18:00:00', lastPunch: '2026-11-12T19:45:00', extraMinutes: 105 } }
+  const credit = { kind: 'ot_shift', workDate: '2026-11-09', shifts: 0.5, raisedByRole: 'hr', requestedBy: 'Meena', overtime: { date: '2026-11-09', shiftEnd: '18:00', lastPunch: '2026-11-10T02:10:00', extraMinutes: 490 } }
+  const birthday = { kind: 'birthday', workDate: '2026-11-03', shifts: 1, raisedByRole: 'employee' }
+  const use = { kind: 'use_balance', workDate: '2026-11-24', useDate: '2026-11-24', shifts: 0.5, raisedByRole: 'employee' }
+  const sunday = { kind: 'holiday_work', dayKind: 'sunday', workDate: '2026-11-15', shifts: 1, raisedByRole: 'employee' }
+  const old = { dayKind: 'holiday', holidayName: 'Diwali', workDate: '2026-11-08', shifts: 1, requestedBy: 'Meena' }
+
+  assert.deepEqual([allowance, credit, birthday, use, sunday, old].map(claimTypeLabel), ['OT allowance', 'OT credit', 'Birthday credit', 'Use balance', 'Sunday work', 'Holiday work'])
+  assert.equal(claimTypeLabel({ kind: 'night_bonus', kindLabel: 'Night bonus' }), 'Night bonus')
+  assert.equal(claimTypeLabel({ kind: 'night_bonus' }), 'Night bonus')
+
+  assert.equal(claimDateLabel(allowance), '12 Nov 2026 · 30 min allowance')
+  assert.equal(claimDateLabel(credit), '9 Nov 2026 · 0.50 shift')
+  assert.equal(claimDateLabel(birthday), '3 Nov 2026 · 1.00 shift')
+  assert.equal(claimDateLabel(use), 'Day off 24 Nov 2026 · 0.50 shift')
+  assert.equal(claimDateLabel({ kind: 'use_balance', shifts: 0.25 }), '0.25 shift')
+  assert.equal(claimDateLabel({ kind: 'ot_shift', overtime: { date: '2026-11-09' } }), '9 Nov 2026')
+
+  assert.deepEqual(claimDetailRows(allowance), [
+    ['OT date', 'Thu, 12 Nov 2026'],
+    ['Shift end', '18:00'],
+    ['Last punch', '19:45'],
+    ['Extra time', '1 h 45 min past shift end'],
+    ['Allowance', '30 min late-in on the next working day'],
+    ['Raised by', 'Employee'],
+  ])
+  assert.deepEqual(claimDetailRows(credit), [
+    ['OT date', 'Mon, 9 Nov 2026'],
+    ['Shift end', '18:00'],
+    ['Last punch', '02:10 next day'],
+    ['Extra time', '8 h 10 min past shift end'],
+    ['Credit claimed', '0.50 shift'],
+    ['Raised by', 'HR (Meena)'],
+  ])
+  assert.deepEqual(claimDetailRows(birthday), [['Birthday', 'Tue, 3 Nov 2026'], ['Credit claimed', '1.00 shift'], ['Raised by', 'Employee']])
+  assert.deepEqual(claimDetailRows(use), [['Day off', 'Tue, 24 Nov 2026'], ['Shifts to use', '0.50 shift'], ['Raised by', 'Employee']])
+  assert.deepEqual(claimDetailRows(sunday), [['Work date', 'Sun, 15 Nov 2026'], ['Day', 'Sunday'], ['Shifts claimed', '1.00 shift'], ['Raised by', 'Employee']])
+  // an older server: holiday work raised by HR, the HR user named
+  assert.deepEqual(claimDetailRows(old), [['Work date', 'Sun, 8 Nov 2026'], ['Day', 'Holiday: Diwali'], ['Shifts claimed', '1.00 shift'], ['Raised by', 'HR (Meena)']])
+  assert.deepEqual(claimDetailRows({ dayKind: 'sunday', workDate: '2026-11-15' }), [['Work date', 'Sun, 15 Nov 2026'], ['Day', 'Sunday']])
+  // an OT claim with no overtime block still has its date
+  assert.deepEqual(claimDetailRows({ kind: 'ot_shift', workDate: '2026-11-09', shifts: 0.25, raisedByRole: 'employee' }), [['OT date', 'Mon, 9 Nov 2026'], ['Credit claimed', '0.25 shift'], ['Raised by', 'Employee']])
+})
+
+test('raised by the employee or by HR (an older server: HR)', () => {
+  assert.equal(raisedByLabel({ raisedByRole: 'employee' }), 'Raised by employee')
+  assert.equal(raisedByLabel({ raisedByRole: 'HR' }), 'Raised by HR')
+  assert.equal(raisedByLabel({}), 'Raised by HR')
+  assert.equal(raisedByText({ raisedByRole: 'employee', requestedBy: 'Asha' }), 'Employee')
+  assert.equal(raisedByText({ raisedByRole: 'hr', requestedBy: 'Meena' }), 'HR (Meena)')
+  assert.equal(raisedByText({ raisedByRole: 'hr' }), 'HR')
+  assert.equal(raisedByText({ requestedBy: 'Meena' }), 'HR (Meena)')
+  assert.equal(raisedByText({}), null)
+})
+
+test('what approving does, per kind, and the toast after it', () => {
+  assert.equal(
+    claimPendingHint({ kind: 'ot_allowance', workDate: '2026-11-12', minutes: 30 }, 'Asha'),
+    'Approving lets Asha arrive up to 30 min later on their next working day after Thu, 12 Nov 2026 without being marked late. Rejecting is final.',
+  )
+  assert.equal(
+    claimPendingHint({ kind: 'use_balance', useDate: '2026-11-24', shifts: 0.5 }, 'Asha'),
+    "Approving takes 0.50 shift from Asha's compensation balance for Tue, 24 Nov 2026: that day counts as worked up to that much. Rejecting is final and uses nothing.",
+  )
+  assert.match(claimPendingHint({ kind: 'birthday', shifts: 1 }, 'Asha'), /^Approving adds 1\.00 shift to Asha's compensation balance for working on their birthday/)
+  assert.equal(claimPendingHint({ dayKind: 'sunday', shifts: 0.5 }, 'Asha'), "Approving adds 0.50 shift to Asha's compensation balance. Rejecting is final and adds nothing.")
+  assert.equal(claimPendingHint({ kind: 'ot_shift' }, 'Asha'), "Approving adds the claimed shifts to Asha's compensation balance. Rejecting is final and adds nothing.")
+
+  // a credit (holiday work, OT credit, birthday) says what went onto whose balance
+  assert.equal(claimApprovedMessage({ kind: 'ot_shift', shifts: 0.5, employeeName: 'Asha', credited: true }), "Approved. 0.50 shift added to Asha's compensation balance.")
+  // otherwise the server's effect sentence
+  assert.equal(claimApprovedMessage({ kind: 'ot_allowance', effect: 'The allowance applies on Fri, 13 Nov 2026.' }), 'Approved. The allowance applies on Fri, 13 Nov 2026.')
+  assert.equal(claimApprovedMessage({ kind: 'use_balance', effect: 'Approved: 0.50 shift used for 24 Nov.' }), 'Approved: 0.50 shift used for 24 Nov.')
+  // else this app's words
+  assert.equal(claimApprovedMessage({ kind: 'ot_allowance', employeeName: 'Asha' }), 'Approved. Asha gets the late-in allowance on their next working day.')
+  assert.equal(claimApprovedMessage({ kind: 'use_balance', shifts: 0.5, useDate: '2026-11-24', employeeName: 'Asha' }), "Approved. 0.50 shift taken from Asha's compensation balance for Tue, 24 Nov 2026.")
+  // an older server's holiday work without `credited`: nothing claim-specific (the pipeline's words are used)
+  assert.equal(claimApprovedMessage({ dayKind: 'sunday', shifts: 1 }), null)
+})
+
+test('punch times and the overtime block are read defensively', () => {
+  assert.equal(punchText('18:00:00', null), '18:00')
+  assert.equal(punchText('9:05', null), '09:05')
+  assert.equal(punchText('2026-11-10T02:10:00+05:30', '2026-11-09'), '02:10 next day')
+  assert.equal(punchText('2026-11-09T21:10:00', '2026-11-09'), '21:10')
+  assert.equal(punchText('02:10 next day', '2026-11-09'), '02:10 next day')
+  assert.equal(punchText(null, null), null)
+  assert.equal(readClaimOvertime(null), null)
+  assert.equal(readClaimOvertime({}), null)
+  assert.equal(readClaimOvertime('x'), null)
+  assert.deepEqual(readClaimOvertime({ date: '2026-11-09', extraMinutes: '120', shiftEnd: 7 }), { date: '2026-11-09', shiftEnd: null, lastPunch: null, lastPunchNextDay: false, extraMinutes: 120 })
+})
+
+test('a last punch the server marks as the next morning says "next day"', () => {
+  // the server sends the clock time plus lastPunchNextDay (the staff next-morning rule: 02:10 closes the day before)
+  assert.equal(punchText('02:10', '2026-11-09', true), '02:10 next day')
+  assert.equal(punchText('2026-11-10T02:10:00', '2026-11-09', true), '02:10 next day')
+  assert.equal(punchText('21:10', '2026-11-09', false), '21:10')
+  const ot = readClaimOvertime({ date: '2026-11-09', shiftEnd: '18:00', lastPunch: '02:10', lastPunchNextDay: true, extraMinutes: 490 })
+  assert.equal(ot?.lastPunchNextDay, true)
+  const rows = claimDetailRows({ kind: 'ot_shift', workDate: '2026-11-09', shifts: 0.75, overtime: { date: '2026-11-09', shiftEnd: '18:00', lastPunch: '02:10', lastPunchNextDay: true, extraMinutes: 490 } })
+  assert.deepEqual(rows.find(([label]) => label === 'Last punch'), ['Last punch', '02:10 next day'])
 })

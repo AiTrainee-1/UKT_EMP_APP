@@ -73,7 +73,8 @@ export const CATEGORY_WORKFLOW: Record<ApprovalCategory, WorkflowKey> = {
   resignation: 'resignation',
 };
 
-/** What a category is called on screen ("Compensation" = holiday / Sunday work claims HR raised). */
+/** What a category is called on screen ("Compensation" = compensation claims of every kind, raised by the employee or by
+ *  HR: Sunday / holiday work, OT allowance, OT credit, birthday credit, use balance). */
 export const CATEGORY_LABEL: Record<ApprovalCategory, string> = {
   leave: 'Leave',
   permission: 'Permission',

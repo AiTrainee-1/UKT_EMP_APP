@@ -1,5 +1,5 @@
-import React from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { StyleSheet, Text, TextInput, TouchableOpacity, View, type TextInputInstance } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -11,8 +11,9 @@ import { BottomSheet } from '../ui/BottomSheet';
 import { ApprovalTrail, DecisionBadge, WaitingChip } from '../approval/ApprovalTrail';
 import { hodCanAct, hodCanReject, waitingTarget, type ApprovalProgress } from '../../lib/approval';
 import { DEFAULT_PERMISSION_MONTHLY_LIMIT, formatPermissionDuration } from '../../lib/permissions';
-import { claimDayLabel, shiftsLabel } from '../../lib/compensation';
+import { claimDetailRows, claimPendingHint } from '../../lib/compensation';
 import { fmtDay, normalizeOutcome, outcomeLine } from '../../lib/approvalsHistory';
+import { REJECT_REMARK_MIN } from '../../lib/rejectRemark';
 import {
   appliedOn,
   empCode,
@@ -57,16 +58,23 @@ function detailRows(sel: SelectedApproval): [string, string][] {
       ['Submitted', fmtDay(item.createdAt)],
     ];
   }
+  if (c === 'holidayWork') {
+    // Every kind of compensation claim: its own rows (OT times, allowance minutes, birthday, the day off), then who raised
+    // it (the employee or HR).
+    return [
+      ['Type', itemTypeLabel(c, item)],
+      ...claimDetailRows(item as any),
+      ['Reason', item.reason || '—'],
+      ['Raised on', appliedOn(item)],
+    ];
+  }
   const rows: ([string, string] | null)[] = [
     [c === 'outpass' ? 'Destination' : 'Type', itemTypeLabel(c, item)],
     c === 'leave'
       ? ['From', fmtDay(item.startDate)]
       : c === 'outpass'
         ? null
-        : [c === 'holidayWork' ? 'Work date' : 'Date', itemDateLabel(c, item).split(' · ')[0]],
-    c === 'holidayWork' ? ['Day', claimDayLabel(item as any)] : null,
-    c === 'holidayWork' && shiftsLabel(item.shifts) ? ['Shifts claimed', shiftsLabel(item.shifts)!] : null,
-    c === 'holidayWork' && item.requestedBy ? ['Raised by', `${item.requestedBy} (HR)`] : null,
+        : ['Date', itemDateLabel(c, item).split(' · ')[0]],
     c === 'leave' ? ['To', fmtDay(item.endDate)] : c === 'permission' ? ['Time', item.time ?? item.permissionTime ?? '—'] : null,
     c === 'permission' && formatPermissionDuration(item.durationMinutes)
       ? ['Duration', formatPermissionDuration(item.durationMinutes)!]
@@ -74,15 +82,17 @@ function detailRows(sel: SelectedApproval): [string, string][] {
     c === 'permission' && item.statusLabel ? ['Status', item.statusLabel] : null,
     c === 'leave' && totalDays(item) ? ['Days', totalDays(item)!] : null,
     ['Reason', item.reason || '—'],
-    [c === 'holidayWork' ? 'Raised on' : 'Applied', appliedOn(item)],
+    ['Applied', appliedOn(item)],
   ];
   return rows.filter((r): r is [string, string] => r !== null);
 }
 
 /**
- * The request's details, its approval trail, and - while it waits for this head - an optional comment with Approve /
- * Reject (only the buttons HR's pipeline allows: hodCanAct / hodCanReject). A decided request (Approved / Rejected
- * lists) shows who decided it instead. An On-Duty request with a recorded route offers "View route" (`onViewRoute`).
+ * The request's details, its approval trail, and - while it waits for this head - the comment box with Approve / Reject
+ * (only the buttons HR's pipeline allows: hodCanAct / hodCanReject). Approving needs no comment; rejecting needs the
+ * reason (src/lib/rejectRemark.ts): once the head is rejecting (`rejecting`, or Reject is the only button) the box is
+ * labelled "Reason for rejecting (required)". A decided request (Approved / Rejected lists) shows who decided it instead.
+ * An On-Duty request with a recorded route offers "View route" (`onViewRoute`).
  */
 export function DecisionSheet({
   selected,
@@ -92,6 +102,9 @@ export function DecisionSheet({
   busy,
   onClose,
   onViewRoute,
+  rejecting = false,
+  reasonError,
+  error,
 }: {
   selected: SelectedApproval | null;
   comment: string;
@@ -101,14 +114,28 @@ export function DecisionSheet({
   onClose: () => void;
   /** Open the recorded route of an On-Duty day (the journey screen). */
   onViewRoute?: (journeyId: number) => void;
+  /** The head is rejecting (the card's Reject, or Reject pressed here): the box asks for the reason. */
+  rejecting?: boolean;
+  /** Why the rejection was not sent (no reason / too short, or the server's "remark_required"), shown under the box. */
+  reasonError?: string | null;
+  /** Any other failure while the sheet stays open, shown in the sheet (a toast would be hidden behind its Modal). */
+  error?: string | null;
 }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const meta = categoryMeta(Colors);
+  const inputRef = useRef<TextInputInstance>(null);
 
   const item = selected?.item;
   const canApprove = !!selected && selected.status === 'pending' && hodCanAct(item?.approval);
   const canReject = !!selected && selected.status === 'pending' && hodCanReject(item?.approval);
+  const reasonMode = canReject && (rejecting || !canApprove);
+  const message = reasonError || error || null;
+
+  // Pressing Reject without a reason puts the cursor in the box, so the head can type it straight away.
+  useEffect(() => {
+    if (reasonError) inputRef.current?.focus();
+  }, [reasonError]);
   const outcome = normalizeOutcome(item?.outcome);
   const line = outcomeLine(outcome);
   const isResignation = selected?.category === 'resignation';
@@ -195,10 +222,7 @@ export function DecisionSheet({
           )}
 
           {selected.category === 'holidayWork' && selected.status === 'pending' && (
-            <Text style={styles.hint}>
-              Approving adds {shiftsLabel(item.shifts) ?? 'the claimed shifts'} to {empName(item)}'s compensation balance.
-              Rejecting is final and adds nothing.
-            </Text>
+            <Text style={styles.hint}>{claimPendingHint(item as any, empName(item))}</Text>
           )}
 
           {!!line && (
@@ -216,19 +240,36 @@ export function DecisionSheet({
 
           {canApprove || canReject ? (
             <>
-              <Text style={styles.commentLabel}>Comment (optional)</Text>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Add a comment…"
-                placeholderTextColor={Colors.outline}
-                selectionColor={Colors.primary}
-                cursorColor={Colors.primary}
-                value={comment}
-                onChangeText={onCommentChange}
-                multiline
-                numberOfLines={2}
-                accessibilityLabel="Comment, optional"
-              />
+              <Text style={styles.commentLabel}>{reasonMode ? 'Reason for rejecting (required)' : 'Comment (optional)'}</Text>
+              <View style={styles.commentBlock}>
+                <TextInput
+                  ref={inputRef}
+                  style={[styles.commentInput, !!reasonError && styles.commentInputError]}
+                  placeholder={reasonMode ? 'Why is this request rejected?' : 'Add a comment…'}
+                  placeholderTextColor={Colors.outline}
+                  selectionColor={Colors.primary}
+                  cursorColor={Colors.primary}
+                  value={comment}
+                  onChangeText={onCommentChange}
+                  multiline
+                  numberOfLines={2}
+                  accessibilityLabel={reasonMode ? 'Reason for rejecting, required' : 'Comment, optional'}
+                  testID="approvals-sheet-comment"
+                />
+                {message ? (
+                  <View
+                    style={styles.message}
+                    accessibilityLiveRegion="polite"
+                    accessibilityRole="alert"
+                    testID={reasonError ? 'approvals-sheet-reason-error' : 'approvals-sheet-error'}
+                  >
+                    <MaterialCommunityIcons name="alert-circle-outline" size={16} color={Colors.statusRed} />
+                    <Text style={styles.messageText}>{message}</Text>
+                  </View>
+                ) : canApprove && canReject && !reasonMode ? (
+                  <Text style={styles.commentHint}>Approve needs no comment. To reject, write the reason.</Text>
+                ) : null}
+              </View>
               <View style={styles.actions}>
                 {canApprove && (
                   <TouchableOpacity
@@ -249,6 +290,7 @@ export function DecisionSheet({
                     onPress={() => onDecide('rejected')}
                     disabled={busy}
                     accessibilityRole="button"
+                    accessibilityHint={`Needs the reason for rejecting, at least ${REJECT_REMARK_MIN} characters`}
                     accessibilityState={{ disabled: busy }}
                     testID="approvals-sheet-reject"
                   >
@@ -330,8 +372,19 @@ const makeStyles = (Colors: Palette) =>
       fontSize: 14,
       minHeight: 60,
       textAlignVertical: 'top',
-      marginBottom: 16,
     },
+    commentInputError: { borderColor: Colors.statusRed },
+    commentBlock: { gap: 6, marginBottom: 16 },
+    commentHint: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
+    message: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      backgroundColor: Colors.badgeRedBg,
+      borderRadius: BorderRadius.md,
+      padding: 10,
+    },
+    messageText: { flex: 1, color: Colors.textPrimary, fontSize: 12.5, lineHeight: 18 },
     actions: { flexDirection: 'row', gap: 10 },
     actionBtn: {
       flex: 1,

@@ -53,7 +53,10 @@ export async function loginRequest(identifier: string, password: string) {
   return saveSession(res.data);
 }
 
-/** Which sign-in methods HR has switched on (Settings → WhatsApp Control / SMS Control). */
+/**
+ * Which sign-in methods HR has switched on (WhatsApp Control -> OTP, SMS Control -> OTP Switches). WhatsApp codes and
+ * SMS codes are switched on separately; read them with purposeCodes() in src/lib/otp.ts, never the keys directly.
+ */
 export interface LoginOptions {
   otpLogin: boolean;
   otpReset: boolean;
@@ -61,15 +64,22 @@ export interface LoginOptions {
   otpActivate: boolean;
   passwordLogin: boolean;
   /**
-   * How the one-time code is delivered: 'sms' or 'whatsapp'. Absent on a server from before the SMS channel existed;
-   * the screens then say "a code" instead of naming one (see src/lib/otp.ts).
+   * The ways a code can be sent right now, per purpose, WhatsApp first: e.g. { login: ['whatsapp', 'sms'], reset:
+   * ['sms'], activate: [] }. Absent on a server from before WhatsApp and SMS codes were independent.
    */
-  otpChannel?: string;
+  otpChannels?: Partial<Record<OtpPurpose, string[]>>;
+  /** Each available channel's name and code length: { whatsapp: { name: 'WhatsApp', codeLength: 6 }, ... }. */
+  channels?: Partial<Record<string, { name?: string; codeLength?: number }>>;
   /**
-   * How many digits the one-time code has: 4 when the channel is 'sms', 6 for 'whatsapp'. Absent on an older server; the
-   * screens then take the length from the channel (see otpLength in src/lib/otp.ts).
+   * For older app builds: the first available channel ('sms' or 'whatsapp'). Absent on a server from before the SMS
+   * channel existed; the screens then say "a code" instead of naming one (see src/lib/otp.ts).
    */
-  codeLength?: number;
+  otpChannel?: string | null;
+  /**
+   * How many digits `otpChannel`'s code has: 4 for 'sms', 6 for 'whatsapp'. Absent on an older server; the screens
+   * then take the length from the channel (see otpLength in src/lib/otp.ts).
+   */
+  codeLength?: number | null;
 }
 
 export interface OtpRequestResult {
@@ -81,6 +91,8 @@ export interface OtpRequestResult {
   channel?: string;
   /** Digits in the code that was sent (4 by SMS, 6 on WhatsApp). Absent on an older server. */
   codeLength?: number;
+  /** The other channels that could send a code for this purpose right now ("Send by SMS instead"). Absent on an older server. */
+  otherChannels?: string[];
   /** The server's own "We've sent a code by SMS to …" sentence. The screens compose their own wording instead. */
   message?: string;
 }
@@ -92,11 +104,15 @@ export async function loginOptionsRequest(): Promise<LoginOptions> {
   return res.data;
 }
 
-/** Asks the server to send a one-time code (by SMS or WhatsApp, as HR chose) to the number registered for this employee.
+/** Asks the server to send a one-time code to the number registered for this employee: by `channel` ('whatsapp' |
+ * 'sms') when given, else by the first way HR has switched on for this purpose. Only pass a channel to a server that
+ * listed `otpChannels` (requestChannel() in src/lib/otp.ts). A channel switched off meanwhile is refused with 400
+ * `channel_unavailable` (channelUnavailable() in src/lib/otp.ts).
  * The body says `identifier` (not `employeeCode`) because `api` snake_cases request keys and
  * the server reads `identifier` as-is. */
-export async function requestOtp(identifier: string, purpose: OtpPurpose): Promise<OtpRequestResult> {
-  const res = await api.post('/auth/otp/request', { identifier, purpose });
+export async function requestOtp(identifier: string, purpose: OtpPurpose, channel?: string): Promise<OtpRequestResult> {
+  const body = channel ? { identifier, purpose, channel } : { identifier, purpose };
+  const res = await api.post('/auth/otp/request', body);
   return res.data;
 }
 

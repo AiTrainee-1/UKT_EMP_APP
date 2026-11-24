@@ -30,9 +30,9 @@ import { BorderRadius } from '../../src/constants/theme';
 import { useAuth } from '../../src/hooks/useAuth';
 import { APP_VERSION_LABEL } from '../../src/lib/appVersion';
 import { isServerProblem } from '../../src/lib/supportContact';
-import { otpCopy } from '../../src/lib/otp';
-import { onlineManager } from '@tanstack/react-query';
-import { loginRequest, loginOptionsRequest, otpLoginRequest, type LoginOptions } from '../../src/hooks/useAuth';
+import { codeLengthFor, nextLoginMode, otpCopy, purposeCodes, singleChannel, type LoginMode } from '../../src/lib/otp';
+import { loginRequest, otpLoginRequest } from '../../src/hooks/useAuth';
+import { useLoginOptions } from '../../src/hooks/useLoginOptions';
 
 const schema = z.object({
   identifier: z.string().min(1, 'Employee Code is required'),
@@ -69,13 +69,26 @@ export default function LoginScreen() {
   // The last sign-in attempt got no answer from the server (or a 5xx): show the software-support contact.
   const [serverDown, setServerDown] = useState(false);
   const [rememberedCode, setRememberedCode] = useState('');
-  // Which sign-in methods the server offers. Until it answers (or if it can't), password sign-in works as before.
-  const [options, setOptions] = useState<LoginOptions | null>(null);
-  const [mode, setMode] = useState<'otp' | 'password'>('password');
-  const showOtp = mode === 'otp' && options?.otpLogin === true;
-  const canSwitch = options?.otpLogin === true && options.passwordLogin;
-  // Says "SMS" or "WhatsApp" as the server reports it (`otpChannel`), or just "a code" from an older server.
-  const copy = otpCopy(options?.otpChannel, options?.codeLength);
+  const [mode, setMode] = useState<LoginMode>('password');
+  // Which sign-in methods the server offers, asked again whenever this screen or the app comes back to the front (HR
+  // switches WhatsApp and SMS codes on and off separately). Until it answers (or if it can't), password sign-in works
+  // as before. A reload keeps the form the employee chose unless codes just went off / came on (nextLoginMode).
+  const { options, reload: reloadOptions } = useLoginOptions((next, previous) => {
+    setMode((current) =>
+      nextLoginMode(
+        current,
+        previous ? purposeCodes(previous, 'login').available : null,
+        purposeCodes(next, 'login').available,
+        next.passwordLogin,
+      ),
+    );
+  });
+  const loginCodes = purposeCodes(options, 'login');
+  const showOtp = mode === 'otp' && loginCodes.available;
+  const canSwitch = loginCodes.available && !!options?.passwordLogin;
+  // Says "SMS" or "WhatsApp" when that is the one way on offer, or just "a code" (both on, or an older server).
+  const only = singleChannel(loginCodes);
+  const copy = otpCopy(only, codeLengthFor(loginCodes, only));
 
   const { control, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -91,25 +104,6 @@ export default function LoginScreen() {
       }
     });
   }, [setValue]);
-
-  useEffect(() => {
-    let loaded = false;
-    const load = () => {
-      loginOptionsRequest()
-        .then((o) => {
-          loaded = true;
-          setOptions(o);
-          setMode(o.otpLogin ? 'otp' : 'password');
-        })
-        .catch(() => {});
-    };
-    load();
-    // Opened without internet: load the sign-in options once the phone is back online (src/lib/networkStatus.ts feeds
-    // TanStack's onlineManager).
-    return onlineManager.subscribe((online) => {
-      if (online && !loaded) load();
-    });
-  }, []);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'error') => {
     setToast({ message, type, visible: true });
@@ -210,8 +204,8 @@ export default function LoginScreen() {
           <OtpFlow
             purpose="login"
             submitLabel="Verify & Sign In"
-            channel={options?.otpChannel}
-            codeLength={options?.codeLength}
+            codes={loginCodes}
+            onChannelsChanged={reloadOptions}
             onUsePassword={canSwitch ? () => setMode('password') : undefined}
             initialIdentifier={rememberedCode}
             onSubmit={async (identifier, otp) => {

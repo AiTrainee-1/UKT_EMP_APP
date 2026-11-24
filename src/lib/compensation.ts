@@ -9,6 +9,11 @@
 //   * a malformed reply as a whole is `null`, which the hook turns into an error state with a Retry button.
 //
 // Compensation is for STAFF only. A production employee's reply has `isStaff: false`, nothing listed and a message.
+//
+// Self-claims (2026-11-19): a current server sends `canClaim` (and `claimWindowDays`, `useBalance`) and marks the items the
+// employee may claim (`claimable`, `claimKind`, `claim`, `suggestedShifts`). An OLDER server sends none of these: `canClaim`
+// then reads as null and the screen stays the read-only one it was (HR raises everything). The claim flow itself (the
+// sheet's choices, the request bodies, "My claims") is compensationClaims.ts.
 
 import type { ContactBlock } from './supportContact.ts';
 import { COMPENSATION_TONES } from './attendanceVisual.ts';
@@ -140,8 +145,57 @@ export function kindTone(kind: string): KindTone {
       return COMPENSATION_TONES.window_early_out;
     case 'birthday':
       return COMPENSATION_TONES.birthday;
+    case 'birthday_credit':
+      // A birthday the employee worked: a 1.00 credit to claim (not the paid birthday leave of an absent birthday).
+      return { ...COMPENSATION_TONES.birthday, label: 'Birthday credit', icon: 'cake-variant-outline' };
+    case 'use_balance':
+      return { ...COMPENSATION_TONES.relaxation, label: 'Use balance', icon: 'calendar-arrow-left' };
     default:
       return { ...SLATE, label: prettify(kind) || SLATE.label };
+  }
+}
+
+// ── claim kinds ─────────────────────────────────────────────────────────────
+
+/** What a claim is for: the `kind` of a claim on the server (one table for all of them, HolidayWorkClaim). */
+export type ClaimKind = 'holiday_work' | 'ot_allowance' | 'ot_shift' | 'birthday' | 'use_balance';
+
+export const CLAIM_KINDS: readonly ClaimKind[] = ['holiday_work', 'ot_allowance', 'ot_shift', 'birthday', 'use_balance'];
+
+/** The name of each kind of claim, the same words on the employee's screen and the Department Head's Approvals tab. */
+export const CLAIM_KIND_LABEL: Record<ClaimKind, string> = {
+  holiday_work: 'Sunday / holiday work',
+  ot_allowance: 'OT allowance',
+  ot_shift: 'OT credit',
+  birthday: 'Birthday credit',
+  use_balance: 'Use balance',
+};
+
+/** A claim kind in any spelling the server may use ("ot_shift", "otShift", "birthday_credit"), or null. */
+export function claimKindFrom(raw: unknown): ClaimKind | null {
+  const s = str(raw)
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (s === 'birthday_credit') return 'birthday';
+  if (s === 'holidaywork' || s === 'holiday') return 'holiday_work';
+  return (CLAIM_KINDS as readonly string[]).includes(s) ? (s as ClaimKind) : null;
+}
+
+/** The claim kind an item of the list is claimed as, when the server did not name it (`claimKind`). */
+function claimKindOfItem(kind: string): ClaimKind | null {
+  switch (kind) {
+    case 'holiday_work':
+    case 'holiday_work_day':
+      return 'holiday_work';
+    case 'ot_allowance':
+      return 'ot_allowance';
+    case 'ot_shift':
+      return 'ot_shift';
+    case 'birthday_credit':
+      return 'birthday';
+    default:
+      return null;
   }
 }
 
@@ -156,7 +210,7 @@ export const GROUPS: GroupMeta[] = [
   { group: 'detected', title: 'Detected for you', subtitle: 'Found automatically from your attendance' },
   { group: 'assigned', title: 'Assigned by HR', subtitle: 'Given to you by HR' },
   { group: 'company', title: 'Company announcements', subtitle: 'Late-in and early-out times for everybody' },
-  { group: 'birthday', title: 'Birthday leave', subtitle: 'Paid leave on your birthday' },
+  { group: 'birthday', title: 'Birthday', subtitle: 'Your birthday leave, or the credit for working on your birthday' },
   { group: 'balance', title: 'Balance used', subtitle: 'Compensation days HR took from your balance' },
 ];
 
@@ -181,6 +235,12 @@ const STATUS_TONE: Record<string, StatusTone> = {
   not_used: 'neutral',
   not_applied: 'neutral',
   not_applicable: 'neutral',
+  // self-claims: the employee can claim it / claimed it and waits / the Department Head decided
+  claimable: 'info',
+  claim_pending: 'warn',
+  claim_approved: 'good',
+  claim_rejected: 'bad',
+  withdrawn: 'neutral',
 };
 
 /** The colour family of a status chip. A status this app does not know is neutral. */
@@ -190,10 +250,10 @@ export function statusTone(status: string): StatusTone {
 
 // ── the reply of GET /employee/compensation ─────────────────────────────────
 
-export interface CompensationItem {
+export interface CompensationItem extends ClaimFields {
   key: string;
   /** ot_allowance | ot_shift | ot_shift_relaxation | ot_shift_pay | holiday_work | redemption | window_late_in |
-   *  window_early_out | birthday, or a kind added later. */
+   *  window_early_out | birthday | birthday_credit, or a kind added later. */
   kind: string;
   /** detected | assigned | company | birthday | balance, or a group added later. */
   group: string;
@@ -212,6 +272,120 @@ export interface CompensationItem {
   /** The day the extra / holiday work was done, when it differs from `date`. */
   workDate: string | null;
   legacy: boolean;
+}
+
+/** The claim already made for an item (the `claim` block of an item), as the employee sees it. */
+export interface ItemClaim {
+  /** The claim's id (the same id a "compensation" notification carries). */
+  id: number | null;
+  kind: ClaimKind | null;
+  /** pending | approved | rejected, or a status added later. */
+  status: string;
+  statusLabel: string;
+  shifts: number | null;
+  minutes: number | null;
+  /** Who raised it: the employee themselves or HR on their behalf. Null when the server did not say. */
+  raisedByRole: 'employee' | 'hr' | null;
+}
+
+/** What an item says about claiming it (all "nothing" on an older server). */
+export interface ClaimFields {
+  /** The server says the employee may claim this item now. */
+  claimable: boolean;
+  /** What it is claimed as. Null when it is not claimable and the server did not say. */
+  claimKind: ClaimKind | null;
+  /** The claim already made for it (waiting, approved or not approved), or null. */
+  claim: ItemClaim | null;
+  /** OT credit: the most the OT earns by the quarters rule (the claim may not ask for more). */
+  suggestedShifts: number | null;
+  /** OT kinds: the overtime record the claim is for (the server's `overtimeRecordId`, else the item key "ot-<id>"). */
+  overtimeRecordId: number | null;
+}
+
+/** Reads `raisedByRole` ("employee" / "hr", any case), or null. */
+export function readRaisedByRole(raw: unknown): 'employee' | 'hr' | null {
+  const s = str(raw).toLowerCase();
+  return s === 'employee' || s === 'hr' ? s : null;
+}
+
+function readItemClaim(raw: unknown): ItemClaim | null {
+  if (!isObject(raw)) return null;
+  const status = str(raw.status);
+  const id = num(raw.id);
+  if (!status && id == null) return null;
+  return {
+    id: id != null && Number.isInteger(id) && id > 0 ? id : null,
+    kind: claimKindFrom(raw.kind),
+    status,
+    statusLabel: str(raw.statusLabel) || CLAIM_STATUS_LABEL[status] || prettify(status),
+    shifts: num(raw.shifts),
+    minutes: num(raw.minutes),
+    raisedByRole: readRaisedByRole(raw.raisedByRole),
+  };
+}
+
+/** How a claim's status reads when the server sent no label of its own. */
+export const CLAIM_STATUS_LABEL: Record<string, string> = {
+  pending: 'Waiting for your Department Head',
+  approved: 'Approved',
+  rejected: 'Not approved',
+  withdrawn: 'Withdrawn',
+};
+
+/**
+ * The claim fields of an item of either list (the 90-day list and the year history share the item builders on the
+ * server). `key` and `kind` are the item's own, for the fall-backs: the overtime record id from "ot-<id>", the claim kind
+ * from the item kind. Everything is "nothing" on an older server.
+ */
+export function readClaimFields(raw: Record<string, unknown>, key: string, kind: string): ClaimFields {
+  const claimable = raw.claimable === true;
+  const claimKind = claimKindFrom(raw.claimKind) ?? (claimable ? claimKindOfItem(kind) : null);
+  const otMatch = /^ot-(\d+)$/.exec(key);
+  const recordId = num(raw.overtimeRecordId);
+  const suggested = num(raw.suggestedShifts);
+  return {
+    claimable,
+    claimKind,
+    claim: readItemClaim(raw.claim),
+    suggestedShifts: suggested != null && suggested > 0 ? suggested : null,
+    overtimeRecordId:
+      recordId != null && Number.isInteger(recordId) && recordId > 0
+        ? recordId
+        : kind.startsWith('ot_') && otMatch
+          ? Number(otMatch[1])
+          : null,
+  };
+}
+
+/** Self-claims' "use my balance": what the employee may still take as a day off. */
+export interface UseBalanceInfo {
+  /** The server allows a use-balance request now. */
+  allowed: boolean;
+  balanceShifts: number;
+  /** Shifts already asked for in use-balance requests that wait for the Department Head. */
+  pendingShifts: number;
+  /** balance - pending: what a new request may use. */
+  availableShifts: number;
+  /** Why it is not allowed (or a note), as the server words it. */
+  message: string | null;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+function readUseBalance(raw: unknown, balance: number): UseBalanceInfo | null {
+  if (!isObject(raw)) return null;
+  const b = num(raw.balanceShifts);
+  const balanceShifts = b != null && b > 0 ? b : balance;
+  const p = num(raw.pendingShifts);
+  const pendingShifts = p != null && p > 0 ? p : 0;
+  const a = num(raw.availableShifts);
+  return {
+    allowed: raw.allowed === true,
+    balanceShifts: round2(balanceShifts),
+    pendingShifts: round2(pendingShifts),
+    availableShifts: round2(Math.max(0, a != null ? a : balanceShifts - pendingShifts)),
+    message: str(raw.message) || null,
+  };
 }
 
 export interface AllowanceNotice {
@@ -254,15 +428,38 @@ export interface EmployeeCompensation {
   askHr: AskHr | null;
   /** Why there is nothing to show (production employees). */
   message: string | null;
+  /**
+   * Self-claims. true: the employee may claim items and use their balance from the app; false: not now (the server says
+   * why in its texts); null: an OLDER server that does not know self-claims (keep the read-only screen and its texts).
+   */
+  canClaim: boolean | null;
+  /** How many days back an item may still be claimed (45), when the server says. */
+  claimWindowDays: number | null;
+  /** "Use my balance", when the server sends it (only with self-claims). */
+  useBalance: UseBalanceInfo | null;
 }
 
 export const ASK_HR_TITLE = 'Ask Request for Compensation';
 export const ASK_HR_FALLBACK_TEXT =
   'The system detects when you work extra hours, or on a Sunday or a company holiday, and shows it on the My Compensation tab. ' +
   'If you worked extra and it is missing from the list, or you want to claim compensation, contact HR.';
-/** Said on the Ask tab whatever the server sends: the employee cannot assign compensation to themselves. */
+/** Said on the Ask tab by an OLDER server (no self-claims): the employee cannot assign compensation to themselves. */
 export const ASK_HR_NOT_SELF_SERVICE =
   'Compensation is assigned by HR. You cannot assign or claim it yourself in this app: contact HR, who will check your attendance and give it to you.';
+/** Said instead when the server lets the employee claim (`canClaim: true`). */
+export const CLAIM_SELF_SERVICE =
+  'You can claim compensation yourself: tap Claim on an item marked "Can be claimed" on My Compensation, or use your balance ' +
+  'for a day off. Your Department Head approves every claim. HR can also claim for you.';
+/** Said when a current server does not let the employee claim right now (`canClaim: false`). */
+export const CLAIMS_CLOSED_TEXT =
+  'Claiming from the app is not open for you right now. Contact HR if you worked extra and want to claim compensation.';
+
+/** The note on the Ask / My Claims tab for this server: self-service, closed, or HR-only (an older server). */
+export function selfServiceNote(canClaim: boolean | null): string {
+  if (canClaim === true) return CLAIM_SELF_SERVICE;
+  if (canClaim === false) return CLAIMS_CLOSED_TEXT;
+  return ASK_HR_NOT_SELF_SERVICE;
+}
 export const STAFF_ONLY_MESSAGE = 'Compensation is for staff employees only.';
 
 const NO_FLAGS: CompensationFlags = {
@@ -290,8 +487,10 @@ function readItem(raw: unknown, index: number): CompensationItem | null {
   const kind = str(raw.kind);
   const status = str(raw.status);
   const tone = kindTone(kind);
+  const key = str(raw.key) || `item-${index}`;
   return {
-    key: str(raw.key) || `item-${index}`,
+    ...readClaimFields(raw, key, kind),
+    key,
     kind,
     group: str(raw.group) || 'other',
     date: parseIsoDate(raw.date) ? str(raw.date).slice(0, 10) : null,
@@ -369,15 +568,22 @@ export function normalizeCompensation(raw: unknown): EmployeeCompensation | null
     items.push(n === 0 ? item : { ...item, key: `${item.key}#${n}` });
   });
   const balance = num(raw.balanceShifts);
+  const balanceShifts = balance != null && balance > 0 ? balance : 0;
+  const windowDays = num(raw.claimWindowDays);
+  const canClaim = typeof raw.canClaim === 'boolean' ? raw.canClaim : null;
   return {
     isStaff: raw.isStaff !== false,
     enabled: readFlags(raw.enabled),
-    balanceShifts: balance != null && balance > 0 ? balance : 0,
+    balanceShifts,
     items,
     todayAllowance: readAllowance(raw.todayAllowance),
     tomorrowAllowance: readAllowance(raw.tomorrowAllowance),
     askHr: readAskHr(raw.askHr),
     message: str(raw.message) || null,
+    canClaim,
+    claimWindowDays: windowDays != null && windowDays > 0 ? Math.floor(windowDays) : null,
+    // only with self-claims: an older server has no "use my balance"
+    useBalance: canClaim === null ? null : readUseBalance(raw.useBalance, balanceShifts),
   };
 }
 
@@ -478,19 +684,168 @@ export function balanceView(balance: number): { value: string; unit: string } {
   return { value: shiftsText(balance), unit: shiftsUnit(balance) };
 }
 
-// ── a Department Head's holiday / Sunday work claims ────────────────────────
+// ── a Department Head's compensation claims ─────────────────────────────────
+//
+// The Approvals tab's "Compensation" category lists EVERY kind of claim (one table on the server): Sunday / holiday work,
+// OT allowance, OT credit, birthday credit and use-balance requests, raised by the employee or by HR. An OLDER server
+// sends no `kind`: every claim there is a Sunday / holiday work claim HR raised, worded as before.
+
+/** The overtime a claim of an OT kind is about (`overtime` on the Department Head's rows). */
+export interface ClaimOvertime {
+  /** The OT day (YYYY-MM-DD). */
+  date: string | null;
+  /** "18:00": the shift end the extra time is counted from. */
+  shiftEnd: string | null;
+  /** The last punch as the server sent it ("20:45", "02:10", or a date-time). */
+  lastPunch: string | null;
+  /** True when that last punch was on the morning after the OT day ("02:10" is then 02:10 next day). */
+  lastPunchNextDay: boolean;
+  extraMinutes: number | null;
+}
 
 /** The part of a claim the labels read (a structural subset of TeamHolidayWorkClaim). */
 export interface ClaimLike {
+  /** holiday_work | ot_allowance | ot_shift | birthday | use_balance; absent on an older server (= holiday_work). */
+  kind?: string | null;
+  kindLabel?: string | null;
   dayKind?: string | null;
   holidayName?: string | null;
   shifts?: number | null;
+  /** OT allowance: the allowance minutes. */
+  minutes?: number | null;
+  /** The claim's date: the work day, the OT day, the birthday, or the day off of a use-balance request. */
   workDate?: string | null;
+  /** Use balance: the day the employee takes off. */
+  useDate?: string | null;
+  raisedByRole?: string | null;
+  requestedBy?: string | null;
+  overtime?: unknown;
 }
 
-/** "Sunday work" / "Holiday work". */
+/** The claim's kind; a claim from an older server (no `kind`) is Sunday / holiday work. Null for a kind added later. */
+export function claimKindOf(c: ClaimLike): ClaimKind | null {
+  if (!str(c.kind)) return 'holiday_work';
+  return claimKindFrom(c.kind);
+}
+
+/** The `overtime` block of a claim, or null. */
+export function readClaimOvertime(raw: unknown): ClaimOvertime | null {
+  if (!isObject(raw)) return null;
+  const extra = num(raw.extraMinutes);
+  const out: ClaimOvertime = {
+    date: parseIsoDate(raw.date) ? str(raw.date).slice(0, 10) : null,
+    shiftEnd: str(raw.shiftEnd) || null,
+    lastPunch: str(raw.lastPunch) || null,
+    lastPunchNextDay: raw.lastPunchNextDay === true,
+    extraMinutes: extra != null && extra > 0 ? extra : null,
+  };
+  return out.date || out.shiftEnd || out.lastPunch || out.extraMinutes != null ? out : null;
+}
+
+/** A clock time as written on a claim: "HH:MM" from "HH:MM[:SS]" or a date-time ("02:10 next day" when it is on the day
+ *  after `day`, or when the server says so with `nextDay`: its `lastPunchNextDay`); anything else as it came. */
+export function punchText(value: string | null, day: string | null, nextDay = false): string | null {
+  if (!value) return null;
+  const dt = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(value);
+  if (dt) return (day && dt[1] > day) || nextDay ? `${dt[2]} next day` : dt[2];
+  const t = /^(\d{1,2}:\d{2})(:\d{2})?$/.exec(value);
+  if (!t) return value;
+  const clock = t[1].padStart(5, '0');
+  return nextDay ? `${clock} next day` : clock;
+}
+
+/** "Sunday work" / "Holiday work" for a Sunday / holiday work claim; "OT allowance", "OT credit", "Birthday credit",
+ *  "Use balance" for the other kinds; the server's own label (or the kind, prettified) for a kind added later. */
 export function claimTypeLabel(c: ClaimLike): string {
-  return c.dayKind === 'sunday' ? 'Sunday work' : 'Holiday work';
+  const kind = claimKindOf(c);
+  if (kind === 'holiday_work') return c.dayKind === 'sunday' ? 'Sunday work' : 'Holiday work';
+  if (kind) return CLAIM_KIND_LABEL[kind];
+  return str(c.kindLabel) || prettify(str(c.kind)) || 'Compensation';
+}
+
+/** The day a claim is about: the day off of a use-balance request, else the claim's date (work / OT day, birthday). */
+function claimDay(c: ClaimLike): string | null | undefined {
+  if (claimKindOf(c) === 'use_balance') return c.useDate || c.workDate;
+  const ot = readClaimOvertime(c.overtime);
+  return c.workDate || ot?.date;
+}
+
+/** "Raised by employee" / "Raised by HR": the chip on a card. An older server's claims were all raised by HR. */
+export function raisedByLabel(c: ClaimLike): string {
+  return readRaisedByRole(c.raisedByRole) === 'employee' ? 'Raised by employee' : 'Raised by HR';
+}
+
+/** The "Raised by" row of the sheet: "Employee", "HR (Meena)", "HR"; null when an older server named nobody. */
+export function raisedByText(c: ClaimLike): string | null {
+  const role = readRaisedByRole(c.raisedByRole);
+  const who = str(c.requestedBy);
+  if (role === 'employee') return 'Employee';
+  if (role === 'hr') return who ? `HR (${who})` : 'HR';
+  return who ? `HR (${who})` : null;
+}
+
+/** The detail rows of the decision sheet for a claim of any kind, in order ([label, value]). */
+export function claimDetailRows(c: ClaimLike): [string, string][] {
+  const kind = claimKindOf(c);
+  const ot = readClaimOvertime(c.overtime);
+  const day = formatLongDate(claimDay(c)) || formatDayMonthYear(claimDay(c)) || '—';
+  const shifts = shiftsLabel(c.shifts);
+  const rows: ([string, string] | null)[] = [];
+  const otRows = (): ([string, string] | null)[] => [
+    ['OT date', day],
+    ot?.shiftEnd ? ['Shift end', punchText(ot.shiftEnd, null)!] : null,
+    ot?.lastPunch
+      ? ['Last punch', punchText(ot.lastPunch, ot.date ?? c.workDate ?? null, ot.lastPunchNextDay)!]
+      : null,
+    minutesText(ot?.extraMinutes) ? ['Extra time', `${minutesText(ot?.extraMinutes)} past shift end`] : null,
+  ];
+  switch (kind) {
+    case 'holiday_work':
+      rows.push(['Work date', day], ['Day', claimDayLabel(c)], shifts ? ['Shifts claimed', shifts] : null);
+      break;
+    case 'ot_allowance':
+      rows.push(
+        ...otRows(),
+        minutesText(c.minutes) ? ['Allowance', `${minutesText(c.minutes)} late-in on the next working day`] : null,
+      );
+      break;
+    case 'ot_shift':
+      rows.push(...otRows(), shifts ? ['Credit claimed', shifts] : null);
+      break;
+    case 'birthday':
+      rows.push(['Birthday', day], ['Credit claimed', shifts ?? '1.00 shift']);
+      break;
+    case 'use_balance':
+      rows.push(['Day off', day], shifts ? ['Shifts to use', shifts] : null);
+      break;
+    default:
+      rows.push(['Date', day], shifts ? ['Shifts', shifts] : null);
+  }
+  const by = raisedByText(c);
+  if (by) rows.push(['Raised by', by]);
+  return rows.filter((r): r is [string, string] => r !== null);
+}
+
+/** What approving does, under the sheet's buttons while the claim waits for this Department Head. */
+export function claimPendingHint(c: ClaimLike, employeeName: string): string {
+  const shifts = shiftsLabel(c.shifts);
+  const day = formatLongDate(claimDay(c));
+  switch (claimKindOf(c)) {
+    case 'ot_allowance':
+      return (
+        `Approving lets ${employeeName} arrive up to ${minutesText(c.minutes) ?? 'the allowance'} later on their next working ` +
+        `day after ${day || 'the OT day'} without being marked late. Rejecting is final.`
+      );
+    case 'use_balance':
+      return (
+        `Approving takes ${shifts ?? 'the shifts'} from ${employeeName}'s compensation balance for ${day || 'the day off'}: ` +
+        'that day counts as worked up to that much. Rejecting is final and uses nothing.'
+      );
+    case 'birthday':
+      return `Approving adds ${shifts ?? '1.00 shift'} to ${employeeName}'s compensation balance for working on their birthday. Rejecting is final and adds nothing.`;
+    default:
+      return `Approving adds ${shifts ?? 'the claimed shifts'} to ${employeeName}'s compensation balance. Rejecting is final and adds nothing.`;
+  }
 }
 
 /** "Sunday", "Holiday: Diwali", "Holiday". */
@@ -499,9 +854,19 @@ export function claimDayLabel(c: ClaimLike): string {
   return c.holidayName ? `Holiday: ${c.holidayName}` : 'Holiday';
 }
 
-/** "12 Oct 2026 · 0.5 shift" (either part left out when it is not known). */
+/** The card's date line: "12 Oct 2026 · 0.50 shift" (either part left out when it is not known); an OT allowance
+ *  "12 Oct 2026 · 30 min allowance"; a use-balance request "Day off 14 Oct 2026 · 0.50 shift". */
 export function claimDateLabel(c: ClaimLike): string {
-  return [formatDayMonthYear(c.workDate), shiftsLabel(c.shifts)].filter(Boolean).join(' · ') || '—';
+  const kind = claimKindOf(c);
+  const date = formatDayMonthYear(claimDay(c));
+  if (kind === 'ot_allowance') {
+    const minutes = minutesText(c.minutes);
+    return [date, minutes ? `${minutes} allowance` : null].filter(Boolean).join(' · ') || '—';
+  }
+  if (kind === 'use_balance') {
+    return [date ? `Day off ${date}` : null, shiftsLabel(c.shifts)].filter(Boolean).join(' · ') || '—';
+  }
+  return [date, shiftsLabel(c.shifts)].filter(Boolean).join(' · ') || '—';
 }
 
 /** The toast after a Department Head approves a claim and the shifts went onto the employee's balance. */
@@ -511,6 +876,31 @@ export function claimCreditedMessage(c: ClaimLike & { employeeName?: string | nu
   return shifts ? `Approved. ${shifts} added to ${who} compensation balance.` : `Approved. Added to ${who} compensation balance.`;
 }
 
+/**
+ * The toast after a Department Head approves a claim of any kind, from the PATCH reply (`credited`, `effect`) merged over
+ * the row: a credit says what went onto whose balance; otherwise the server's `effect` sentence, else this app's words for
+ * the kind. Null when there is nothing claim-specific to say (the caller then uses the approval pipeline's wording).
+ */
+export function claimApprovedMessage(
+  c: ClaimLike & { employeeName?: string | null; credited?: unknown; effect?: unknown },
+): string | null {
+  if (c.credited === true) return claimCreditedMessage(c);
+  const effect = str(c.effect);
+  if (effect) return /^approved\b/i.test(effect) ? effect : `Approved. ${effect}`;
+  const who = c.employeeName ? `${c.employeeName}'s` : "the employee's";
+  const day = formatLongDate(claimDay(c));
+  switch (claimKindOf(c)) {
+    case 'ot_allowance':
+      return `Approved. ${c.employeeName || 'The employee'} gets the late-in allowance on their next working day.`;
+    case 'use_balance': {
+      const shifts = shiftsLabel(c.shifts);
+      return `Approved. ${shifts ?? 'The shifts'} taken from ${who} compensation balance${day ? ` for ${day}` : ''}.`;
+    }
+    default:
+      return null;
+  }
+}
+
 // ── notifications ───────────────────────────────────────────────────────────
 
 /** The Approvals tab, which only a Department Head has. */
@@ -518,9 +908,9 @@ export const APPROVALS_ROUTE = '/(tabs)/approvals';
 
 /**
  * Where a notification of this `type` opens, or null for "just the Notifications list".
- *  * `compensation` goes to the EMPLOYEE whose claim the Department Head decided (holiday_work_views.py::decide_claim): it
- *    opens their own Compensation screen, whoever they are.
- *  * `holiday_work` goes to the DEPARTMENT HEAD when a claim waits for their decision (approval_workflow.py::
+ *  * `compensation` goes to the EMPLOYEE whose claim (of any kind: Sunday / holiday work, OT allowance, OT credit,
+ *    birthday credit, use balance) the Department Head decided: it opens their own Compensation screen, whoever they are.
+ *  * `holiday_work` goes to the DEPARTMENT HEAD when a claim (any kind) waits for their decision (approval_workflow.py::
  *    notify_hod_of_request): it opens the Approvals tab. `viewer.isManager === false` (the profile says this person is no
  *    longer a head, so the tab is gone) keeps it on the Notifications list; an unknown profile still routes, because only
  *    a head is ever sent this type.
