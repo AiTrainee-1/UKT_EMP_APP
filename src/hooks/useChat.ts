@@ -1,33 +1,39 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
-import {
-  CHAT_PAGE_SIZE,
-  mergeMessages,
-  oldestId,
-  pageMayHaveMore,
-  replaceMessage,
-  toggleReactionLocal,
-  isMyReaction,
-} from '../lib/chatThread';
+import type { ChatKind, ChatMediaInfo } from '../lib/chatMedia';
+import { adoptLocalMedia } from './useChatMedia';
+import { CHAT_PAGE_SIZE, mergeMessages, oldestId, pageMayHaveMore, replaceMessage, toggleReactionLocal, isMyReaction, mergeLatestPage } from '../lib/chatThread';
 
 export interface ChatChannel {
   id: number;
   type: 'company' | 'department';
   departmentId?: number | null;
   departmentName?: string | null;
+  /** How many days GIFs and voice messages stay (HR sets it; servers since 2026-11-25). */
+  mediaExpiryDays?: number | null;
+}
+
+export interface ChatReactor {
+  employeeId: number | null;
+  name: string;
+  isMe?: boolean;
 }
 
 export interface ChatReaction {
   emoji: string;
   count: number;
   reactedByMe: boolean;
+  /** Who reacted, you first (servers since 2026-11-25). */
+  people?: ChatReactor[];
 }
 
 export interface ChatReplyPreview {
   id: number;
   senderName: string;
   text: string;
+  /** "gif" / "voice" when the quoted message is one (servers since 2026-11-25). */
+  kind?: ChatKind;
 }
 
 export interface ChatMessage {
@@ -41,7 +47,16 @@ export interface ChatMessage {
   replyTo: ChatReplyPreview | null;
   reactions: ChatReaction[];
   createdAt: string;
+  /** "text" (or missing, from an older server), "gif" or "voice" (owner 2026-11-25). */
+  kind?: ChatKind;
+  /** The GIF / voice file: null for a text message; `expired` (no url) once its time is up. */
+  media?: ChatMediaInfo | null;
 }
+
+/** A GIF picked from the gallery or a voice message just recorded, on its way to the server. */
+export type OutgoingMedia =
+  | { kind: 'gif'; uri: string; mimeType: string; fileName: string; replyToId?: number }
+  | { kind: 'voice'; uri: string; mimeType: string; fileName: string; durationMs: number; waveform: number[]; replyToId?: number };
 
 /**
  * Company channel + the employee's own department channel.
@@ -95,7 +110,7 @@ export function useChatThread(channelId: number | null, { poll }: { poll: boolea
     queryFn: async (): Promise<ChatMessage[]> => {
       const fresh = await fetchMessages(channelId as number, { limit: CHAT_PAGE_SIZE });
       const previous = queryClient.getQueryData<ChatMessage[]>(latestKey(channelId));
-      return mergeMessages(previous, fresh);
+      return mergeLatestPage(previous, fresh);
     },
     enabled: !!channelId,
     staleTime: 2_000,
@@ -151,13 +166,46 @@ export function useChatThread(channelId: number | null, { poll }: { poll: boolea
   });
 
   /**
+   * A GIF from the gallery or a recorded voice message (owner 2026-11-25): one multipart upload. The server checks the
+   * type, size and length again and answers with the message, which goes on screen at once.
+   */
+  const sendMedia = useMutation({
+    mutationFn: async (item: OutgoingMedia): Promise<ChatMessage | null> => {
+      const form = new FormData();
+      // FormData is sent as it is (src/lib/api.ts): these are the exact names the server reads
+      form.append('kind', item.kind);
+      form.append('file', { uri: item.uri, name: item.fileName, type: item.mimeType } as any);
+      if (item.kind === 'voice') {
+        form.append('durationMs', String(Math.round(item.durationMs)));
+        form.append('waveform', JSON.stringify(item.waveform));
+      }
+      if (item.replyToId != null) form.append('replyToId', String(item.replyToId));
+      const res = await api.post(`/chat/channels/${channelId}/media`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 90_000,
+      });
+      return (res.data as ChatMessage) ?? null;
+    },
+    onSuccess: (msg, item) => {
+      if (msg && typeof msg.id === 'number') {
+        // the phone already has the file: it becomes this message's copy before the bubble looks for one
+        adoptLocalMedia(msg, item.uri, item.kind === 'voice' ? 'move' : 'copy');
+        applyServerMessage(msg);
+      } else {
+        queryClient.invalidateQueries({ queryKey: latestKey(channelId) });
+      }
+    },
+  });
+
+  /**
    * Adds or removes my reaction. The pill changes at once; if the server says no, it changes
-   * back and the promise rejects so the screen can say so.
+   * back and the promise rejects so the screen can say so. `me` puts my name in the
+   * who-reacted list straight away too.
    */
   const react = useCallback(
-    async (message: ChatMessage, emoji: string) => {
+    async (message: ChatMessage, emoji: string, me?: { id: number | null; name: string }) => {
       const remove = isMyReaction(message, emoji);
-      applyServerMessage(toggleReactionLocal(message, emoji, remove));
+      applyServerMessage(toggleReactionLocal(message, emoji, remove, me));
       try {
         const res = remove
           ? await api.delete(`/chat/messages/${message.id}/reactions`, { data: { emoji } })
@@ -183,6 +231,7 @@ export function useChatThread(channelId: number | null, { poll }: { poll: boolea
     loadingOlder,
     loadOlder,
     send,
+    sendMedia,
     react,
   };
 }

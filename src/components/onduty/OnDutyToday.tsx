@@ -33,6 +33,8 @@ import { PunchTiles } from './PunchTiles';
 import { EndOnDutySheet } from './EndOnDutySheet';
 import { RecentOnDuty } from './RecentOnDuty';
 import { TrackingReadiness } from './TrackingReadiness';
+import { ensureLocationOn, handleLocationError } from '../../hooks/useLocationServices';
+import { LOCATION_STILL_OFF } from '../../lib/locationOff';
 import { GatePassCard } from '../outpass/GatePassCard';
 import { QueuedOpsList } from '../offline/QueuedOpsList';
 import { TrackingIssueBanner } from '../tracking/TrackingIssueBanner';
@@ -214,6 +216,11 @@ export function OnDutyToday({ header, onSeeRecords }: { header?: React.ReactNode
         setLocationState({ status: 'error', message: 'Location access is required to record this punch.' });
         return;
       }
+      // The phone's location switched off: the location popup (owner 2026-11-25) helps turn it on first.
+      if (!(await ensureLocationOn('on_duty'))) {
+        setLocationState({ status: 'error', message: LOCATION_STILL_OFF });
+        return;
+      }
       // GPS works with no internet; a last known fix is used if a fresh one takes too long.
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).catch(
         async () => (await Location.getLastKnownPositionAsync()) ?? Promise.reject(new Error('Could not find your location')),
@@ -226,6 +233,16 @@ export function OnDutyToday({ header, onSeeRecords }: { header?: React.ReactNode
       });
       setLocationState({ status: 'ready', accuracy: pos.coords.accuracy ?? undefined });
     } catch (err: any) {
+      const off = await handleLocationError(err, 'on_duty');
+      if (off === 'turned-on') {
+        // switched on from the popup: look again straight away (once more at most - it is on now)
+        void acquireLocation();
+        return;
+      }
+      if (off === 'still-off') {
+        setLocationState({ status: 'error', message: LOCATION_STILL_OFF });
+        return;
+      }
       setLocationState({ status: 'error', message: err?.message ?? 'Could not find your location' });
     }
   };
@@ -566,7 +583,7 @@ export function OnDutyToday({ header, onSeeRecords }: { header?: React.ReactNode
                 </View>
                 <View style={styles.steps}>
                   <Step n={1} text="Write where you are going and submit." />
-                  <Step n={2} text="Your gate pass with its QR is ready at once. Show it at the gate." />
+                  <Step n={2} text="Your gate pass is made at once. Its QR appears as soon as your On-Duty is approved; show it at the gate." />
                   <Step n={3} text="Record your four punches (Morning, Lunch Out, Lunch In, Night) in any order." />
                   <Step n={4} text="End On-Duty when your work is done." />
                 </View>

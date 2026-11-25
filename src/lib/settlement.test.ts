@@ -135,3 +135,71 @@ test('server refusals are shown in its own words', () => {
   assert.equal(applyErrorMessage({ response: { data: { error: 'Applications open on 20 November.' } } }), 'Applications open on 20 November.')
   assert.equal(applyErrorMessage(new Error('Network Error')), 'Could not send your application. Please try again.')
 })
+
+// ─── Owner 2026-11-25: a Salary Advance only from the 20th to the 22nd, a Term Loan on any day ─────────────────────
+
+const saClosed: WindowInfo = {
+  isOpen: false, opensOn: '2026-12-20', closesOn: '2026-12-22', nextOpensOn: '2026-12-20',
+  daysUntilOpen: 25, daysLeft: 0, message: 'Salary Advance applications open on 20 December and close on 22 December.',
+  type: 'general', alwaysOpen: false, opensOnDay: 20, closesOnDay: 22,
+}
+const saOpen: WindowInfo = {
+  ...saClosed, isOpen: true, opensOn: '2026-11-20', closesOn: '2026-11-22', nextOpensOn: '2026-12-20',
+  daysUntilOpen: 0, daysLeft: 2,
+}
+const termAny: WindowInfo = {
+  isOpen: true, opensOn: '2026-11-25', closesOn: null, nextOpensOn: null, daysUntilOpen: 0, daysLeft: null,
+  message: 'Term Loan applications are open on any day.', type: 'term', alwaysOpen: true, opensOnDay: null, closesOnDay: null,
+}
+
+test('each form has its own window; an older server shares one', async () => {
+  const { salaryAdvanceWindow, termLoanWindow } = await import('./settlement.ts')
+  const current = { window: saClosed, windows: { general: saClosed, term: termAny } }
+  assert.equal(salaryAdvanceWindow(current), saClosed)
+  assert.equal(termLoanWindow(current), null) // a Term Loan: any day
+  const older = { window: closed }
+  assert.equal(salaryAdvanceWindow(older), closed)
+  assert.equal(termLoanWindow(older), closed)
+})
+
+test('the chip and the disabled button say when a Salary Advance opens', async () => {
+  const { windowChip, opensOnText } = await import('./settlement.ts')
+  assert.deepEqual(windowChip(saClosed), { open: false, text: 'Opens 20 Dec · in 25 days' })
+  assert.deepEqual(windowChip({ ...saClosed, daysUntilOpen: 1 }), { open: false, text: 'Opens 20 Dec · tomorrow' })
+  assert.deepEqual(windowChip(saOpen), { open: true, text: 'Open · 2 days left' })
+  assert.deepEqual(windowChip({ ...saOpen, daysLeft: 1 }), { open: true, text: 'Last day today' })
+  assert.deepEqual(windowChip(termAny), { open: true, text: 'Any day' })
+  assert.deepEqual(windowChip(null), { open: true, text: 'Any day' })
+  assert.equal(opensOnText(saClosed), 'Opens on 20 Dec')
+  assert.equal(opensOnText(saOpen), '')
+  assert.equal(opensOnText(termAny), '')
+  assert.equal(windowHeadline(termAny), 'Open every day')
+  assert.equal(windowHeadline(saClosed), 'Opens on 20 Dec: in 25 days')
+  assert.equal(windowHeadline(saOpen), 'Open now: 2 days left')
+})
+
+test('the month strip lights the 20th to the 22nd', async () => {
+  const { windowStrip, daysInMonthOf } = await import('./settlement.ts')
+  assert.equal(daysInMonthOf('2026-11-25'), 30)
+  assert.equal(daysInMonthOf('2027-02-03'), 28)
+  assert.equal(daysInMonthOf('2028-02-03'), 29)
+  const s = windowStrip(saClosed, '2026-11-25')!
+  assert.equal(s.lastDay, 30)
+  assert.deepEqual([s.fromDay, s.toDay], [20, 22])
+  assert.ok(Math.abs(s.startPct - (19 / 29) * 100) < 1e-9)
+  assert.ok(Math.abs(s.endPct - (21 / 29) * 100) < 1e-9)
+  assert.ok(s.todayPct > s.endPct) // the 25th: past this month's window
+  assert.equal(windowStrip(termAny, '2026-11-25'), null)
+  // an older server's 20th-to-month-end window
+  const old = windowStrip(closed, '2026-11-05')!
+  assert.deepEqual([old.fromDay, old.toDay, old.endPct], [20, 30, 100])
+  // never off the strip
+  assert.equal(windowStrip(saOpen, '2026-11-01')!.todayPct, 0)
+})
+
+test('progress through the 3-day window', () => {
+  assert.equal(windowProgress(termAny), 1)
+  assert.equal(windowProgress({ ...saOpen, daysLeft: 1 }), 1)
+  assert.ok(Math.abs(windowProgress({ ...saOpen, daysLeft: 3 }) - 1 / 3) < 1e-9)
+  assert.ok(windowProgress(saClosed) >= 0 && windowProgress(saClosed) < 1)
+})

@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   RefreshControl,
   Platform,
-  StatusBar,
   Alert,
 } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -44,6 +43,8 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
+import { HeaderAvatarButton } from '../../src/components/home/HeaderAvatarButton';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -146,7 +147,7 @@ export default function AttendanceScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -173,13 +174,8 @@ export default function AttendanceScreen() {
           >
             <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.textPrimary} />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.avatarBtn}
-            onPress={() => router.push('/(tabs)/profile')}
-            activeOpacity={0.85}
-          >
-            <MaterialCommunityIcons name="account" size={18} color="#fff" />
-          </TouchableOpacity>
+          {/* The person's own photo (owner 2026-11-25), the same button as Home's. */}
+          <HeaderAvatarButton size={30} />
         </View>
 
         {/* ─── Month nav + sync status ─── */}
@@ -229,9 +225,8 @@ export default function AttendanceScreen() {
                 : `${punchCount} punch${punchCount === 1 ? '' : 'es'} today · next is ${nextType === 'IN' ? 'Check-In' : 'Check-Out'}`}
             </Text>
           </View>
-          <View style={styles.geoViewBtn}>
-            <Text style={styles.geoViewBtnText}>View Details</Text>
-          </View>
+          {/* A chevron like the other cards here: the "View Details" text squeezed the title and cut the subtitle short. */}
+          <MaterialCommunityIcons name="chevron-right" size={22} color={Colors.textMuted} accessibilityLabel="View details" />
         </TouchableOpacity>
 
         {/* ─── Assigned shift ─── */}
@@ -399,8 +394,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   geoBadgeOff: { backgroundColor: Colors.bgSurfaceLow },
   geoBadgeText: { fontSize: 9.5, fontWeight: '800' },
   geoSubtitle: { color: Colors.textMuted, fontSize: 11.5, marginTop: 3 },
-  geoViewBtn: { paddingHorizontal: 4 },
-  geoViewBtnText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12 },
 
   // Shift banner
   shiftBanner: {

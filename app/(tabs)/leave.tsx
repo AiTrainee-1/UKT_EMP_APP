@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   Switch,
   RefreshControl,
-  StatusBar,
   Alert,
   type ScrollViewInstance,
 } from 'react-native';
@@ -71,6 +70,8 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
+import { HeaderAvatarButton } from '../../src/components/home/HeaderAvatarButton';
 
 const schema = z.object({
   // Why the employee needs leave (owner 2026-10-31): Sick Leave / Emergency / Personal / Other Reasons. Required.
@@ -348,7 +349,7 @@ export default function LeaveScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
 
       <View style={styles.topBar}>
         <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
@@ -365,13 +366,8 @@ export default function LeaveScreen() {
         >
           <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.textPrimary} />
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.avatarBtn}
-          onPress={() => router.push('/(tabs)/profile')}
-          activeOpacity={0.85}
-        >
-          <MaterialCommunityIcons name="account" size={18} color="#fff" />
-        </TouchableOpacity>
+        {/* The person's own photo (owner 2026-11-25), the same button as Home's. */}
+        <HeaderAvatarButton size={30} />
       </View>
 
       <ScrollView
@@ -512,6 +508,8 @@ export default function LeaveScreen() {
         {errors.reasonCategory && <Text style={styles.errorText}>{errors.reasonCategory.message as string}</Text>}
         <Text style={styles.clHint}>Casual Leave is applied separately, from the Casual Leave card.</Text>
 
+        {/* The two switches as one bordered group: one divider between them, not two (2026-11-25). */}
+        <View style={styles.toggleGroup}>
         <View style={styles.toggleRow}>
           <View style={styles.toggleLeft}>
             <MaterialCommunityIcons name="calendar-range-outline" size={18} color={Colors.primary} />
@@ -525,7 +523,7 @@ export default function LeaveScreen() {
           />
         </View>
 
-        <View style={styles.toggleRow}>
+        <View style={[styles.toggleRow, styles.toggleRowLast]}>
           <View style={styles.toggleLeft}>
             <MaterialCommunityIcons name="weather-sunset-up" size={18} color={Colors.primary} />
             <Text style={styles.toggleLabel}>Half-Day leave</Text>
@@ -536,6 +534,7 @@ export default function LeaveScreen() {
             trackColor={{ false: Colors.outlineVariant, true: Colors.primaryLight }}
             thumbColor={halfDay ? Colors.primary : Colors.bgSurfaceHighest}
           />
+        </View>
         </View>
 
         {halfDay && (
@@ -721,16 +720,21 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   chipText: { color: Colors.textMuted, fontSize: 13, fontWeight: '600' },
   chipTextActive: { color: Colors.primary, fontWeight: '700' },
   errorText: { color: Colors.error, fontSize: 12, marginBottom: 8, marginTop: -4 },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
+  toggleGroup: {
     marginBottom: 12,
     borderTopWidth: 1,
     borderBottomWidth: 1,
     borderColor: Colors.outlineVariant,
   },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderColor: Colors.outlineVariant,
+  },
+  toggleRowLast: { borderBottomWidth: 0 },
   toggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   toggleLabel: { color: Colors.textSecondary, fontSize: 14, fontWeight: '700' },
 });

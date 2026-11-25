@@ -7,6 +7,8 @@ import * as Location from 'expo-location';
 
 import { Button } from '../../src/components/ui/Button';
 import { Toast } from '../../src/components/ui/Toast';
+import { LOCATION_NOW_ON, ensureLocationOn, handleLocationError } from '../../src/hooks/useLocationServices';
+import { LOCATION_STILL_OFF } from '../../src/lib/locationOff';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
@@ -78,6 +80,12 @@ export default function GeoPunchScreen() {
   const requestPermission = async () => {
     setBusy(true);
     try {
+      // The phone's location switched off: our popup first (2026-11-25). Asked while it is off, Android showed its own
+      // "Location Accuracy" dialog, and declining it left this step stuck with no word of why.
+      if (!(await ensureLocationOn('punch'))) {
+        showToast(LOCATION_STILL_OFF, 'error');
+        return;
+      }
       const perm = await Location.requestForegroundPermissionsAsync();
       setPermStatus(perm.granted ? 'granted' : 'denied');
       if (perm.granted) {
@@ -93,6 +101,11 @@ export default function GeoPunchScreen() {
   const captureLocation = async () => {
     setBusy(true);
     try {
+      // The phone's location switched off: the location popup (owner 2026-11-25) helps turn it on first.
+      if (!(await ensureLocationOn('punch'))) {
+        showToast(LOCATION_STILL_OFF, 'error');
+        return;
+      }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const loc = {
         latitude: pos.coords.latitude,
@@ -105,6 +118,11 @@ export default function GeoPunchScreen() {
       setPrecheck(result);
       setStep('review');
     } catch (err: any) {
+      const off = await handleLocationError(err, 'punch');
+      if (off !== 'not-off') {
+        showToast(off === 'turned-on' ? LOCATION_NOW_ON : LOCATION_STILL_OFF, off === 'turned-on' ? 'info' : 'error');
+        return;
+      }
       showToast(err?.message ?? 'Failed to get your location', 'error');
     } finally {
       setBusy(false);

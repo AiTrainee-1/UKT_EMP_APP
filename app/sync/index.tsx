@@ -128,7 +128,7 @@ export default function SyncScreen() {
           <MaterialCommunityIcons name="information-outline" size={16} color={Colors.primary} />
           <Text style={styles.infoText}>
             With no internet you can still apply for leave, permission, casual leave, a missing punch, a gate pass, a
-            compensation claim, ask HR, and record your On-Duty punches. They are kept safely on this phone and sent
+            compensation claim, an enquiry to HR, and record your On-Duty punches. They are kept safely on this phone and sent
             automatically, in order, when the internet is back - even if the app is closed (Android sends them when it
             can). Each item is sent only once, and it is removed from the phone only after the server has it.
           </Text>

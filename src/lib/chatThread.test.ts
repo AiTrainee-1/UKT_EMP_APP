@@ -10,12 +10,15 @@ import {
   isHrMessage,
   isMyReaction,
   isNearLatest,
+  mergeLatestPage,
   mergeMessages,
   newestId,
   oldestId,
   pageMayHaveMore,
   prepareOutgoing,
+  reactionTotal,
   reactionsSummary,
+  reactorRows,
   replaceMessage,
   timeLabel,
   toggleReactionLocal,
@@ -171,4 +174,45 @@ test('near-latest threshold and outgoing text clean-up', () => {
   assert.equal(prepareOutgoing('   hello  \n'), 'hello')
   assert.equal(prepareOutgoing('   '), '')
   assert.equal(prepareOutgoing('x'.repeat(CHAT_MAX_LENGTH + 50)).length, CHAT_MAX_LENGTH)
+})
+
+test('who reacted: my reaction joins and leaves the list of names at once', () => {
+  const me = { id: 7, name: 'Priya R' }
+  const start = msg(1, {
+    reactions: [{ emoji: '👍', count: 1, reactedByMe: false, people: [{ employeeId: 9, name: 'Ravi K', isMe: false }] }],
+  })
+  const added = toggleReactionLocal(start, '👍', false, me)
+  assert.deepEqual(added.reactions[0].people?.map((p) => p.name), ['Priya R', 'Ravi K'])
+  assert.equal(added.reactions[0].count, 2)
+  const removed = toggleReactionLocal(added, '👍', true, me)
+  assert.deepEqual(removed.reactions[0].people?.map((p) => p.name), ['Ravi K'])
+  const heart = toggleReactionLocal(start, '❤️', false, me)
+  assert.deepEqual(heart.reactions[1], { emoji: '❤️', count: 1, reactedByMe: true, people: [{ employeeId: 7, name: 'Priya R', isMe: true }] })
+  // without names (an older server) nothing breaks
+  const plain = toggleReactionLocal(msg(2, { reactions: [{ emoji: '😂', count: 3, reactedByMe: false }] }), '😂', false, me)
+  assert.equal(plain.reactions[0].count, 4)
+  assert.deepEqual(plain.reactions[0].people, [{ employeeId: 7, name: 'Priya R', isMe: true }])
+  assert.equal(start.reactions[0].people?.length, 1) // the original is never changed
+})
+
+test('the who-reacted rows: you first, filtered by emoji', () => {
+  const reactions = [
+    { emoji: '👍', count: 2, reactedByMe: true, people: [{ employeeId: 9, name: 'Ravi K' }, { employeeId: 7, name: 'Priya R', isMe: true }] },
+    { emoji: '❤️', count: 1, reactedByMe: false, people: [{ employeeId: 11, name: 'Meena S' }] },
+    { emoji: '😂', count: 4, reactedByMe: false },
+  ]
+  assert.deepEqual(reactorRows(reactions).map((r) => `${r.emoji} ${r.name}`), ['👍 You', '👍 Ravi K', '❤️ Meena S'])
+  assert.deepEqual(reactorRows(reactions, '❤️').map((r) => r.name), ['Meena S'])
+  assert.deepEqual(reactorRows(reactions, '😂'), [])
+  assert.equal(reactionTotal(reactions), 7)
+  assert.equal(new Set(reactorRows(reactions).map((r) => r.key)).size, 3)
+})
+
+test('mergeLatestPage: a message removed on the server leaves the screen; older history stays', () => {
+  const m = (id: number) => ({ id })
+  const previous = [m(1), m(2), m(5), m(6), m(7)]
+  // the newest page now covers 5..8 and no longer has 6 (deleted on the server)
+  assert.deepEqual(mergeLatestPage(previous, [m(5), m(7), m(8)]).map((x) => x.id), [1, 2, 5, 7, 8])
+  assert.deepEqual(mergeLatestPage(previous, []).map((x) => x.id), [1, 2, 5, 6, 7])
+  assert.deepEqual(mergeLatestPage(null, [m(3)]).map((x) => x.id), [3])
 })

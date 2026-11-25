@@ -5,8 +5,7 @@ import {
   StyleSheet,
   Platform,
   TouchableOpacity,
-  StatusBar,
-} from 'react-native';
+  } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -25,6 +24,7 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
 
 const SURVEY_QUESTIONS = [
   'What is your primary reason for leaving the company?',
@@ -97,7 +97,7 @@ export default function ResignationSurveyScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
       <KeyboardAvoider style={{ flex: 1 }}>
         {/* Header */}
         <View style={styles.header}>

@@ -13,6 +13,7 @@ import {
   type CategoryCounts,
   type HistoryPage,
 } from '../lib/approvalsHistory';
+import { feedOrder, feedStart, nextFeedCursor, type ApprovalFilter, type FeedCursor } from '../lib/approvalsFeed';
 
 // Every request the Department Head sees carries `approval` (absent on an older backend): where it is in HR's approval
 // pipeline, who it waits for, and whether the Department Head may approve (canAct.hod) or reject (canReject.hod) it now.
@@ -328,6 +329,63 @@ export function useApprovalHistory(
     enabled,
     // The pending list is what the head has to act on: keep it as fresh as the badge. History changes rarely.
     refetchInterval: status === 'pending' ? 30000 : false,
+  });
+}
+
+/** One page of the all-statuses list: rows of one or more server pages, each row tagged with the status list it came
+ *  from (`listStatus`), the category's counts, and where the next page starts. */
+export interface FeedPage {
+  items: Record<string, any>[];
+  counts: HistoryPage['counts'];
+  next: FeedCursor | null;
+}
+
+/**
+ * The Approvals tab's list (owner 2026-11-25): `filter` 'all' walks the category's Pending pages, then Approved, then
+ * Rejected (src/lib/approvalsFeed.ts), so what waits for this head is always on top; a status filter is that list alone.
+ * The server lists are the unchanged GET /manager/requests?status=... A page here keeps asking the server until it has at
+ * least APPROVALS_PAGE_SIZE rows or every list is done, so a short (or empty) Pending list never leaves a near-empty
+ * screen waiting for a scroll.
+ */
+export function useApprovalFeed(category: ApprovalCategory, filter: ApprovalFilter, search: string, enabled = true) {
+  const order = feedOrder(filter);
+  return useInfiniteQuery({
+    queryKey: [...MANAGER_REQUESTS_KEY, 'feed', category, filter, search],
+    initialPageParam: feedStart(filter) as FeedCursor,
+    queryFn: async ({ pageParam }): Promise<FeedPage> => {
+      const items: Record<string, any>[] = [];
+      let counts: HistoryPage['counts'] | null = null;
+      let cursor: FeedCursor | undefined = pageParam;
+      while (cursor) {
+        const status: ApprovalStatus = cursor.status;
+        const res = await api.get('/manager/requests', {
+          params: {
+            category: CATEGORY_WIRE[category],
+            status,
+            search: search || undefined,
+            page: cursor.page,
+            page_size: APPROVALS_PAGE_SIZE,
+          },
+        });
+        const page = normalizeHistoryPage(res.data, cursor.page);
+        counts = counts ?? page.counts;
+        for (const item of page.items) items.push({ ...normalizeItem(category, item), listStatus: status });
+        cursor = nextFeedCursor({ status, page: page.page }, page.hasMore, order);
+        if (items.length >= APPROVALS_PAGE_SIZE) break;
+      }
+      return { items, counts: counts ?? { pending: 0, approved: 0, rejected: 0 }, next: cursor ?? null };
+    },
+    getNextPageParam: (last) => last.next ?? undefined,
+    // While only the search text changes the previous rows stay (no skeleton flash per keystroke); another category or
+    // filter never shows the last one's rows.
+    placeholderData: (previous, previousQuery) => {
+      const key = previousQuery?.queryKey as readonly unknown[] | undefined;
+      // [MANAGER_REQUESTS_KEY, 'feed', category, filter, search]
+      return key && key[1] === 'feed' && key[2] === category && key[3] === filter ? previous : undefined;
+    },
+    enabled,
+    // Pending is what the head has to act on: keep a list that holds it as fresh as the badge. History changes rarely.
+    refetchInterval: order.includes('pending') ? 30000 : false,
   });
 }
 

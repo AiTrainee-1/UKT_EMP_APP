@@ -39,8 +39,11 @@ export const dark: Palette = {
   // ─── Brand / Primary ───────────────────────────────────
   // Deep Sapphire reads as near-black on a dark ground; lighten to a
   // legible blue for icon/text use (primary's dominant role in this app).
-  primary: '#60A5FA',
-  primaryLight: '#3B82F6',
+  // blue-500, not blue-400 (2026-11-25): primary is also the fill of buttons, selected chips and tiles whose labels are
+  // white across the app; on #60A5FA that white was 2.5:1 (unreadable), on #3B82F6 it is ~3.7:1 (AA for the bold
+  // button text) while as text on the dark ground it stays ~4.7:1. primaryLight takes the lighter step.
+  primary: '#3B82F6',
+  primaryLight: '#60A5FA',
   primaryFixed: '#1E3A5F',
   onPrimary: '#0B1220',
   onPrimaryContainer: '#93C5FD',

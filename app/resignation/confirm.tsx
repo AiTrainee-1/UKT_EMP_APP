@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Platform,
-  StatusBar,
   Alert,
   ActivityIndicator,
 } from 'react-native';
@@ -24,6 +23,7 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
 
 const SURVEY_LABELS = [
   'Primary reason for leaving',
@@ -111,7 +111,7 @@ export default function ResignationConfirmScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
 
       {/* Header */}
       <View style={styles.header}>

@@ -19,15 +19,20 @@ import {
   STATUS_FILTERS,
   TYPE_FILTERS,
   filterRecords,
+  opensOnText,
   recordTotals,
   rupees,
+  salaryAdvanceWindow,
   statusCounts,
+  termLoanWindow,
+  windowChip,
   type StatusFilter,
   type TypeFilter,
 } from '../../src/lib/settlement';
 
-/** Advances & Loans: apply for a Salary Advance or a Term Loan (20th to month end) and follow every application,
- *  repayment and deduction. The server decides every rule (mobile_settlement_views.py); this screen words it. */
+/** Advances & Loans: apply for a Salary Advance (the 20th to the 22nd of each month) or a Term Loan (any day; owner
+ *  2026-11-25) and follow every application, repayment and deduction. The server decides every rule
+ *  (mobile_settlement_views.py); this screen words it. */
 export default function SettlementScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
@@ -57,8 +62,9 @@ export default function SettlementScreen() {
           <Text style={styles.introTitle}>Need money before payday?</Text>
           <Text style={styles.introText}>
             A <Text style={styles.bold}>Salary Advance</Text> is up to 60% of your monthly salary, taken back in full from
-            this month's salary. A <Text style={styles.bold}>Term Loan</Text> is a larger amount you repay in monthly EMIs
-            (1 to 12 months) from next month. HR approves every application.
+            this month's salary. You can apply for it from the 20th to the 22nd of each month. A{' '}
+            <Text style={styles.bold}>Term Loan</Text> is a larger amount you repay in monthly EMIs (1 to 12 months) from
+            next month, and you can apply for it on any day. HR approves every application.
           </Text>
         </View>
       </Reveal>
@@ -76,7 +82,7 @@ export default function SettlementScreen() {
       ) : (
         <>
           <Reveal index={1}>
-            <WindowBanner window={eligibility.data.window} today={eligibility.data.today} />
+            <WindowBanner data={eligibility.data} />
           </Reveal>
           {!!eligibility.data.workflowMessage && (
             <View style={styles.offNote}>
@@ -217,6 +223,10 @@ function ApplyCards({ data }: { data: AdvanceEligibility }) {
   const styles = useThemedStyles(makeStyles);
   const sa = data.salaryAdvance;
   const tl = data.termLoan;
+  // Owner 2026-11-25: a Salary Advance only from the 20th to the 22nd (its card is disabled outside, saying when it
+  // opens); a Term Loan on any day. An older server's one window holds both (termLoanWindow then returns it).
+  const saWindow = salaryAdvanceWindow(data);
+  const tlWindow = termLoanWindow(data);
 
   const cards = [
     {
@@ -226,6 +236,8 @@ function ApplyCards({ data }: { data: AdvanceEligibility }) {
       sub: `Deducted from ${sa.deductionLabel} salary`,
       can: sa.canApply,
       reason: sa.reason,
+      chip: windowChip(saWindow),
+      opens: opensOnText(saWindow),
     },
     {
       key: 'term' as const,
@@ -234,40 +246,71 @@ function ApplyCards({ data }: { data: AdvanceEligibility }) {
       sub: `EMIs start ${tl.firstDeductionLabel}`,
       can: tl.canApply,
       reason: tl.reason,
+      chip: windowChip(tlWindow),
+      opens: opensOnText(tlWindow),
     },
   ];
-  // The window / switched-off / inactive reason is the same for both cards and is already shown above, so only a
-  // card's OWN reason (no salary on record, one already this month, a loan still waiting) is spelled out here.
-  const shared = !data.window.isOpen || !!data.workflowMessage || !data.employeeActive;
+  // The switched-off / inactive reason is the same for both cards and is already shown above, and a closed window is
+  // said on the card itself ("Opens on 20 Dec") and in the banner, so only a card's OWN reason (no salary on record, one
+  // already this month, a loan still waiting) is spelled out under the cards.
+  const shared = !!data.workflowMessage || !data.employeeActive;
 
   return (
     <View style={{ gap: 10 }}>
       <View style={{ flexDirection: 'row', gap: 12 }}>
-        {cards.map((c) => (
-          <TouchableOpacity
-            key={c.key}
-            style={[styles.applyCard, !c.can && styles.applyCardOff]}
-            activeOpacity={0.85}
-            onPress={() => router.push({ pathname: '/settlement/apply', params: { type: c.key } })}
-            accessibilityRole="button"
-            accessibilityLabel={`${c.title}. ${c.line}. ${c.sub}. ${c.can ? 'Apply' : c.reason ?? 'Not available now'}`}
-          >
-            <TypeIcon type={c.key} size={42} />
-            <Text style={styles.applyTitle}>{c.title}</Text>
-            <Text style={[styles.applyLine, TabularNums]}>{c.line}</Text>
-            <Text style={styles.applySub}>{c.sub}</Text>
-            <View style={[styles.applyBtn, { backgroundColor: c.can ? Colors.primary : Colors.bgSurfaceHigh }]}>
-              <Text style={[styles.applyBtnText, { color: c.can ? Colors.onPrimary : Colors.textMuted }]}>
-                {c.can ? 'Apply' : 'See details'}
-              </Text>
-              <MaterialCommunityIcons name="arrow-right" size={14} color={c.can ? Colors.onPrimary : Colors.textMuted} />
-            </View>
-          </TouchableOpacity>
-        ))}
+        {cards.map((c) => {
+          // Outside its window the card is disabled: nothing to open until the window opens.
+          const closed = !c.chip.open;
+          return (
+            <TouchableOpacity
+              key={c.key}
+              style={[styles.applyCard, !c.can && styles.applyCardOff, closed && styles.applyCardClosed]}
+              activeOpacity={0.85}
+              disabled={closed}
+              onPress={() => router.push({ pathname: '/settlement/apply', params: { type: c.key } })}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: closed }}
+              accessibilityLabel={`${c.title}. ${c.line}. ${c.sub}. ${c.chip.text}. ${
+                c.can ? 'Apply' : closed ? c.opens : (c.reason ?? 'Not available now')
+              }`}
+              testID={`settlement-apply-${c.key}`}
+            >
+              <TypeIcon type={c.key} size={42} />
+              <Text style={styles.applyTitle}>{c.title}</Text>
+              <View
+                style={[styles.windowChip, { backgroundColor: c.chip.open ? Colors.badgeGreenBg : Colors.badgeYellowBg }]}
+              >
+                <MaterialCommunityIcons
+                  name={c.chip.open ? 'calendar-check' : 'lock-clock'}
+                  size={11}
+                  color={c.chip.open ? Colors.badgeGreenText : Colors.badgeYellowText}
+                />
+                <Text
+                  style={[styles.windowChipText, { color: c.chip.open ? Colors.badgeGreenText : Colors.badgeYellowText }]}
+                  numberOfLines={1}
+                >
+                  {c.chip.text}
+                </Text>
+              </View>
+              <Text style={[styles.applyLine, TabularNums]}>{c.line}</Text>
+              <Text style={styles.applySub}>{c.sub}</Text>
+              <View style={[styles.applyBtn, { backgroundColor: c.can ? Colors.primary : Colors.bgSurfaceHigh }]}>
+                <Text style={[styles.applyBtnText, { color: c.can ? Colors.onPrimary : Colors.textMuted }]} numberOfLines={1}>
+                  {c.can ? 'Apply' : closed ? c.opens || 'Closed now' : 'See details'}
+                </Text>
+                <MaterialCommunityIcons
+                  name={closed ? 'lock-outline' : 'arrow-right'}
+                  size={14}
+                  color={c.can ? Colors.onPrimary : Colors.textMuted}
+                />
+              </View>
+            </TouchableOpacity>
+          );
+        })}
       </View>
       {!shared &&
         cards
-          .filter((c) => !c.can && c.reason)
+          .filter((c) => !c.can && c.reason && c.chip.open)
           .map((c) => (
             <View key={c.key} style={styles.reason}>
               <MaterialCommunityIcons name="information-outline" size={15} color={Colors.textSecondary} />
@@ -343,6 +386,12 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     ...ClayElevation.low,
   },
   applyCardOff: { opacity: 0.88 },
+  applyCardClosed: { opacity: 0.72, borderStyle: 'dashed' },
+  windowChip: {
+    alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 7, paddingVertical: 2, borderRadius: 999, marginTop: 2, maxWidth: '100%',
+  },
+  windowChipText: { fontSize: 10.5, fontWeight: '800', flexShrink: 1 },
   applyTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 15, marginTop: 8 },
   applyLine: { color: Colors.textPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
   applySub: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16, minHeight: 32 },

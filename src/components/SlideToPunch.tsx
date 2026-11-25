@@ -10,6 +10,7 @@ import type { Palette } from '../theme/palettes';
 import { BorderRadius, Spacing, ClayElevation } from '../constants/theme';
 import { FontFamily } from '../constants/typography';
 import { useGeoPunchStatus, useGeoPunch } from '../hooks/useGeoAttendance';
+import { ensureLocationOn, handleLocationError } from '../hooks/useLocationServices';
 
 /**
  * Slide to Punch -the whole Office Geo Punch flow behind one gesture, in the
@@ -65,6 +66,12 @@ function describeError(err: any): Result {
   }
   return { phase: 'error', title: 'Punch not recorded', detail: err?.message ?? 'Please try again.' };
 }
+
+const LOCATION_OFF_RESULT: Result = {
+  phase: 'error',
+  title: 'Location is off',
+  detail: 'Turn on your location, then slide again.',
+};
 
 export function SlideToPunch() {
   // `Colors` shadows the module import for this component's body, so both
@@ -157,6 +164,12 @@ export function SlideToPunch() {
         return;
       }
 
+      // The phone's location switched off: the location popup (owner 2026-11-25) helps turn it on, then the punch goes on.
+      if (!(await ensureLocationOn('punch'))) {
+        finish(LOCATION_OFF_RESULT);
+        return;
+      }
+
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const res = await punchMutation.mutateAsync({
         latitude: pos.coords.latitude,
@@ -183,6 +196,12 @@ export function SlideToPunch() {
         ].filter(Boolean).join(' · '),
       });
     } catch (err: any) {
+      // Location went off on the way (or the phone could not tell before): offer the popup; slide again once it is on.
+      const off = await handleLocationError(err, 'punch');
+      if (off !== 'not-off') {
+        finish(off === 'turned-on' ? { phase: 'info', title: 'Location is on', detail: 'Slide again to punch.' } : LOCATION_OFF_RESULT);
+        return;
+      }
       finish(describeError(err));
     }
   };
@@ -247,7 +266,7 @@ export function SlideToPunch() {
     phase === 'working' ? 'Finding your location'
     : result?.detail
     ?? (mode === 'on_duty'
-      ? 'Needs a selfie -opens On-Duty'
+      ? 'Needs a selfie · opens On-Duty'
       : punchesToday > 0
         ? `${punchesToday} punch${punchesToday === 1 ? '' : 'es'} recorded today`
         : 'No punches yet today');

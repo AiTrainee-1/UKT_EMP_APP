@@ -353,6 +353,14 @@ export function onLiveTrackingTick(listener: LiveTrackingTickListener | null) {
 async function pingOnce() {
   if (stopped) return;
   try {
+    // The phone's location switched off: skip this tick quietly. Asking for a position while it is off makes Android
+    // pop its own "Location Accuracy" dialog, and this runs every 45 s in the background, so the dialog kept coming
+    // back over whatever the employee was doing (2026-11-25, seen on the phone). The Live Tracking page shows the
+    // "location is off" state and the way to turn it on.
+    if ((await Location.hasServicesEnabledAsync().catch(() => true)) === false) {
+      tickListener?.(false, new Date());
+      return;
+    }
     const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
     await sendLiveLocationPing({
       latitude: pos.coords.latitude,

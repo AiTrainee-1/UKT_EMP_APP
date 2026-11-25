@@ -44,6 +44,8 @@ import { FontFamily } from '../../constants/typography';
 
 type Row = { kind: 'item'; key: string; item: OnDutyHistoryItem; index: number };
 
+const PUNCH_SHORT_NAME: Record<number, string> = { 1: 'Morning', 2: 'Lunch Out', 3: 'Lunch In', 4: 'Night' };
+
 const PUNCH_TONE = { approved: 'statusGreen', pending: 'statusYellow', rejected: 'statusRed' } as const;
 
 /**
@@ -181,8 +183,12 @@ export function OnDutyRecords({
                 return (
                   <View key={n} style={styles.punchCell}>
                     <View style={[styles.punchBar, { backgroundColor: p ? tone : Colors.bgSurfaceHigh }]} />
-                    <Text style={[styles.punchText, !p && { color: Colors.textMuted }]}>
-                      {n % 2 ? 'In' : 'Out'} {t != null ? to12hLabel(t) : '—'}
+                    {/* The punch names the On-Duty page uses (Morning Punch, Lunch Out, Lunch In, Night Punch), short. */}
+                    <Text style={[styles.punchText, !p && { color: Colors.textMuted }]} numberOfLines={1}>
+                      {PUNCH_SHORT_NAME[n]}
+                    </Text>
+                    <Text style={[styles.punchText, !p && { color: Colors.textMuted }]} numberOfLines={1}>
+                      {t != null ? to12hLabel(t) : '—'}
                     </Text>
                   </View>
                 );

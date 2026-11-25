@@ -7,8 +7,11 @@ import {
   TouchableOpacity,
   RefreshControl,
   Platform,
-  StatusBar,
-  Alert,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ScrollViewInstance,
+  type ViewInstance,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,12 +19,16 @@ import { UKTLogo } from '../../src/components/UKTLogo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { format, getDaysInMonth } from 'date-fns';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCalendarNow } from '../../src/components/home/HomeClock';
 import { AttentionStrip } from '../../src/components/home/AttentionStrip';
 import { LastSalaryCard } from '../../src/components/home/LastSalaryCard';
 import { TodayPanel } from '../../src/components/home/TodayPanel';
+import { HeaderAvatarButton } from '../../src/components/home/HeaderAvatarButton';
+import { InsightsSection } from '../../src/components/home/InsightsSection';
+import { HomeTour } from '../../src/components/home/HomeTour';
+import { MY_INSIGHTS_KEY } from '../../src/hooks/useMyInsights';
+import { useManagerProfile } from '../../src/hooks/useManager';
 import { calendarDaysUntil, greetingFor, inDaysText, parseLocalDate } from '../../src/lib/homeAttention';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useConfirmSignOut } from '../../src/hooks/useSignOut';
@@ -36,21 +43,13 @@ import { Reveal } from '../../src/components/Reveal';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
 import { Avatar } from '../../src/components/ui/Avatar';
-import { Coachmark, type CoachmarkAnchor } from '../../src/components/ui/Coachmark';
 import { Colors } from '../../src/constants/colors';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily, TabularNums } from '../../src/constants/typography';
 import { SkeletonCard } from '../../src/components/ui/Skeleton';
-
-const TOUR_SEEN_KEY = 'uktextiles.homeTourSeen.v1';
-
-const TOUR_STEPS = [
-  { key: 'profile', title: 'Your Profile & ID', body: 'Tap here anytime to view your full profile or open your Digital ID Card for gate scanning.' },
-  { key: 'attend', title: 'Monthly Attendance', body: "This card tracks your working days, present, absent and leave counts for the current month, updated live." },
-  { key: 'actions', title: 'Quick Actions', body: 'Jump straight to leave, outpass, salary slips and more — tap "Show all" to see everything available to you.' },
-] as const;
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
 
 // Matches the Stitch "Home Dashboard" mock exactly: 6 tiles visible by
 // default (2 rows of 3), "Show all N" expands the rest. Colors here are
@@ -116,43 +115,36 @@ export default function HomeScreen() {
   const visibleActions = showAllActions ? QUICK_ACTIONS : QUICK_ACTIONS.slice(0, 6);
   const unreadCount = notifs?.filter(n => !n.isRead).length ?? 0;
 
-  // First-run guided tour — points at the real profile card, attendance
-  // card and quick-actions section once they've actually laid out, not a
-  // fixed screen position. `tourStep` is 0 while hidden/not-yet-decided;
-  // 1..3 while a Coachmark is showing.
-  const [tourStep, setTourStep] = useState(0);
-  const profileRef = useRef<any>(null);
-  const attendRef = useRef<any>(null);
-  const actionsRef = useRef<any>(null);
-  const refFor = (key: typeof TOUR_STEPS[number]['key']) =>
-    key === 'profile' ? profileRef : key === 'attend' ? attendRef : actionsRef;
+  // The app tour (src/components/home/HomeTour.tsx, owner 2026-11-25) points at these real elements of Home once
+  // they have laid out; the punch slider and the tab bar are worked out from the screen area (rootRef).
+  const { data: manager } = useManagerProfile(!!user);
+  const rootRef = useRef<ViewInstance>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const menuRef = useRef<ViewInstance>(null);
+  const bellRef = useRef<ViewInstance>(null);
+  const avatarRef = useRef<ViewInstance>(null);
+  const profileRef = useRef<ViewInstance>(null);
+  const attendRef = useRef<ViewInstance>(null);
+  const todayRef = useRef<ViewInstance>(null);
+  const actionsRef = useRef<ViewInstance>(null);
+  const insightsRef = useRef<ViewInstance>(null);
 
-  useEffect(() => {
-    if (isLoading) return;
-    AsyncStorage.getItem(TOUR_SEEN_KEY).then((seen) => {
-      if (!seen) setTimeout(() => setTourStep(1), 500);
-    });
-  }, [isLoading]);
-
-  const [anchor, setAnchor] = useState<CoachmarkAnchor | undefined>(undefined);
-  useEffect(() => {
-    if (tourStep < 1 || tourStep > TOUR_STEPS.length) return;
-    const ref = refFor(TOUR_STEPS[tourStep - 1].key);
-    const id = setTimeout(() => {
-      if (typeof ref.current?.measureInWindow === 'function') {
-        ref.current.measureInWindow((x: number, y: number, width: number, height: number) => setAnchor({ x, y, width, height }));
-      }
-    }, 50);
-    return () => clearTimeout(id);
-  }, [tourStep]);
-
-  const endTour = () => {
-    setTourStep(0);
-    AsyncStorage.setItem(TOUR_SEEN_KEY, '1');
+  // "My Insights" draws its charts the first time it scrolls into view (or at once when it already fits on screen).
+  const [insightsSeen, setInsightsSeen] = useState(false);
+  const insightsTop = useRef<number | null>(null);
+  const viewportH = useRef(0);
+  const scrollYNow = useRef(0);
+  const checkInsights = () => {
+    if (insightsSeen || insightsTop.current == null || viewportH.current <= 0) return;
+    if (scrollYNow.current + viewportH.current > insightsTop.current + 80) setInsightsSeen(true);
   };
-  const advanceTour = () => {
-    if (tourStep >= TOUR_STEPS.length) endTour();
-    else setTourStep((s) => s + 1);
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollYNow.current = e.nativeEvent.contentOffset.y;
+    checkInsights();
+  };
+  const onInsightsLayout = (e: LayoutChangeEvent) => {
+    insightsTop.current = e.nativeEvent.layout.y;
+    checkInsights();
   };
 
   const todayStr = format(now, 'yyyy-MM-dd');
@@ -178,6 +170,7 @@ export default function HomeScreen() {
       ['my-advances', 'eligibility'],
       ['casual-leave-eligibility'],
       ['salary-insights'],
+      [MY_INSIGHTS_KEY],
     ]) {
       void queryClient.invalidateQueries({ queryKey: key });
     }
@@ -186,20 +179,29 @@ export default function HomeScreen() {
   const handleLogout = useConfirmSignOut();
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" />
+    <SafeAreaView ref={rootRef} style={styles.safe} edges={['top']}>
+      <ThemedStatusBar />
 
       <ScrollView
+        ref={scrollRef}
         style={styles.scroll}
         contentContainerStyle={styles.content}
         refreshControl={
           <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={Colors.primary} colors={[Colors.primary]} />
         }
         showsVerticalScrollIndicator={false}
+        onLayout={(e) => {
+          viewportH.current = e.nativeEvent.layout.height;
+          checkInsights();
+        }}
+        onScroll={onScroll}
+        scrollEventThrottle={64}
       >
-        {/* ─── Top bar: hamburger · brand mark + wordmark · bell · avatar ─── */}
+        {/* ─── Top bar: hamburger · brand mark + wordmark · bell · avatar (the person's photo) ─── */}
         <View style={styles.topBar}>
-          <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
+          <View ref={menuRef} collapsable={false}>
+            <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
+          </View>
           <UKTLogo size={28} />
           <View style={styles.brandTextWrap}>
             <Text style={styles.brandName}>UKTEXTILES</Text>
@@ -207,6 +209,7 @@ export default function HomeScreen() {
           </View>
           <View style={{ flex: 1 }} />
           <TouchableOpacity
+            ref={bellRef}
             style={styles.iconBtn}
             onPress={() => router.push('/(tabs)/notifications')}
             activeOpacity={0.75}
@@ -216,15 +219,7 @@ export default function HomeScreen() {
             <MaterialCommunityIcons name="bell-outline" size={20} color={Colors.textPrimary} />
             {unreadCount > 0 && <View style={styles.iconBtnDot} />}
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.avatarBtn}
-            onPress={() => router.push('/(tabs)/profile')}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="My Profile"
-          >
-            <MaterialCommunityIcons name="account" size={18} color="#fff" />
-          </TouchableOpacity>
+          <HeaderAvatarButton ref={avatarRef} size={30} />
         </View>
 
         {/* ─── Date · Greeting + status dot (the live time and the shift live in the "Right now" panel below) ─── */}
@@ -274,93 +269,99 @@ export default function HomeScreen() {
         </TouchableOpacity>
 
         {/* ─── Attendance card (deep navy) ─── */}
-        <LinearGradient ref={attendRef} colors={Colors.gradientRoyal} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.attendCard}>
-          <View style={styles.attendHeader}>
-            <View style={styles.attendHeaderLeft}>
-              <MaterialCommunityIcons name="calendar-month" size={16} color="#fff" />
-              <Text style={styles.attendTitle}>{format(now, 'MMMM')} Attendance</Text>
-            </View>
-            <View style={styles.attendDayPill}>
-              <Text style={styles.attendDayPillText}>Day {dayOfMonth}/{daysInMonth}</Text>
-            </View>
-          </View>
-          {isLoading ? (
-            <View style={styles.attendGrid}>
-              {[0, 1, 2, 3].map(i => <View key={i} style={[styles.attendTile, { opacity: 0.4 }]} />)}
-            </View>
-          ) : (
-            <View style={styles.attendGrid}>
-              <View style={styles.attendTile}>
-                <Text style={styles.attendNum}>{data?.workingDays ?? 0}</Text>
-                <Text style={styles.attendLabel}>Work Days</Text>
+        <View ref={attendRef} collapsable={false} style={styles.attendWrap}>
+          <LinearGradient colors={Colors.gradientRoyal} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.attendCard}>
+            <View style={styles.attendHeader}>
+              <View style={styles.attendHeaderLeft}>
+                <MaterialCommunityIcons name="calendar-month" size={16} color="#fff" />
+                <Text style={styles.attendTitle}>{format(now, 'MMMM')} Attendance</Text>
               </View>
-              <View style={styles.attendTile}>
-                <Text style={[styles.attendNum, { color: '#5EEAD4' }]}>{data?.presentDays ?? 0}</Text>
-                <Text style={styles.attendLabel}>Present</Text>
-              </View>
-              <View style={[styles.attendTile, styles.attendTileAlert]}>
-                <Text style={[styles.attendNum, { color: '#FCA5A5' }]}>{data?.absentDays ?? 0}</Text>
-                <Text style={styles.attendLabel}>Absent</Text>
-              </View>
-              <View style={styles.attendTile}>
-                <Text style={styles.attendNum}>{data?.leaveDays ?? 0}</Text>
-                <Text style={styles.attendLabel}>Leaves</Text>
+              <View style={styles.attendDayPill}>
+                <Text style={styles.attendDayPillText}>Day {dayOfMonth}/{daysInMonth}</Text>
               </View>
             </View>
-          )}
-        </LinearGradient>
+            {isLoading ? (
+              <View style={styles.attendGrid}>
+                {[0, 1, 2, 3].map(i => <View key={i} style={[styles.attendTile, { opacity: 0.4 }]} />)}
+              </View>
+            ) : (
+              <View style={styles.attendGrid}>
+                <View style={styles.attendTile}>
+                  <Text style={styles.attendNum}>{data?.workingDays ?? 0}</Text>
+                  <Text style={styles.attendLabel}>Work Days</Text>
+                </View>
+                <View style={styles.attendTile}>
+                  <Text style={[styles.attendNum, { color: '#5EEAD4' }]}>{data?.presentDays ?? 0}</Text>
+                  <Text style={styles.attendLabel}>Present</Text>
+                </View>
+                <View style={[styles.attendTile, styles.attendTileAlert]}>
+                  <Text style={[styles.attendNum, { color: '#FCA5A5' }]}>{data?.absentDays ?? 0}</Text>
+                  <Text style={styles.attendLabel}>Absent</Text>
+                </View>
+                <View style={styles.attendTile}>
+                  <Text style={styles.attendNum}>{data?.leaveDays ?? 0}</Text>
+                  <Text style={styles.attendLabel}>Leaves</Text>
+                </View>
+              </View>
+            )}
+          </LinearGradient>
+        </View>
 
         {/* ─── Right now · Today's punches (clock, shift progress, the day as a bar, punches labelled by what they are) ─── */}
-        <TodayPanel
-          employeeId={user?.employeeId ?? null}
-          records={myAttendance?.records}
-          recordsLoading={attendanceLoading}
-          recordsFailed={attendanceFailed && !myAttendance}
-          shift={shift}
-          shiftLoading={shiftLoading}
-        />
+        <View ref={todayRef} collapsable={false}>
+          <TodayPanel
+            employeeId={user?.employeeId ?? null}
+            records={myAttendance?.records}
+            recordsLoading={attendanceLoading}
+            recordsFailed={attendanceFailed && !myAttendance}
+            shift={shift}
+            shiftLoading={shiftLoading}
+          />
+        </View>
 
         {/* ─── Needs your attention (renders nothing when nothing is waiting) ─── */}
         <AttentionStrip employeeId={user?.employeeId ?? null} employmentType={emp?.employmentType} now={now} />
 
         {/* ─── Quick Actions ─── */}
-        <View ref={actionsRef} style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <Text style={styles.sectionHint}>Essential Workflows</Text>
+        <View ref={actionsRef} collapsable={false}>
+          <View style={styles.sectionRow}>
+            <Text style={styles.sectionTitle}>Quick Actions</Text>
+            <Text style={styles.sectionHint}>Essential Workflows</Text>
+          </View>
+          <View style={styles.actionsGrid}>
+            {visibleActions.map(({ label, icon, route, iconColor, bg }, i) => (
+              <Reveal key={label} index={i} offsetY={8} style={styles.actionBtnWrap}>
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => router.push(route as any)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={label}
+                >
+                  <View style={[styles.actionIconWrap, { backgroundColor: bg }]}>
+                    <MaterialCommunityIcons name={icon as any} size={22} color={iconColor} />
+                  </View>
+                  <Text style={styles.actionLabel} numberOfLines={1}>{label}</Text>
+                </TouchableOpacity>
+              </Reveal>
+            ))}
+          </View>
+          <TouchableOpacity
+            style={styles.showAllBtn}
+            onPress={() => setShowAllActions(v => !v)}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+          >
+            <Text style={styles.showAllBtnText}>
+              {showAllActions ? 'Show less' : `Show all ${QUICK_ACTIONS.length} actions`}
+            </Text>
+            <MaterialCommunityIcons
+              name={showAllActions ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={Colors.primary}
+            />
+          </TouchableOpacity>
         </View>
-        <View style={styles.actionsGrid}>
-          {visibleActions.map(({ label, icon, route, iconColor, bg }, i) => (
-            <Reveal key={label} index={i} offsetY={8} style={styles.actionBtnWrap}>
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={() => router.push(route as any)}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel={label}
-              >
-                <View style={[styles.actionIconWrap, { backgroundColor: bg }]}>
-                  <MaterialCommunityIcons name={icon as any} size={22} color={iconColor} />
-                </View>
-                <Text style={styles.actionLabel} numberOfLines={1}>{label}</Text>
-              </TouchableOpacity>
-            </Reveal>
-          ))}
-        </View>
-        <TouchableOpacity
-          style={styles.showAllBtn}
-          onPress={() => setShowAllActions(v => !v)}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-        >
-          <Text style={styles.showAllBtnText}>
-            {showAllActions ? 'Show less' : `Show all ${QUICK_ACTIONS.length} actions`}
-          </Text>
-          <MaterialCommunityIcons
-            name={showAllActions ? 'chevron-up' : 'chevron-down'}
-            size={16}
-            color={Colors.primary}
-          />
-        </TouchableOpacity>
 
         {/* ─── Next holiday ─── */}
         {nextHoliday && (
@@ -389,6 +390,16 @@ export default function HomeScreen() {
             <SkeletonCard />
           </>
         )}
+
+        {/* ─── My Insights: the attendance health report (a direct child of the scroll content: its y is its place in it) ─── */}
+        <View onLayout={onInsightsLayout}>
+          <InsightsSection
+            employeeId={user?.employeeId ?? null}
+            employmentType={emp?.employmentType}
+            revealed={insightsSeen}
+            anchorRef={insightsRef}
+          />
+        </View>
       </ScrollView>
 
       {/* Pinned above the tab bar, deliberately outside the ScrollView. Its
@@ -396,23 +407,23 @@ export default function HomeScreen() {
           for the gesture, and it stays reachable without scrolling. */}
       <SlideToPunch />
 
-      {tourStep >= 1 && tourStep <= TOUR_STEPS.length && (
-        <Coachmark
-          visible
-          title={TOUR_STEPS[tourStep - 1].title}
-          body={
-            // A production employee has no Apply Leave tile: the tour does not promise one.
-            TOUR_STEPS[tourStep - 1].key === 'actions' && emp?.employmentType === 'production'
-              ? 'Jump straight to On-Duty, outpass, salary slips and more — tap "Show all" to see everything available to you.'
-              : TOUR_STEPS[tourStep - 1].body
-          }
-          step={tourStep}
-          total={TOUR_STEPS.length}
-          anchor={anchor}
-          onNext={advanceTour}
-          onSkip={endTour}
-        />
-      )}
+      <HomeTour
+        ready={!isLoading}
+        anchors={{
+          menu: menuRef,
+          bell: bellRef,
+          avatar: avatarRef,
+          profileCard: profileRef,
+          attendance: attendRef,
+          today: todayRef,
+          actions: actionsRef,
+          insights: insightsRef,
+        }}
+        scrollRef={scrollRef}
+        rootRef={rootRef}
+        isManager={manager?.isManager ?? false}
+        employmentType={emp?.employmentType}
+      />
 
       {/* Side Drawer */}
       <SideDrawer
@@ -443,11 +454,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     width: 7, height: 7, borderRadius: 3.5,
     backgroundColor: Colors.statusRed,
     borderWidth: 1, borderColor: Colors.bgLight,
-  },
-  avatarBtn: {
-    width: 30, height: 30, borderRadius: 15,
-    backgroundColor: Colors.primary,
-    alignItems: 'center', justifyContent: 'center',
   },
 
   // Date / greeting
@@ -485,11 +491,11 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
 
-  // Attendance card
+  // Attendance card (the wrapper carries the gap below, so the tour's spotlight hugs the card itself)
+  attendWrap: { marginBottom: 14 },
   attendCard: {
     borderRadius: BorderRadius.xxl,
     padding: 18,
-    marginBottom: 14,
     overflow: 'hidden',
     ...Platform.select({
       ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20 },

@@ -8,6 +8,7 @@ import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import type { PermissionLevel } from '../../tracking/types';
 import { trackingRoutes } from '../../tracking/routes';
+import { promptLocationOn, useLocationServicesOn } from '../../hooks/useLocationServices';
 
 interface Props {
   /** The phone's location permission, or 'unknown' before it has been read (and always in a browser). */
@@ -21,7 +22,35 @@ interface Props {
 export function TrackingReadiness({ permission }: Props) {
   const { C } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  // The phone's location switched off stops the route as surely as a refused permission (owner 2026-11-25): say so, and
+  // "Turn on" opens the shared location popup.
+  const servicesOn = useLocationServicesOn();
   if (permission === 'unknown') return null;
+
+  if (servicesOn === false && permission !== 'denied') {
+    const offTitle = "Your phone's location is off";
+    const offBody = 'Turn it on, otherwise your On-Duty route cannot be recorded.';
+    return (
+      <TouchableOpacity
+        style={[styles.box, { backgroundColor: C.badgeRedBg }]}
+        onPress={() => { void promptLocationOn('tracking'); }}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={`${offTitle}. ${offBody}`}
+        testID="tracking-readiness-location-off"
+      >
+        <MaterialCommunityIcons name="map-marker-off" size={20} color={C.statusRed} />
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.title, { color: C.badgeRedText }]}>{offTitle}</Text>
+          <Text style={[styles.body, { color: C.badgeRedText }]}>{offBody}</Text>
+        </View>
+        <View style={styles.fix}>
+          <Text style={[styles.fixText, { color: C.statusRed }]}>Turn on</Text>
+          <MaterialCommunityIcons name="chevron-right" size={16} color={C.statusRed} />
+        </View>
+      </TouchableOpacity>
+    );
+  }
 
   const ok = permission === 'always';
   const denied = permission === 'denied';

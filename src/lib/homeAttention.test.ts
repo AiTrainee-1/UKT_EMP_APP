@@ -267,3 +267,26 @@ test('last salary: newest period, loss line, masking', () => {
   )
   assert.equal(productionLate?.lossText, '₹120 late deduction')
 })
+
+test('advances (owner 2026-11-25): only the Salary Advance window is news; a Term Loan is open every day', () => {
+  const current = (over: Record<string, unknown> = {}, general: Record<string, unknown> = {}) => ({
+    ...eligibility(),
+    window: { isOpen: true, closesOn: '2026-11-22', daysLeft: 2, ...general },
+    windows: {
+      general: { isOpen: true, closesOn: '2026-11-22', daysLeft: 2, ...general },
+      term: { isOpen: true, alwaysOpen: true, closesOn: null, daysLeft: null },
+    },
+    ...over,
+  })
+  const open = advanceAttention(current())
+  assert.equal(open?.title, 'Salary Advance applications are open')
+  assert.equal(open?.detail, 'Open until 22 Nov')
+  assert.equal(open?.href, '/settlement')
+  assert.equal(advanceAttention(current({}, { daysLeft: 1 }))?.detail, 'Open today only: last day')
+  // outside the 20th-22nd: nothing, although a Term Loan can be applied for
+  assert.equal(advanceAttention(current({}, { isOpen: false, closesOn: '2026-12-22', daysLeft: 0 })), null)
+  // this employee cannot take a Salary Advance (no monthly salary, one already this month): nothing either
+  assert.equal(advanceAttention(current({ salaryAdvance: { canApply: false } })), null)
+  assert.equal(advanceAttention(current({ workflowEnabled: false })), null)
+  assert.equal(advanceAttention(current({ employeeActive: false })), null)
+})

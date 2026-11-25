@@ -11,3 +11,13 @@ export const CHAT_EMOJIS: { emoji: string; name: string }[] = [
 export function emojiName(emoji: string): string {
   return CHAT_EMOJIS.find((e) => e.emoji === emoji)?.name ?? emoji;
 }
+
+/** The composer's emoji panel (owner 2026-11-25): the everyday faces, hands and symbols, most used first. */
+export const COMPOSER_EMOJIS: string[] = [
+  '😀', '😃', '😄', '😁', '😆', '😅', '😂', '🤣', '😊', '😇', '🙂', '😉', '😍', '🥰', '😘', '😋',
+  '😎', '🤩', '🥳', '🤗', '🤔', '😐', '😶', '🙄', '😏', '😴', '😌', '😜', '🤪', '😝', '😕', '😟',
+  '😮', '😲', '😳', '🥺', '😢', '😭', '😤', '😡', '🤯', '😱', '😓', '🤒', '🤕', '😷', '🤧', '🥱',
+  '👍', '👎', '👏', '🙌', '🙏', '🤝', '👌', '✌️', '🤞', '👋', '💪', '👀', '🫡', '🤙', '☝️', '✋',
+  '❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '💯', '🔥', '✨', '🎉', '🎊', '🎂', '🎁', '🏆', '⭐',
+  '✅', '❌', '⚠️', '❓', '❗', '📌', '📅', '⏰', '☕', '🍵', '🍛', '🍰', '🌞', '🌧️', '🚗', '🏭',
+];

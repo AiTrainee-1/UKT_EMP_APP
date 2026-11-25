@@ -37,7 +37,8 @@ export function DatePickerField({ label, value, onChange, error, minDate, maxDat
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+      {/* No label line at all when the page titles the field itself (label=""), so no empty gap. */}
+      {!!label && <Text style={styles.label}>{label}</Text>}
       <TouchableOpacity
         style={[styles.field, !!error && styles.fieldError]}
         onPress={() => setShow(true)}
@@ -97,7 +98,8 @@ export function TimePickerField({ label, value, onChange, error }: TimePickerFie
 
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>{label}</Text>
+      {/* No label line at all when the page titles the field itself (label=""), so no empty gap. */}
+      {!!label && <Text style={styles.label}>{label}</Text>}
       <TouchableOpacity
         style={[styles.field, !!error && styles.fieldError]}
         onPress={() => setShow(true)}

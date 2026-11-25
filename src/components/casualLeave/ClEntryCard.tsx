@@ -87,7 +87,7 @@ export function ClEntryCard({
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Casual Leave (CL)</Text>
-          <Text style={styles.sub}>{yearly ? `${balance?.total ?? 12} paid days a year, full or half days` : 'One paid day a month, or two half-days'}</Text>
+          <Text style={styles.sub}>{yearly ? `${balance?.total ?? 12} paid ${(balance?.total ?? 12) === 1 ? 'day' : 'days'} a year, full or half days` : 'One paid day a month, or two half-days'}</Text>
         </View>
         <MaterialCommunityIcons name="chevron-right" size={22} color={Colors.textMuted} />
       </View>

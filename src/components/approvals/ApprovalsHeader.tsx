@@ -8,6 +8,7 @@ import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import { FontFamily } from '../../constants/typography';
 import { UKTLogo } from '../UKTLogo';
+import { HeaderAvatarButton } from '../home/HeaderAvatarButton';
 
 /** Brand bar, the page title and how many requests wait for this head across every category. */
 export function ApprovalsHeader({ pendingTotal }: { pendingTotal: number | null }) {
@@ -23,15 +24,8 @@ export function ApprovalsHeader({ pendingTotal }: { pendingTotal: number | null 
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
         </View>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          style={styles.avatarBtn}
-          onPress={() => router.push('/(tabs)/profile')}
-          activeOpacity={0.85}
-          accessibilityRole="button"
-          accessibilityLabel="Open your profile"
-        >
-          <MaterialCommunityIcons name="account" size={18} color="#fff" />
-        </TouchableOpacity>
+        {/* The person's photo, like Home's header (owner 2026-11-25). */}
+        <HeaderAvatarButton size={30} />
       </View>
       <View style={styles.titleRow}>
         <View style={{ flex: 1 }}>

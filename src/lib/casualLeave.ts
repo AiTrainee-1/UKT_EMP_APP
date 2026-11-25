@@ -458,7 +458,7 @@ export function clCardState(input: {
     const waiting = b.pending > 0 ? ` ${daysText(b.pending)} still waiting for approval (a rejected request gives its days back).` : '';
     return {
       tone: 'used',
-      title: b.pending > 0 ? 'No days left' : `All ${b.total} days used`,
+      title: b.pending > 0 ? 'No days left' : b.total === 1 ? 'Your 1 day is used' : `All ${b.total} days used`,
       detail: `No Casual Leave left for ${b.year}.${waiting} A fresh ${b.total} starts on 1 Jan ${b.year + 1}.`,
     };
   }

@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -83,6 +83,29 @@ export function PendingQrPlaceholder({
   /** What waits for the approval: "your On-Duty" / "this pass". */
   what?: string;
 }) {
+  // Feedback for the tap (2026-11-25): the check is often too quick to see a spinner, so it spins for at least a moment
+  // and then says when it looked ("Still waiting · checked 9:37 AM"). Once approved the card shows the QR instead.
+  const [checking, setChecking] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null);
+  const busy = checking || !!refreshing;
+  const check = async () => {
+    if (!onRefresh || busy) return;
+    setChecking(true);
+    const started = Date.now();
+    try {
+      await onRefresh();
+    } catch {
+      /* the screen shows its own connection notice */
+    }
+    const wait = 600 - (Date.now() - started);
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    setChecking(false);
+    setCheckedAt(new Date());
+  };
+  const checkedText = checkedAt
+    ? `Still waiting · checked ${checkedAt.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}`
+    : null;
+
   return (
     <View style={s.wrap}>
       <View style={[s.frame, { width: size + 20, height: size + 20 }]} accessible accessibilityLabel="QR code: available after approval">
@@ -92,15 +115,20 @@ export function PendingQrPlaceholder({
       </View>
       {onRefresh && (
         <Pressable
-          onPress={() => void onRefresh()}
-          disabled={refreshing}
+          onPress={() => void check()}
+          disabled={busy}
           style={({ pressed }) => [s.btn, pressed && { opacity: 0.85 }]}
           accessibilityRole="button"
           accessibilityLabel="Check for approval now"
         >
-          {refreshing ? <ActivityIndicator size="small" color={AMBER} /> : <MaterialCommunityIcons name="refresh" size={18} color={AMBER} />}
-          <Text style={s.btnText}>{refreshing ? 'Checking...' : 'Refresh'}</Text>
+          {busy ? <ActivityIndicator size="small" color={AMBER} /> : <MaterialCommunityIcons name="refresh" size={18} color={AMBER} />}
+          <Text style={s.btnText}>{busy ? 'Checking...' : 'Refresh'}</Text>
         </Pressable>
+      )}
+      {onRefresh && !busy && checkedText && (
+        <Text style={s.checked} accessibilityLiveRegion="polite">
+          {checkedText}
+        </Text>
       )}
     </View>
   );
@@ -133,4 +161,5 @@ const s = StyleSheet.create({
     backgroundColor: '#FFFBEB',
   },
   btnText: { color: AMBER, fontFamily: FontFamily.bodySemibold, fontSize: 13.5 },
+  checked: { color: '#92400E', fontSize: 11.5, textAlign: 'center' },
 });

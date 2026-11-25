@@ -1,12 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Platform,
-  TouchableOpacity,
-  Modal,
-} from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Platform, TouchableOpacity, Modal, type ViewInstance, Keyboard } from 'react-native';
 import { router } from 'expo-router';
 import { useForm, Controller } from 'react-hook-form';
 import { z } from 'zod';
@@ -34,6 +27,8 @@ import { codesForChannel, loginChannelStates, purposeCodes, type OtpChannel } fr
 import { LoginMethodOption } from '../../src/components/auth/LoginMethodOption';
 import { loginRequest, otpLoginRequest } from '../../src/hooks/useAuth';
 import { useLoginOptions } from '../../src/hooks/useLoginOptions';
+import { loginFailure, type LoginFailure } from '../../src/lib/loginErrors';
+import { playSignIn, type Point } from '../../src/lib/authTransition';
 
 const schema = z.object({
   identifier: z.string().min(1, 'Employee Code is required'),
@@ -43,6 +38,23 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 const REMEMBER_KEY = 'uktex.rememberedIdentifier';
+
+/** The centre of a view on the screen (where the sign-in portal opens from), or null when it cannot be measured. */
+function centreOf(view: ViewInstance | null): Promise<Point | null> {
+  return new Promise((resolve) => {
+    if (!view) return resolve(null);
+    const timer = setTimeout(() => resolve(null), 150);
+    try {
+      view.measureInWindow((x, y, w, h) => {
+        clearTimeout(timer);
+        resolve(Number.isFinite(x) && Number.isFinite(y) && w > 0 ? { x: x + w / 2, y: y + h / 2 } : null);
+      });
+    } catch {
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
 
 // What the portal is for, shown on the header (the company details part of the design).
 const FEATURES: { icon: string; label: string }[] = [
@@ -66,7 +78,16 @@ export default function LoginScreen() {
     type: 'error',
     visible: false,
   });
-  const [authError, setAuthError] = useState<{ identifier: string; message: string } | null>(null);
+  // A refused sign-in (owner 2026-11-25): "Incorrect password" / "Employee code not found" / ... (src/lib/loginErrors.ts).
+  const [authError, setAuthError] = useState<{ identifier: string; failure: LoginFailure } | null>(null);
+  // kept while the dialog fades out, so it does not go blank first
+  const lastError = useRef(authError);
+  if (authError) lastError.current = authError;
+  const shownError = authError ?? lastError.current;
+  const codeIsWrong = shownError?.failure.kind === 'unknown_employee';
+  const signInRef = useRef<ViewInstance>(null);
+  // One sign-in at a time: the transition is playing and Home is on its way.
+  const signedIn = useRef(false);
   // The last sign-in attempt got no answer from the server (or a 5xx): show the software-support contact.
   const [serverDown, setServerDown] = useState(false);
   const [rememberedCode, setRememberedCode] = useState('');
@@ -87,7 +108,7 @@ export default function LoginScreen() {
   const anyLocked = channelStates.some((st) => !st.enabled);
   const showOtp = !!codeChannel;
 
-  const { control, handleSubmit, setValue, formState: { errors } } = useForm<FormData>({
+  const { control, handleSubmit, setValue, setError, setFocus, formState: { errors } } = useForm<FormData>({
     resolver: zodResolver(schema),
   });
 
@@ -107,14 +128,39 @@ export default function LoginScreen() {
     setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3000);
   };
 
-  // Both the password and the one-time-code (SMS or WhatsApp) sign-in end the same way.
+  // Both the password and the one-time-code (SMS or WhatsApp) sign-in end the same way: the sign-in transition (owner
+  // 2026-11-25) opens a portal from the button and, once it covers the screen, signs in and goes to Home - exactly once
+  // (src/lib/authTransition.ts; it goes on by itself if the animation cannot play).
   const finishSignIn = async (
     identifier: string,
     result: { employeeId: number; name: string; role: string },
+    origin: Point | null = null,
   ) => {
-    await AsyncStorage.setItem(REMEMBER_KEY, remember ? identifier : '');
-    setUser({ employeeId: result.employeeId, name: result.name, role: result.role });
-    router.replace('/(tabs)/home');
+    if (signedIn.current) return;
+    signedIn.current = true;
+    // remembering the code is a nicety: never let it stop the sign-in
+    await AsyncStorage.setItem(REMEMBER_KEY, remember ? identifier : '').catch(() => {});
+    // The keyboard goes first (owner 2026-11-25: it stayed up over the transition and Home).
+    Keyboard.dismiss();
+    playSignIn(origin, () => {
+      setUser({ employeeId: result.employeeId, name: result.name, role: result.role });
+      router.replace('/(tabs)/home');
+    }, { name: result.name });
+  };
+
+  // Closing the "sign-in refused" dialog puts the cursor in the field it was about.
+  const closeAuthError = () => {
+    const field = authError?.failure.field;
+    setAuthError(null);
+    if (field) {
+      setTimeout(() => {
+        try {
+          setFocus(field);
+        } catch {
+          // the field is not on screen (the code form is open)
+        }
+      }, 280);
+    }
   };
 
   const onSubmit = async (data: FormData) => {
@@ -122,7 +168,7 @@ export default function LoginScreen() {
     setServerDown(false);
     try {
       const result = await loginRequest(data.identifier, data.password);
-      await finishSignIn(data.identifier, result);
+      await finishSignIn(data.identifier, result, await centreOf(signInRef.current));
     } catch (err: any) {
       // Backend error responses are always { error: "..." } (see views.py::_error)
       // — .detail/.message never exist, so checking only those silently
@@ -139,15 +185,17 @@ export default function LoginScreen() {
             : 'Could not reach the server. Check your connection and try again.')
         : err?.response?.data?.error || err?.response?.data?.detail || err?.response?.data?.message ||
           'Invalid credentials. Please try again.';
-      // A response that came back from the server is a real authentication
-      // rejection (wrong password, unknown code, etc.) — that gets the
-      // fuller "Authentication Failed" modal. A request that never reached
-      // the server (offline, timeout) stays a lightweight toast instead.
+      // A response that came back from the server is a real authentication rejection - that gets the fuller dialog,
+      // titled by the server's `code` (owner 2026-11-25): "Incorrect password" (the Password field is marked),
+      // "Employee code not found" (the Employee Code field is marked), "Password not set", else "Authentication Failed"
+      // with the server's own sentence. A request that never reached the server (offline, timeout) stays a toast.
       if (serverProblem) {
         setServerDown(true);
         showToast(msg, 'error');
       } else if (err?.response) {
-        setAuthError({ identifier: data.identifier, message: msg });
+        const failure = loginFailure(err);
+        if (failure.field && failure.fieldNote) setError(failure.field, { type: 'server', message: failure.fieldNote });
+        setAuthError({ identifier: data.identifier, failure });
       } else {
         showToast(msg, 'error');
       }
@@ -155,6 +203,14 @@ export default function LoginScreen() {
       setLoading(false);
     }
   };
+
+  // The dialog's colour: red for a wrong password (and anything else), amber for an unknown code, blue for "not set".
+  const errTone =
+    shownError?.failure.kind === 'unknown_employee'
+      ? Colors.statusYellow
+      : shownError?.failure.kind === 'no_password'
+        ? Colors.primary
+        : Colors.statusRed;
 
   const header = (
     <View>
@@ -216,11 +272,17 @@ export default function LoginScreen() {
             <Controller
               control={control}
               name="identifier"
-              render={({ field: { onChange, value, onBlur } }) => (
+              render={({ field: { onChange, value, onBlur, ref } }) => (
                 <AuthInput
+                  ref={ref}
                   label="Employee Code"
                   placeholder="e.g. UKT-10482"
-                  keyboardType="numeric"
+                  // A full keyboard (2026-11-25): codes can have letters and a dash ("UKT-10482") and the field also
+                  // takes a phone number or email, none of which a number pad can type on every phone.
+                  keyboardType="default"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
                   value={value}
                   onChangeText={onChange}
                   onBlur={onBlur}
@@ -240,8 +302,9 @@ export default function LoginScreen() {
             <Controller
               control={control}
               name="password"
-              render={({ field: { onChange, value, onBlur } }) => (
+              render={({ field: { onChange, value, onBlur, ref } }) => (
                 <AuthInput
+                  ref={ref}
                   placeholder="Enter your password"
                   value={value}
                   onChangeText={onChange}
@@ -263,12 +326,15 @@ export default function LoginScreen() {
               <Text style={styles.rememberText}>Keep roll saved on device</Text>
             </TouchableOpacity>
 
-            <AuthButton
-              title="Sign In to Dashboard"
-              onPress={handleSubmit(onSubmit)}
-              loading={loading}
-              style={styles.signIn}
-            />
+            {/* measured: the sign-in transition's portal opens from this button */}
+            <View ref={signInRef} collapsable={false}>
+              <AuthButton
+                title="Sign In to Dashboard"
+                onPress={handleSubmit(onSubmit)}
+                loading={loading}
+                style={styles.signIn}
+              />
+            </View>
           </>
         )}
 
@@ -334,52 +400,98 @@ export default function LoginScreen() {
 
       <Toast {...toast} />
 
-      <Modal visible={!!authError} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setAuthError(null)}>
+      <Modal visible={!!authError} transparent animationType="fade" statusBarTranslucent onRequestClose={closeAuthError}>
         <View style={styles.errBackdrop}>
-          <MotiView
-            from={{ opacity: 0, scale: 0.9, translateY: 10 }}
-            animate={{ opacity: 1, scale: 1, translateY: 0 }}
-            transition={{ type: 'timing', duration: 200 }}
-            style={styles.errCard}
-          >
-            <View style={styles.errHeaderRow}>
-              <View style={styles.errIconWrap}>
-                <MaterialCommunityIcons name="lock-alert-outline" size={22} color="#fff" />
+          {shownError && (
+            <MotiView
+              key={shownError.failure.kind}
+              from={{ opacity: 0, scale: 0.9, translateY: 10 }}
+              animate={{ opacity: 1, scale: 1, translateY: 0 }}
+              transition={{ type: 'timing', duration: 200 }}
+              style={styles.errCard}
+              testID={`login-error-${shownError.failure.kind}`}
+            >
+              <View style={styles.errHeaderRow}>
+                <View style={[styles.errIconWrap, { backgroundColor: errTone }]}>
+                  <MaterialCommunityIcons name={shownError.failure.icon as any} size={22} color={Colors.onPrimary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.errTitle} accessibilityRole="header">{shownError.failure.title}</Text>
+                  <Text style={styles.errSubtitle}>
+                    {shownError.failure.kind === 'other' ? 'Security System Notice' : 'You are not signed in yet'}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={closeAuthError} hitSlop={8} accessibilityRole="button" accessibilityLabel="Close">
+                  <MaterialCommunityIcons name="close" size={20} color={Colors.textMuted} />
+                </TouchableOpacity>
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.errTitle}>Authentication Failed</Text>
-                <Text style={styles.errSubtitle}>Security System Notice</Text>
-              </View>
-              <TouchableOpacity onPress={() => setAuthError(null)} hitSlop={8}>
-                <MaterialCommunityIcons name="close" size={20} color={Colors.textMuted} />
-              </TouchableOpacity>
-            </View>
 
-            <View style={styles.errInfoBox}>
-              <View style={styles.errInfoRow}>
-                <Text style={styles.errInfoLabel}>Attempted Employee Code</Text>
-                <View style={styles.errInfoPill}>
-                  <Text style={styles.errInfoPillText}>{authError?.identifier}</Text>
+              <View style={[styles.errInfoBox, codeIsWrong && { borderWidth: 1.5, borderColor: errTone }]}>
+                <View style={styles.errInfoRow}>
+                  <Text style={styles.errInfoLabel}>{codeIsWrong ? 'Employee Code you typed' : 'Attempted Employee Code'}</Text>
+                  <View style={[styles.errInfoPill, codeIsWrong && { backgroundColor: Colors.badgeYellowBg }]}>
+                    <Text style={[styles.errInfoPillText, codeIsWrong && { color: Colors.badgeYellowText }]}>{shownError.identifier}</Text>
+                  </View>
                 </View>
               </View>
-            </View>
 
-            <Text style={styles.errMessage}>{authError?.message}</Text>
+              <Text style={styles.errMessage}>{shownError.failure.message}</Text>
 
-            <TouchableOpacity style={styles.errRetryBtn} onPress={() => setAuthError(null)} activeOpacity={0.85}>
-              <MaterialCommunityIcons name="reload" size={17} color="#fff" />
-              <Text style={styles.errRetryText}>Try Again</Text>
-            </TouchableOpacity>
+              {shownError.failure.kind === 'no_password' ? (
+                <TouchableOpacity
+                  style={[styles.errRetryBtn, { backgroundColor: AuthColors.accentDark }]}
+                  onPress={() => {
+                    setAuthError(null);
+                    router.push('/(auth)/set-password');
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                >
+                  <MaterialCommunityIcons name="key-outline" size={17} color="#fff" />
+                  <Text style={[styles.errRetryText, { color: '#fff' }]}>Set my password</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={[styles.errRetryBtn, { backgroundColor: errTone }]}
+                  onPress={closeAuthError}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                >
+                  <MaterialCommunityIcons name="reload" size={17} color={Colors.onPrimary} />
+                  <Text style={styles.errRetryText}>
+                    {shownError.failure.kind === 'wrong_password'
+                      ? 'Try the password again'
+                      : codeIsWrong
+                        ? 'Fix the Employee Code'
+                        : 'Try Again'}
+                  </Text>
+                </TouchableOpacity>
+              )}
 
-            <SupportInlineLink
-              situation="hr"
-              lead="Contact HR"
-              showIcon
-              iconColor={AuthColors.accentDark}
-              style={styles.errHelpRow}
-              textStyle={styles.errHelpText}
-            />
-          </MotiView>
+              {shownError.failure.kind === 'wrong_password' && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setAuthError(null);
+                    router.push('/(auth)/forgot-password');
+                  }}
+                  hitSlop={8}
+                  style={styles.errForgot}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.errForgotText}>Forgot your password?</Text>
+                </TouchableOpacity>
+              )}
+
+              <SupportInlineLink
+                situation="hr"
+                lead="Contact HR"
+                showIcon
+                iconColor={AuthColors.accentDark}
+                style={styles.errHelpRow}
+                textStyle={styles.errHelpText}
+              />
+            </MotiView>
+          )}
         </View>
       </Modal>
     </>
@@ -491,7 +603,9 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     borderRadius: BorderRadius.full,
     paddingVertical: 14,
   },
-  errRetryText: { color: '#fff', fontFamily: AuthFont.displaySemi, fontSize: 14.5 },
+  errRetryText: { color: Colors.onPrimary, fontFamily: AuthFont.displaySemi, fontSize: 14.5 },
+  errForgot: { alignSelf: 'center', paddingVertical: 4 },
+  errForgotText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 13 },
   errHelpRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 4 },
   errHelpText: { color: AuthColors.accentDark, fontFamily: AuthFont.bodyBold, fontSize: 12.5 },
 });

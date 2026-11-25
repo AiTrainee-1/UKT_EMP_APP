@@ -20,7 +20,7 @@ interface AuthInputProps extends TextInputProps {
  * shared `Input` (so the screens only swap the name), restyled for the login pages; the shared `Input` is untouched.
  */
 export const AuthInput = forwardRef<TextInputInstance, AuthInputProps>(
-  ({ label, error, containerStyle, rightIcon, isPassword, leftIconName, value, ...props }, ref) => {
+  ({ label, error, containerStyle, rightIcon, isPassword, leftIconName, value, onFocus, onBlur, ...props }, ref) => {
     const { C: Colors, isDark } = useTheme();
     const styles = useMemo(() => makeStyles(Colors, isDark), [Colors, isDark]);
     const [focused, setFocused] = useState(false);
@@ -45,11 +45,19 @@ export const AuthInput = forwardRef<TextInputInstance, AuthInputProps>(
             selectionColor={AuthColors.accent}
             cursorColor={AuthColors.accent}
             keyboardAppearance={isDark ? 'dark' : 'light'}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
             secureTextEntry={isPassword && !showPassword}
             value={value ?? ''}
             {...props}
+            // after the spread, and calling the screen's own handlers too: the form's onBlur used to replace this one,
+            // so the field never lost its "focused" look (2026-11-25)
+            onFocus={(e) => {
+              setFocused(true);
+              onFocus?.(e);
+            }}
+            onBlur={(e) => {
+              setFocused(false);
+              onBlur?.(e);
+            }}
           />
           {isPassword && (
             <TouchableOpacity

@@ -14,7 +14,7 @@
 import { openPassClock, formatSpan, formatTicker, type OpenPassInput } from './outpassOpen.ts';
 import { waitingSince, type PendingRequests } from './pendingReminders.ts';
 import { formatInr, latestPeriod, periodTitle, type SalaryInsights } from './salaryInsights.ts';
-import { dayMonth, type WindowInfo } from './settlement.ts';
+import { dayMonth, type WindowInfo, type WindowsInfo } from './settlement.ts';
 
 // ── dates ─────────────────────────────────────────────────────────────────
 
@@ -222,14 +222,36 @@ function capitalise(s: string): string {
 
 export interface AdvanceEligibilityLike {
   window: Pick<WindowInfo, 'isOpen' | 'closesOn' | 'daysLeft'>;
+  /** Each form's own window (2026-11-25); absent on an older server, whose one `window` held both forms. */
+  windows?: { general?: Pick<WindowInfo, 'isOpen' | 'closesOn' | 'daysLeft'> | null; term?: Partial<WindowsInfo['term']> | null } | null;
   workflowEnabled?: boolean;
   employeeActive?: boolean;
   salaryAdvance?: { canApply?: boolean } | null;
   termLoan?: { canApply?: boolean } | null;
 }
 
-/** "Advance & loan applications open" while the window is open AND this employee can apply for at least one; else null. */
+/**
+ * "Salary Advance applications are open" while its window is open AND this employee can apply; else null.
+ * Owner 2026-11-25: a Salary Advance only from the 20th to the 22nd, a Term Loan on any day - so the Term Loan, always
+ * open, is never news on Home and only the Salary Advance's 3 days are ("Open until 22 Nov"). An older server (no
+ * `windows`) had one window, the 20th to the month end, for both forms: "Advance & loan applications are open".
+ */
 export function advanceAttention(e: AdvanceEligibilityLike | null | undefined): AttentionItem | null {
+  if (e?.windows?.general) {
+    const w = e.windows.general;
+    if (!w.isOpen || e.workflowEnabled === false || e.employeeActive === false || !e.salaryAdvance?.canApply) return null;
+    const until = dayMonth(w.closesOn);
+    const left = w.daysLeft ?? 0;
+    return item({
+      key: 'advance',
+      icon: 'cash-fast',
+      tone: 'money',
+      title: 'Salary Advance applications are open',
+      detail: left <= 1 ? 'Open today only: last day' : until ? `Open until ${until}` : `Open for ${left} more days`,
+      href: '/settlement',
+      rank: RANK.advance,
+    });
+  }
   if (!e?.window?.isOpen) return null;
   if (e.workflowEnabled === false || e.employeeActive === false) return null;
   const advance = !!e.salaryAdvance?.canApply;
@@ -237,7 +259,8 @@ export function advanceAttention(e: AdvanceEligibilityLike | null | undefined): 
   if (!advance && !loan) return null;
   const what = advance && loan ? 'Advance & loan applications' : advance ? 'Salary Advance applications' : 'Term Loan applications';
   const until = dayMonth(e.window.closesOn);
-  const detail = e.window.daysLeft <= 1 ? 'Open today only: last day' : until ? `Open until ${until}` : `Open for ${e.window.daysLeft} more days`;
+  const daysLeft = e.window.daysLeft ?? 0;
+  const detail = daysLeft <= 1 ? 'Open today only: last day' : until ? `Open until ${until}` : `Open for ${daysLeft} more days`;
   return item({
     key: 'advance',
     icon: 'cash-fast',

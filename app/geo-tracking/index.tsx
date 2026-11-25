@@ -26,7 +26,8 @@ import { READ_ONLY_NOTE } from '../../src/lib/liveTrackingStatus';
 import type { FixAction } from '../../src/lib/liveTrackingStatus';
 import { ensureTracking } from '../../src/tracking/actions';
 import { requestForegroundLocation } from '../../src/tracking/permissions';
-import { openAppSettings, openLocationSettings } from '../../src/tracking/platform/intents';
+import { openAppSettings } from '../../src/tracking/platform/intents';
+import { promptLocationOn } from '../../src/hooks/useLocationServices';
 import { trackingRoutes } from '../../src/tracking/routes';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
@@ -85,7 +86,8 @@ export default function GeoTrackingScreen() {
           router.push(trackingRoutes.setup('background'));
           break;
         case 'location_settings':
-          await openLocationSettings();
+          // the shared "location is off" popup (owner 2026-11-25): Android's one-tap dialog, or the settings
+          await promptLocationOn('tracking');
           break;
         case 'battery':
           router.push(trackingRoutes.setup('battery'));

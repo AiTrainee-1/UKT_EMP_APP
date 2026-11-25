@@ -48,8 +48,12 @@ async function saveSession(data: { token: string; employeeId: number; name: stri
   return { token, employeeId, name, role };
 }
 
+// The sign-in calls are public (2026-11-25): they need no token, and a 401 from them is a rejected attempt (wrong
+// password / code), not an ended session. Sent with a stored token, a wrong password signed the employee out.
+const PUBLIC = { isPublic: true } as const;
+
 export async function loginRequest(identifier: string, password: string) {
-  const res = await api.post('/auth/employee-login', { identifier, password });
+  const res = await api.post('/auth/employee-login', { identifier, password }, PUBLIC);
   return saveSession(res.data);
 }
 
@@ -100,7 +104,7 @@ export interface OtpRequestResult {
 export type OtpPurpose = 'login' | 'reset' | 'activate';
 
 export async function loginOptionsRequest(): Promise<LoginOptions> {
-  const res = await api.get('/auth/login-options');
+  const res = await api.get('/auth/login-options', PUBLIC);
   return res.data;
 }
 
@@ -112,24 +116,24 @@ export async function loginOptionsRequest(): Promise<LoginOptions> {
  * the server reads `identifier` as-is. */
 export async function requestOtp(identifier: string, purpose: OtpPurpose, channel?: string): Promise<OtpRequestResult> {
   const body = channel ? { identifier, purpose, channel } : { identifier, purpose };
-  const res = await api.post('/auth/otp/request', body);
+  const res = await api.post('/auth/otp/request', body, PUBLIC);
   return res.data;
 }
 
 export async function otpLoginRequest(identifier: string, otp: string) {
-  const res = await api.post('/auth/otp/login', { identifier, otp });
+  const res = await api.post('/auth/otp/login', { identifier, otp }, PUBLIC);
   return saveSession(res.data);
 }
 
 /** Forgot password: the one-time code proves who is asking, then sets the new password. */
 export async function otpResetPasswordRequest(identifier: string, otp: string, password: string) {
-  const res = await api.post('/auth/otp/reset-password', { identifier, otp, password });
+  const res = await api.post('/auth/otp/reset-password', { identifier, otp, password }, PUBLIC);
   return res.data;
 }
 
 /** First-time password for a new employee: the one-time code proves the number HR registered is theirs. */
 export async function otpActivateRequest(identifier: string, otp: string, password: string) {
-  const res = await api.post('/auth/otp/activate', { identifier, otp, password });
+  const res = await api.post('/auth/otp/activate', { identifier, otp, password }, PUBLIC);
   return res.data;
 }
 

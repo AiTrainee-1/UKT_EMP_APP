@@ -26,6 +26,24 @@ function record(setup: PushSetup): PushSetup {
   return setup;
 }
 
+/**
+ * Android 8+ shows a push only through a channel; from Android 13 the permission prompt does not even appear until one
+ * exists. A MAX-importance channel is what makes the message pop up on the lock screen and in the status bar with sound.
+ * No `sound` key on purpose: leaving it out gives the phone's default notification sound ('default' is read as the name of
+ * a custom sound file and logs an error). Safe to call again (it only updates the channel).
+ */
+export async function ensureNotificationChannel(Notifications: typeof import('expo-notifications')): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+    name: 'UKTextiles alerts',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    enableVibrate: true,
+    showBadge: true,
+  });
+}
+
 async function register(): Promise<PushSetup> {
   if (isExpoGo) return record({ state: 'expo_go' });
   if (!EAS_PROJECT_ID) return record({ state: 'no_project' });
@@ -38,26 +56,13 @@ async function register(): Promise<PushSetup> {
   }
 
   try {
-    // Android 8+ shows a push only through a channel; from Android 13 the permission prompt does not even appear until one
-    // exists. A MAX-importance channel is what makes the message pop up on the lock screen and in the status bar with sound.
-    // No `sound` key on purpose: leaving it out gives the phone's default notification sound ('default' is read as the name of
-    // a custom sound file and logs an error).
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-        name: 'UKTextiles alerts',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-        enableVibrate: true,
-        showBadge: true,
-      });
-    }
+    await ensureNotificationChannel(Notifications);
 
-    const { status: existing } = await Notifications.getPermissionsAsync();
-    let status = existing;
-    if (status !== 'granted') {
-      ({ status } = await Notifications.requestPermissionsAsync());
-    }
+    // Only CHECKED here, never asked (owner 2026-11-25): this runs at sign-in and again every time the app comes back to
+    // the front while the last try failed, and asking opens a system dialog, which sends the app to the background and
+    // back - the loop that kept closing the keyboard on Redmi / Infinix. The "Turn on notifications" popup
+    // (src/components/notifications/NotificationPermissionPopup.tsx) asks, on a tap, and registers again once allowed.
+    const { status } = await Notifications.getPermissionsAsync();
     if (status !== 'granted') return record({ state: 'permission_denied' });
 
     let token: string;
@@ -81,9 +86,10 @@ async function register(): Promise<PushSetup> {
 }
 
 /**
- * Creates the Android notification channel, asks for notification permission, obtains this device's Expo push token and
- * registers it with the backend (POST /api/my/push-token), so server-side events (leave approved, salary slip ready, chat
- * message, ...) reach this phone's notification bar even when the app is closed — see backend/api/signals.py.
+ * Creates the Android notification channel, checks notification permission (never asks: see register()), obtains this
+ * device's Expo push token and registers it with the backend (POST /api/my/push-token), so server-side events (leave
+ * approved, salary slip ready, chat message, ...) reach this phone's notification bar even when the app is closed — see
+ * backend/api/signals.py.
  *
  * Never throws: what happened is kept in src/lib/pushStatus.ts, which the Notifications screen reads to tell the person
  * what is missing. No-ops under Expo Go. Calls made while one is running share its result.

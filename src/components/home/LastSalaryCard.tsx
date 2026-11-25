@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSalaryInsights } from '../../hooks/useSalarySlips';
+import { useSalaryShown } from './salaryVisibility';
 import { lastSalary } from '../../lib/homeAttention';
 import { Reveal } from '../Reveal';
 import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
@@ -11,34 +11,18 @@ import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import { FontFamily, TabularNums } from '../../constants/typography';
 
-const SHOW_KEY = 'uktextiles.homeSalaryShown.v1';
-
 /**
  * "Last salary" on Home: what the newest slip paid and how much attendance cost, one tap from the Salary screen. The same
  * figures as the Salary screen (GET /my/salary-insights: payable = the slip's net, loss = allocated - earned + late +
  * permission). Amounts are HIDDEN by default (Home is opened at the gate and on the shop floor, in front of others); the
- * eye button shows them and the phone remembers the choice. Nothing renders until there is a slip, and a failed load
- * renders nothing.
+ * eye button shows them and the phone remembers the choice (shared with My Insights, ./salaryVisibility.ts). Nothing
+ * renders until there is a slip, and a failed load renders nothing.
  */
 export function LastSalaryCard() {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { data } = useSalaryInsights(null);
-  const [shown, setShown] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    AsyncStorage.getItem(SHOW_KEY)
-      .then((v) => { if (alive && v === '1') setShown(true); })
-      .catch(() => { /* stays hidden */ });
-    return () => { alive = false; };
-  }, []);
-
-  const toggle = () => {
-    const next = !shown;
-    setShown(next);
-    AsyncStorage.setItem(SHOW_KEY, next ? '1' : '0').catch(() => { /* only a preference */ });
-  };
+  const [shown, toggle] = useSalaryShown();
 
   const s = lastSalary(data, !shown);
   if (!s) return null;

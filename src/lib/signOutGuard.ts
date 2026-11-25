@@ -26,3 +26,14 @@ export function decideSignOut(facts: SignOutFacts): SignOutDecision {
   // Server unknown or without tracking: trust what the phone is doing.
   return facts.collectorRunning ? blocked : { allowed: true };
 }
+
+// The logout confirmation's words (owner 2026-11-25: a styled popup instead of the system alert, same text). Anything
+// still waiting in the offline queue stays on this phone and is sent when this employee signs in again.
+export const CONFIRM_TITLE = 'Logout';
+export const CONFIRM_MESSAGE = 'Are you sure you want to logout?';
+
+export function signOutConfirmMessage(waitingOffline: number): string {
+  return waitingOffline > 0
+    ? `${waitingOffline} item(s) you did offline are still saved on this phone and not sent yet. They are kept and sent when you sign in again on this phone. Logout anyway?`
+    : CONFIRM_MESSAGE;
+}

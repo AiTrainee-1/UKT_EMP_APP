@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, Platform, StatusBar, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Platform, TouchableOpacity } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -22,18 +22,17 @@ import {
   COMPENSATION_TONES, DAY_TONES, compensationKeyOf, compensationLabelOf, isCompensatedWholeDay,
   type CompensationKey, type DayVisualKey,
 } from '../../src/lib/attendanceVisual';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
 
 const ALL_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const isoOf = (d: Date) => format(d, 'yyyy-MM-dd');
 
 /**
- * `topInset` -who is responsible for clearing the status bar.
+ * `topInset` = this is the My Shift TAB (no back button).
  *
- * This screen is mounted twice: as the My Shift TAB (no header, so the screen
- * must inset itself or its first card sits under the status bar -that was the
- * collapsed top border) and as the pushed /shift STACK route, which has a
- * header already providing that space. Passing it in keeps one screen serving
- * both without either double-insetting or none at all.
+ * This screen is mounted twice: as the My Shift TAB and as the pushed /shift STACK route. Neither has a native header
+ * (app/shift/_layout.tsx hides it), so the screen always clears the status bar itself (2026-11-25: on the /shift route
+ * the title sat under the phone's clock).
  */
 export default function ShiftScreen({ topInset = false }: { topInset?: boolean }) {
   // `Colors` shadows the module import for this component's body, so both
@@ -123,7 +122,7 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         {header}
         <View style={styles.pad}>
           {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -134,7 +133,7 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
 
   if (!shift) {
     return (
-      <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
         {header}
         <EmptyState
           icon="clock-outline"
@@ -146,8 +145,8 @@ export default function ShiftScreen({ topInset = false }: { topInset?: boolean }
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={topInset ? ['top', 'bottom'] : ['bottom']}>
-      <StatusBar barStyle="dark-content" />
+    <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <ThemedStatusBar />
       {header}
       <ScrollView contentContainerStyle={styles.pad} showsVerticalScrollIndicator={false}>
         {/* Main Card */}

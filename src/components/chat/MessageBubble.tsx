@@ -1,6 +1,13 @@
-import React, { memo, useRef } from 'react';
+import React, { memo, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
-import { MotiView } from 'moti';
+import Animated, {
+  FadeInDown,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 // Gesture Handler 3 (SDK 58) no longer exports the legacy `Swipeable`; ReanimatedSwipeable is its replacement.
 import Swipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
@@ -9,35 +16,13 @@ import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius } from '../../constants/theme';
 import { FontFamily, TabularNums } from '../../constants/typography';
-import type { ChatMessage } from '../../hooks/useChat';
+import type { ChatMessage, OutgoingMedia } from '../../hooks/useChat';
 import { reactionsSummary, timeLabel } from '../../lib/chatThread';
+import { formatDuration, isMediaExpired, messageKind } from '../../lib/chatMedia';
 import { emojiName } from './emoji';
-
-function initials(name: string): string {
-  return (
-    name
-      .split(' ')
-      .filter(Boolean)
-      .map((p) => p[0])
-      .join('')
-      .slice(0, 2)
-      .toUpperCase() || '?'
-  );
-}
-
-/** A soft, stable colour per colleague so a busy channel is easier to scan. */
-function tintFor(name: string, C: Palette): { bg: string; fg: string } {
-  const options = [
-    { bg: C.badgeBlueBg, fg: C.badgeBlueText },
-    { bg: C.badgeGreenBg, fg: C.badgeGreenText },
-    { bg: C.badgeLeaveBg, fg: C.badgeLeaveText },
-    { bg: C.clayOrange, fg: C.statusOrange },
-    { bg: C.clayBlue, fg: C.categoryTracking },
-  ];
-  let h = 0;
-  for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return options[h % options.length];
-}
+import { BubbleTail, ChatAvatar, chatColors, tintFor } from './chatVisuals';
+import { GifMessage, gifSize } from './GifMessage';
+import { VoiceMessage } from './VoiceMessage';
 
 interface Props {
   message: ChatMessage;
@@ -47,11 +32,25 @@ interface Props {
   endsGroup: boolean;
   /** Slide in (only for messages that arrived while the screen was open). */
   animateIn: boolean;
+  /** Flash once: the employee tapped a quote of this message. */
+  highlighted: boolean;
+  reduceMotion: boolean;
+  /** "Now", refreshed each minute, for expiry. */
+  now: Date;
   onReply: (m: ChatMessage) => void;
   onOpenActions: (m: ChatMessage) => void;
-  onToggleReaction: (m: ChatMessage, emoji: string) => void;
+  onOpenReactions: (m: ChatMessage, emoji: string | null) => void;
+  onOpenGif: (m: ChatMessage, uri: string) => void;
+  onQuotePress: (id: number) => void;
 }
 
+/**
+ * One message, WhatsApp-style (owner 2026-11-25): my messages on the right in the brand colour, everyone else's on the
+ * left with their name and avatar at the start of a run; a tail on the first bubble of a run; the time inside the
+ * bubble; a quote of the message replied to (tap it to jump there); GIFs and voice messages (or "expired" in their
+ * place); reaction chips under the bubble — tap one to see who reacted with what. Press and hold for the menu, swipe
+ * right to reply.
+ */
 function MessageBubbleImpl({
   message,
   isMine,
@@ -59,107 +58,219 @@ function MessageBubbleImpl({
   startsGroup,
   endsGroup,
   animateIn,
+  highlighted,
+  reduceMotion,
+  now,
   onReply,
   onOpenActions,
-  onToggleReaction,
+  onOpenReactions,
+  onOpenGif,
+  onQuotePress,
 }: Props) {
-  const { C } = useTheme();
+  const { C, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const colors = chatColors(C, isDark);
   const swipeRef = useRef<SwipeableMethods | null>(null);
   const time = timeLabel(message.createdAt);
-  const showAvatar = !isMine;
   const tint = tintFor(message.senderName || '?', C);
+  const kind = messageKind(message);
+  const expired = kind !== 'text' && isMediaExpired(message, now);
+  const bubbleColor = isMine ? colors.mine : isHr ? colors.hr : colors.theirs;
+  const showName = !isMine && startsGroup;
 
+  // the quote-jump flash
+  const flash = useSharedValue(0);
+  useEffect(() => {
+    if (!highlighted) return;
+    flash.value = reduceMotion
+      ? withSequence(withTiming(1, { duration: 0 }), withDelay(900, withTiming(0, { duration: 0 })))
+      : withSequence(withTiming(1, { duration: 180 }), withDelay(700, withTiming(0, { duration: 500 })));
+  }, [highlighted, reduceMotion, flash]);
+  const flashStyle = useAnimatedStyle(() => ({ opacity: flash.value * 0.55 }));
+
+  const what =
+    kind === 'voice'
+      ? expired
+        ? 'Voice message, expired'
+        : `Voice message, ${formatDuration(message.media?.durationMs)}`
+      : kind === 'gif'
+        ? expired
+          ? 'GIF, expired'
+          : 'GIF'
+        : message.text;
   const a11yLabel = [
     isMine ? 'You' : `${message.senderName}${isHr ? ', HR' : ''}`,
     time ? `at ${time}` : '',
     message.replyTo ? `replying to ${message.replyTo.senderName}: ${message.replyTo.text}` : '',
-    message.text,
+    what,
     message.reactions.length ? `Reactions: ${reactionsSummary(message.reactions)}` : '',
   ]
     .filter(Boolean)
     .join('. ');
 
+  const openActions = () => onOpenActions(message);
+  const textColor = isMine ? styles.textMine : null;
+
+  const sender = showName ? (
+    <View style={styles.senderRow}>
+      <Text style={[styles.senderName, isHr ? styles.senderNameHr : { color: tint.fg }]} numberOfLines={1}>
+        {message.senderName}
+      </Text>
+      {isHr && (
+        <View style={styles.hrBadge}>
+          <MaterialCommunityIcons name="check-decagram" size={10} color={C.onSecondaryContainer} />
+          <Text style={styles.hrBadgeText}>HR</Text>
+        </View>
+      )}
+    </View>
+  ) : null;
+
+  const quote = message.replyTo ? (
+    <Pressable
+      onPress={() => onQuotePress(message.replyTo!.id)}
+      onLongPress={openActions}
+      delayLongPress={280}
+      accessibilityRole="button"
+      accessibilityLabel={`Quoted message from ${message.replyTo.senderName}. Double tap to go to it`}
+      style={[styles.quote, isMine && styles.quoteMine]}
+    >
+      <Text style={[styles.quoteSender, isMine && styles.onMineStrong]} numberOfLines={1}>
+        {message.replyTo.senderName}
+      </Text>
+      <View style={styles.quoteRow}>
+        {message.replyTo.kind === 'voice' && (
+          <MaterialCommunityIcons name="microphone" size={13} color={isMine ? C.onPrimary : C.textMuted} />
+        )}
+        {message.replyTo.kind === 'gif' && (
+          <MaterialCommunityIcons name="file-gif-box" size={14} color={isMine ? C.onPrimary : C.textMuted} />
+        )}
+        <Text style={[styles.quoteText, isMine && styles.onMineSoft]} numberOfLines={2}>
+          {message.replyTo.kind === 'voice' ? 'Voice message' : message.replyTo.kind === 'gif' ? 'GIF' : message.replyTo.text}
+        </Text>
+      </View>
+    </Pressable>
+  ) : null;
+
+  const meta = (
+    <View style={styles.metaAbs} pointerEvents="none">
+      <Text style={[styles.time, TabularNums, isMine && styles.onMineSoft]}>{time}</Text>
+      {isMine && <MaterialCommunityIcons name="check" size={12} color={C.onPrimary} style={{ opacity: 0.75 }} />}
+    </View>
+  );
+  // invisible text the same width as the time, so the last line of the message leaves room for it (WhatsApp's trick)
+  // Painted in the bubble's own colour: Android ignores color 'transparent' on nested text, so the time showed twice
+  // (2026-11-25, seen on the phone).
+  const metaSpacer = <Text style={[styles.metaSpacer, { color: bubbleColor }]}>{`  ${time}${isMine ? '    ' : ''}`}</Text>;
+
+  let content: React.ReactNode;
+  if (expired) {
+    content = (
+      <View style={styles.expiredRow}>
+        <MaterialCommunityIcons
+          name={kind === 'voice' ? 'microphone-off' : 'image-off-outline'}
+          size={17}
+          color={isMine ? C.onPrimary : C.textMuted}
+          style={isMine ? { opacity: 0.8 } : undefined}
+        />
+        <Text style={[styles.expiredText, isMine && styles.onMineSoft]}>
+          {kind === 'voice' ? 'Voice message expired' : 'GIF expired'}
+          {metaSpacer}
+        </Text>
+        {meta}
+      </View>
+    );
+  } else if (kind === 'gif') {
+    content = (
+      <GifMessage
+        message={message}
+        now={now}
+        time={time}
+        isMine={isMine}
+        reduceMotion={reduceMotion}
+        onOpen={onOpenGif}
+        onLongPress={openActions}
+      />
+    );
+  } else if (kind === 'voice') {
+    content = <VoiceMessage message={message} now={now} time={time} isMine={isMine} onLongPress={openActions} />;
+  } else {
+    content = (
+      <View>
+        <Text style={[styles.text, textColor]} selectable={false}>
+          {message.text}
+          {metaSpacer}
+        </Text>
+        {meta}
+      </View>
+    );
+  }
+
+  const isGif = kind === 'gif' && !expired;
   const bubble = (
     <View
       style={[
         styles.row,
         isMine ? styles.rowMine : styles.rowTheirs,
         endsGroup ? styles.rowGroupEnd : styles.rowGroupInner,
+        startsGroup && styles.rowGroupStart,
       ]}
     >
-      {showAvatar && (
+      {!isMine && (
         <View style={styles.avatarSlot} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-          {endsGroup &&
-            (isHr ? (
-              <View style={[styles.avatar, styles.avatarHr]}>
-                <MaterialCommunityIcons name="shield-account" size={15} color={C.onSecondaryContainer} />
-              </View>
-            ) : (
-              <View style={[styles.avatar, { backgroundColor: tint.bg }]}>
-                <Text style={[styles.avatarText, { color: tint.fg }]}>{initials(message.senderName)}</Text>
-              </View>
-            ))}
+          {startsGroup && <ChatAvatar name={message.senderName} isHr={isHr} />}
         </View>
       )}
 
       <View style={[styles.column, isMine ? styles.columnMine : styles.columnTheirs]}>
         <Pressable
-          onLongPress={() => onOpenActions(message)}
+          onLongPress={openActions}
           delayLongPress={280}
           accessible
           accessibilityLabel={a11yLabel}
-          accessibilityHint="Double tap for reply and reactions"
+          accessibilityHint="Double tap and hold for reply, reactions and more"
           accessibilityActions={[
             { name: 'activate', label: 'Message options' },
+            { name: 'longpress', label: 'Message options' },
             { name: 'reply', label: 'Reply' },
-            { name: 'react', label: 'React' },
+            ...(message.reactions.length ? [{ name: 'reactions', label: 'See who reacted' }] : []),
           ]}
           onAccessibilityAction={(e) => {
-            if (e.nativeEvent.actionName === 'reply') onReply(message);
-            else onOpenActions(message);
+            const name = e.nativeEvent.actionName;
+            if (name === 'reply') onReply(message);
+            else if (name === 'reactions') onOpenReactions(message, null);
+            else openActions();
           }}
           style={({ pressed }) => [
             styles.bubble,
-            isMine ? styles.bubbleMine : isHr ? styles.bubbleHr : styles.bubbleTheirs,
-            isMine && endsGroup && styles.tailMine,
-            !isMine && endsGroup && styles.tailTheirs,
+            isGif && styles.bubbleGif,
+            isGif && { width: gifSize(message).width + 8 },
+            { backgroundColor: bubbleColor },
+            !isMine && !isDark && styles.bubbleLift,
+            startsGroup && (isMine ? styles.cornerMine : styles.cornerTheirs),
             pressed && styles.bubblePressed,
           ]}
         >
-          {!isMine && startsGroup && (
-            <View style={styles.senderRow}>
-              <Text style={[styles.senderName, isHr && styles.senderNameHr, !isHr && { color: tint.fg }]} numberOfLines={1}>
-                {message.senderName}
-              </Text>
-              {isHr && (
-                <View style={styles.hrBadge}>
-                  <MaterialCommunityIcons name="check-decagram" size={10} color={C.onSecondaryContainer} />
-                  <Text style={styles.hrBadgeText}>HR</Text>
+          {startsGroup && <BubbleTail side={isMine ? 'right' : 'left'} color={bubbleColor} />}
+          {highlighted && (
+            <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.flash, flashStyle]} />
+          )}
+          {isGif ? (
+            <>
+              {(sender || quote) && (
+                <View style={styles.gifHead}>
+                  {sender}
+                  {quote}
                 </View>
               )}
-            </View>
+              {content}
+            </>
+          ) : (
+            <>
+              {sender}
+              {quote}
+              {content}
+            </>
           )}
-
-          {message.replyTo && (
-            <View style={[styles.quote, isMine && styles.quoteMine]}>
-              <Text style={[styles.quoteSender, isMine && styles.onPrimaryStrong]} numberOfLines={1}>
-                {message.replyTo.senderName}
-              </Text>
-              <Text style={[styles.quoteText, isMine && styles.onPrimarySoft]} numberOfLines={2}>
-                {message.replyTo.text}
-              </Text>
-            </View>
-          )}
-
-          <Text style={[styles.text, isMine && styles.textMine]} selectable={false}>
-            {message.text}
-          </Text>
-
-          <View style={styles.metaRow}>
-            <Text style={[styles.time, TabularNums, isMine && styles.onPrimarySoft]}>{time}</Text>
-            {isMine && <MaterialCommunityIcons name="check" size={12} color={C.onPrimary} style={{ opacity: 0.75 }} />}
-          </View>
         </Pressable>
 
         {message.reactions.length > 0 && (
@@ -167,11 +278,11 @@ function MessageBubbleImpl({
             {message.reactions.map((r) => (
               <Pressable
                 key={r.emoji}
-                onPress={() => onToggleReaction(message, r.emoji)}
+                onPress={() => onOpenReactions(message, r.emoji)}
                 accessibilityRole="button"
                 accessibilityState={{ selected: r.reactedByMe }}
                 accessibilityLabel={`${emojiName(r.emoji)}, ${r.count}${r.reactedByMe ? ', including you' : ''}`}
-                accessibilityHint={r.reactedByMe ? 'Double tap to remove your reaction' : 'Double tap to add the same reaction'}
+                accessibilityHint="Double tap to see who reacted"
                 hitSlop={6}
                 style={({ pressed }) => [styles.pill, r.reactedByMe && styles.pillMine, pressed && { opacity: 0.7 }]}
               >
@@ -207,16 +318,9 @@ function MessageBubbleImpl({
     </Swipeable>
   );
 
-  if (!animateIn) return swipeable;
-  return (
-    <MotiView
-      from={{ opacity: 0, translateY: 10, scale: 0.98 }}
-      animate={{ opacity: 1, translateY: 0, scale: 1 }}
-      transition={{ type: 'timing', duration: 220 }}
-    >
-      {swipeable}
-    </MotiView>
-  );
+  if (!animateIn || reduceMotion) return swipeable;
+  // The list is drawn upside down, so "in from above" in the row's own terms is "up from below" on screen.
+  return <Animated.View entering={FadeInDown.duration(220)}>{swipeable}</Animated.View>;
 }
 
 export const MessageBubble = memo(MessageBubbleImpl);
@@ -226,90 +330,101 @@ export function DayDivider({ label }: { label: string }) {
   const styles = useThemedStyles(makeStyles);
   return (
     <View style={styles.dayWrap} accessibilityRole="header">
-      <View style={styles.dayLine} />
       <View style={styles.dayChip}>
         <Text style={styles.dayText}>{label}</Text>
       </View>
-      <View style={styles.dayLine} />
     </View>
   );
 }
 
-/** My message while it is on its way to the server. */
-export function PendingBubble({ text }: { text: string }) {
+/** My message (text, GIF or voice) while it is on its way to the server. */
+export function PendingBubble({
+  text,
+  media,
+  reduceMotion,
+}: {
+  text?: string | null;
+  media?: OutgoingMedia | null;
+  reduceMotion: boolean;
+}) {
   const { C } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const label = media
+    ? media.kind === 'voice'
+      ? `Sending voice message, ${formatDuration(media.durationMs)}`
+      : 'Sending GIF'
+    : `Sending: ${text ?? ''}`;
   return (
-    <MotiView
-      from={{ opacity: 0, translateY: 10 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: 200 }}
+    <Animated.View
+      entering={reduceMotion ? undefined : FadeInDown.duration(200)}
       style={[styles.row, styles.rowMine, styles.rowGroupEnd]}
       accessible
-      accessibilityLabel={`Sending: ${text}`}
+      accessibilityLabel={label}
       accessibilityLiveRegion="polite"
     >
       <View style={[styles.column, styles.columnMine]}>
-        <View style={[styles.bubble, styles.bubbleMine, styles.tailMine, styles.bubblePending]}>
-          <Text style={[styles.text, styles.textMine]}>{text}</Text>
-          <View style={styles.metaRow}>
-            <Text style={[styles.time, styles.onPrimarySoft]}>Sending</Text>
+        <View style={[styles.bubble, { backgroundColor: C.primary }, styles.bubblePending]}>
+          {media?.kind === 'voice' ? (
+            <View style={styles.pendingMedia}>
+              <MaterialCommunityIcons name="microphone" size={18} color={C.onPrimary} />
+              <Text style={[styles.text, styles.textMine]}>Voice message · {formatDuration(media.durationMs)}</Text>
+            </View>
+          ) : media?.kind === 'gif' ? (
+            <View style={styles.pendingMedia}>
+              <MaterialCommunityIcons name="file-gif-box" size={20} color={C.onPrimary} />
+              <Text style={[styles.text, styles.textMine]}>GIF</Text>
+            </View>
+          ) : (
+            <Text style={[styles.text, styles.textMine]}>{text}</Text>
+          )}
+          <View style={styles.metaInline}>
+            <Text style={[styles.time, styles.onMineSoft]}>Sending</Text>
             <MaterialCommunityIcons name="clock-outline" size={12} color={C.onPrimary} style={{ opacity: 0.75 }} />
           </View>
         </View>
       </View>
-    </MotiView>
+    </Animated.View>
   );
 }
 
 const makeStyles = (C: Palette) =>
   StyleSheet.create({
-    row: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12 },
+    row: { flexDirection: 'row', alignItems: 'flex-start', paddingHorizontal: 14 },
     rowMine: { justifyContent: 'flex-end' },
     rowTheirs: { justifyContent: 'flex-start' },
-    rowGroupEnd: { marginBottom: 10 },
-    rowGroupInner: { marginBottom: 3 },
+    rowGroupStart: { marginTop: 6 },
+    rowGroupEnd: { marginBottom: 6 },
+    rowGroupInner: { marginBottom: 2 },
 
-    avatarSlot: { width: 30, marginRight: 6, alignItems: 'center' },
-    avatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-    avatarHr: { backgroundColor: C.secondaryContainer },
-    avatarText: { fontFamily: FontFamily.bodySemibold, fontSize: 10.5 },
+    avatarSlot: { width: 30, marginRight: 8, alignItems: 'center' },
 
     column: { maxWidth: '80%' },
     columnMine: { alignItems: 'flex-end' },
     columnTheirs: { alignItems: 'flex-start' },
 
     bubble: {
-      borderRadius: 18,
-      paddingHorizontal: 12,
-      paddingTop: 8,
-      paddingBottom: 6,
-      minWidth: 72,
+      borderRadius: 14,
+      paddingHorizontal: 10,
+      paddingTop: 6,
+      paddingBottom: 7,
+      minWidth: 64,
     },
-    bubbleMine: { backgroundColor: C.primary },
-    bubbleTheirs: {
-      backgroundColor: C.bgCard,
-      borderWidth: 1,
-      borderColor: C.border,
-      ...Platform.select({
-        ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 2 },
-        android: { elevation: 1 },
-      }),
-    },
-    bubbleHr: {
-      backgroundColor: C.secondaryFixed,
-      borderWidth: 1,
-      borderColor: C.secondaryContainer,
-      borderLeftWidth: 3,
-      borderLeftColor: C.secondary,
-    },
-    bubblePressed: { opacity: 0.85 },
+    bubbleGif: { padding: 4, paddingTop: 4, paddingBottom: 4 },
+    bubbleLift: Platform.select({
+      ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.07, shadowRadius: 1.5 },
+      android: { elevation: 1 },
+      default: {},
+    }) as object,
+    cornerMine: { borderTopRightRadius: 3 },
+    cornerTheirs: { borderTopLeftRadius: 3 },
+    bubblePressed: { opacity: 0.86 },
     bubblePending: { opacity: 0.72 },
-    tailMine: { borderBottomRightRadius: 6 },
-    tailTheirs: { borderBottomLeftRadius: 6 },
+    flash: { backgroundColor: C.primaryLight, borderRadius: 14 },
+
+    gifHead: { paddingHorizontal: 6, paddingTop: 2, paddingBottom: 4 },
 
     senderRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-    senderName: { fontFamily: FontFamily.bodySemibold, fontSize: 12, color: C.primary, flexShrink: 1 },
+    senderName: { fontFamily: FontFamily.bodySemibold, fontSize: 12.5, flexShrink: 1 },
     senderNameHr: { color: C.onSecondaryContainer },
     hrBadge: {
       flexDirection: 'row',
@@ -333,18 +448,27 @@ const makeStyles = (C: Palette) =>
       marginTop: 2,
     },
     quoteMine: { backgroundColor: 'rgba(255,255,255,0.16)', borderLeftColor: C.onPrimary },
-    quoteSender: { fontFamily: FontFamily.bodySemibold, fontSize: 11, color: C.primary },
-    quoteText: { fontFamily: FontFamily.bodyRegular, fontSize: 12, color: C.textMuted, lineHeight: 16 },
-    onPrimaryStrong: { color: C.onPrimary },
-    onPrimarySoft: { color: C.onPrimary, opacity: 0.78 },
+    quoteRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    quoteSender: { fontFamily: FontFamily.bodySemibold, fontSize: 11.5, color: C.primary },
+    quoteText: { fontFamily: FontFamily.bodyRegular, fontSize: 12.5, color: C.textMuted, lineHeight: 17, flexShrink: 1 },
+    onMineStrong: { color: C.onPrimary },
+    onMineSoft: { color: C.onPrimary, opacity: 0.8 },
 
     text: { fontFamily: FontFamily.bodyRegular, fontSize: 15, lineHeight: 21, color: C.textPrimary },
     textMine: { color: C.onPrimary },
 
-    metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
+    // the time sits in the bubble's bottom-right corner; the spacer below keeps the text off it
+    metaAbs: { position: 'absolute', right: 0, bottom: -2, flexDirection: 'row', alignItems: 'center', gap: 3 },
+    metaSpacer: { fontFamily: FontFamily.bodyRegular, fontSize: 10.5, color: 'transparent' },
+    metaInline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, marginTop: 2 },
     time: { fontFamily: FontFamily.bodyRegular, fontSize: 10.5, color: C.textMuted },
 
-    reactions: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: -4, paddingHorizontal: 6 },
+    expiredRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 },
+    expiredText: { fontFamily: FontFamily.bodyRegular, fontStyle: 'italic', fontSize: 14, color: C.textMuted },
+
+    pendingMedia: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+
+    reactions: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: -3, paddingHorizontal: 8 },
     reactionsMine: { justifyContent: 'flex-end' },
     reactionsTheirs: { justifyContent: 'flex-start' },
     pill: {
@@ -360,9 +484,9 @@ const makeStyles = (C: Palette) =>
       minHeight: 24,
     },
     pillMine: { borderColor: C.primaryLight, backgroundColor: C.primaryFixed },
-    pillEmoji: { fontSize: 12 },
+    pillEmoji: { fontSize: 12.5 },
     pillCount: { fontFamily: FontFamily.bodySemibold, fontSize: 11, color: C.textMuted },
-    pillCountMine: { color: C.primary },
+    pillCountMine: { color: C.onPrimaryContainer },
 
     swipeAction: { width: 56, alignItems: 'center', justifyContent: 'center' },
     swipeIcon: {
@@ -374,13 +498,14 @@ const makeStyles = (C: Palette) =>
       justifyContent: 'center',
     },
 
-    dayWrap: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 24, marginVertical: 12 },
-    dayLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: C.outlineVariant },
+    dayWrap: { alignItems: 'center', marginVertical: 10 },
     dayChip: {
-      backgroundColor: C.bgSurfaceHigh,
-      borderRadius: BorderRadius.full,
+      backgroundColor: C.bgCard,
+      borderRadius: BorderRadius.sm,
       paddingHorizontal: 12,
-      paddingVertical: 4,
+      paddingVertical: 5,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: C.outlineVariant,
     },
-    dayText: { fontFamily: FontFamily.bodySemibold, fontSize: 11, color: C.textSecondary, letterSpacing: 0.2 },
+    dayText: { fontFamily: FontFamily.bodySemibold, fontSize: 11.5, color: C.textSecondary, letterSpacing: 0.2 },
   });

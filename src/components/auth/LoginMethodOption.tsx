@@ -102,6 +102,9 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 16,
     borderWidth: 1.5,
+    // Explicit: Android keeps a 'dashed' border once set (the option starts locked while the options load), so an option
+    // that turns enabled stayed dashed (2026-11-25).
+    borderStyle: 'solid',
     backgroundColor: '#FFFFFF',
   },
   cardLocked: { borderColor: '#E2E8F0', borderStyle: 'dashed', backgroundColor: '#F8FAFC' },

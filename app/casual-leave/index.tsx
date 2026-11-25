@@ -201,7 +201,7 @@ export default function CasualLeaveScreen() {
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Casual Leave</Text>
           <Text style={styles.headerSubtitle}>
-            {yearlyNow ? `${balance?.total ?? 12} paid days a year, full or half days` : 'One paid day a month, or two half-days'}
+            {yearlyNow ? `${balance?.total ?? 12} paid ${(balance?.total ?? 12) === 1 ? 'day' : 'days'} a year, full or half days` : 'One paid day a month, or two half-days'}
           </Text>
         </View>
       </View>
@@ -304,7 +304,9 @@ export default function CasualLeaveScreen() {
           <>
             <View style={styles.stats}>
               {[
-                { label: 'Taken', value: daysText(totals.takenDays), color: Colors.primary },
+                // Under the yearly balance: the server's own count, the same number as the balance card above
+                // (2026-11-25: the list's own sum also counted days the balance does not, so the two disagreed).
+                { label: 'Taken', value: daysText(countMode && yearBalance ? yearBalance.used : totals.takenDays), color: Colors.primary },
                 { label: 'Waiting', value: daysText(totals.waitingDays), color: Colors.statusYellow },
                 // Under the yearly balance what is left matters, not how many months were used.
                 leftDays != null

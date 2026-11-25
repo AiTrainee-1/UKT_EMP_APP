@@ -5,6 +5,11 @@
 //   Rejected - finally rejected, by whoever,
 // with who decided each one shown prominently ("Approved by you", "Rejected by HR (Meena) · 31 Oct, 10:05 AM"), read from
 // the approval trail.
+// Owner 2026-11-25: the three are shown TOGETHER, Pending first (highlighted, under "Waiting for your decision"), then
+// Approved, then Rejected (src/lib/approvalsFeed.ts, useApprovalFeed). The Pending / Approved / Rejected boxes are counts
+// and quick filters: tap one for that status alone, tap it again for all. Every card shows the day(s) the request is for,
+// when it was submitted and how far ahead ("Applied 3 days before", src/lib/requestLeadTime.ts); tapping a card opens it
+// to approve or reject right there. Reject stays disabled until the reason is written.
 // Server: backend/api/mobile_approvals_views.py (GET /manager/requests + /summary). Decisions still go through the
 // unchanged PATCH /manager/.../status endpoints. An older backend without the history endpoint gets the old pending list
 // (searchable on the phone) and a note on Approved / Rejected.
@@ -12,14 +17,14 @@
 // Approving needs no comment; rejecting needs the reason, at least 3 characters (owner 2026-11-21, src/lib/rejectRemark.ts),
 // checked before sending and again by the server (400 "remark_required").
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, RefreshControl, StatusBar, StyleSheet, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 
 import {
   useApprovalCounts,
-  useApprovalHistory,
+  useApprovalFeed,
   useManagerProfile,
   usePendingRequests,
 } from '../../src/hooks/useManager';
@@ -28,7 +33,6 @@ import { useApprovalSummary } from '../../src/hooks/useApproval';
 import { approvalsBadgeCount, shownApprovalTabs } from '../../src/lib/approvalBadge';
 import { approvalErrorMessage, hodTakesPart } from '../../src/lib/approval';
 import {
-  APPROVAL_STATUSES,
   CATEGORY_LABEL,
   CATEGORY_WORKFLOW,
   LEGACY_LIST_KEY,
@@ -37,17 +41,24 @@ import {
   emptyCopy,
   legacyPendingCounts,
   matchesSearch,
-  statusFromParam,
   visibleCategories,
   type ApprovalCategory,
-  type ApprovalStatus,
   type StatusCounts,
 } from '../../src/lib/approvalsHistory';
+import {
+  DEFAULT_FILTER,
+  feedRows,
+  filterFromParam,
+  toggleFilter,
+  type ApprovalFilter,
+  type FeedRow,
+} from '../../src/lib/approvalsFeed';
 import { ApprovalsHeader } from '../../src/components/approvals/ApprovalsHeader';
 import { CategoryRail } from '../../src/components/approvals/CategoryRail';
 import { StatusSwitcher } from '../../src/components/approvals/StatusSwitcher';
 import { ApprovalSearchBar } from '../../src/components/approvals/ApprovalSearchBar';
 import { ApprovalCard } from '../../src/components/approvals/ApprovalCard';
+import { FeedHeader } from '../../src/components/approvals/FeedHeader';
 import { DecisionSheet } from '../../src/components/approvals/DecisionSheet';
 import {
   ApprovalEmpty,
@@ -65,6 +76,7 @@ import { Toast } from '../../src/components/ui/Toast';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { trackingRoutes } from '../../src/tracking/routes';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
 
 /** `value`, once it has stopped changing for `ms` (the search box asks the server after the typing pauses). */
 function useDebounced<T>(value: T, ms: number): T {
@@ -98,7 +110,8 @@ export default function ApprovalsScreen() {
   const { data: approvalSummary } = useApprovalSummary();
 
   const [category, setCategory] = useState<ApprovalCategory>(() => categoryFromWire(params.category) ?? 'leave');
-  const [status, setStatus] = useState<ApprovalStatus>(() => statusFromParam(params.status) ?? 'pending');
+  // 'all' = every status together, Pending first; a status = that list alone (the boxes toggle it).
+  const [filter, setFilter] = useState<ApprovalFilter>(() => filterFromParam(params.status) ?? DEFAULT_FILTER);
   const [searchText, setSearchText] = useState('');
   const search = useDebounced(searchText.trim(), 300);
   const [selected, setSelected] = useState<SelectedApproval | null>(null);
@@ -119,24 +132,24 @@ export default function ApprovalsScreen() {
   // notification's View: src/lib/notificationTarget.ts). Each param is read once and taken off the route, so the same link
   // opened again later (this tab stays mounted) still switches the list.
   const categoryLink = useRouteRequest('category', categoryFromWire);
-  const statusLink = useRouteRequest('status', statusFromParam);
+  const statusLink = useRouteRequest('status', filterFromParam);
   const focusRequest = useFocusParam();
   // What the focus link came with, read in the render it arrived (the params are cleared right after).
-  const focusLink = useRef<{ category: ApprovalCategory | null; status: ApprovalStatus | null }>({ category: null, status: null });
+  const focusLink = useRef<{ category: ApprovalCategory | null }>({ category: null });
   if (params.focus !== undefined) {
-    focusLink.current = { category: categoryFromWire(params.category), status: statusFromParam(params.status) };
+    focusLink.current = { category: categoryFromWire(params.category) };
   }
   useEffect(() => {
     if (categoryLink) setCategory(categoryLink.value);
   }, [categoryLink?.nonce]);
   useEffect(() => {
-    if (statusLink) setStatus(statusLink.value);
+    if (statusLink) setFilter(statusLink.value);
   }, [statusLink?.nonce]);
-  // Looking for one request: start on Pending (it most likely waits for this head) unless the link named a list, and drop a
-  // search that could hide it.
+  // Looking for one request: the all-statuses list holds it whatever its status (Pending on top), so show that and drop a
+  // search that could hide it. (Declared after the status link: a link with both still opens the whole list.)
   useEffect(() => {
     if (!focusRequest) return;
-    setStatus(focusLink.current.status ?? 'pending');
+    setFilter('all');
     setSearchText('');
   }, [focusRequest?.nonce]);
 
@@ -153,17 +166,21 @@ export default function ApprovalsScreen() {
   const countsQuery = useApprovalCounts(signedIn);
   // null = the server has no history endpoint (an older backend): the old pending list stands in.
   const legacy = countsQuery.data === null;
-  const listQuery = useApprovalHistory(category, status, search, signedIn && !legacy);
+  const listQuery = useApprovalFeed(category, filter, search, signedIn && !legacy);
   const legacyQuery = usePendingRequests(signedIn && legacy);
+  // An older backend has the pending list only (no history): Approved / Rejected say so in a note instead.
+  const legacyHistoryAsked = legacy && filter !== 'pending';
 
   const items: ApprovalItem[] = useMemo(() => {
     if (legacy) {
-      if (status !== 'pending') return [];
+      if (filter !== 'pending' && filter !== 'all') return [];
       const list = (legacyQuery.data as Record<string, unknown> | undefined)?.[LEGACY_LIST_KEY[category]];
-      return (Array.isArray(list) ? (list as ApprovalItem[]) : []).filter((i) => matchesSearch(i, search));
+      return (Array.isArray(list) ? (list as ApprovalItem[]) : [])
+        .filter((i) => matchesSearch(i, search))
+        .map((i) => ({ ...i, listStatus: 'pending' }));
     }
     return listQuery.data?.pages.flatMap((p) => p.items as ApprovalItem[]) ?? [];
-  }, [legacy, status, legacyQuery.data, category, search, listQuery.data]);
+  }, [legacy, filter, legacyQuery.data, category, search, listQuery.data]);
 
   const categoryCounts = useMemo(
     () =>
@@ -175,6 +192,9 @@ export default function ApprovalsScreen() {
   const statusCounts: Partial<StatusCounts> | null = legacy
     ? (categoryCounts[category] ?? null)
     : (listQuery.data?.pages[0]?.counts ?? countsQuery.data?.[category] ?? null);
+
+  // The list's rows: a header in front of each status group when every status is shown (Pending first).
+  const rows = useMemo(() => feedRows(items, { headers: filter === 'all', counts: statusCounts }), [items, filter, statusCounts]);
 
   const active = legacy ? legacyQuery : listQuery;
   const loading = active.isLoading;
@@ -273,26 +293,26 @@ export default function ApprovalsScreen() {
     setSearchText('');
   };
 
-  // ?focus=<id>: find the request in Pending, then Approved, then Rejected (each its own server list, a few pages deep),
-  // scroll to it and pulse it once (src/hooks/useFocusItem.ts). Waits until the linked category and a cleared search are
-  // on screen; a category this head can no longer see is "no longer in this list".
-  const listRef = useRef<FlatList<ApprovalItem>>(null);
+  // ?focus=<id>: find the request in the all-statuses list (Pending, then Approved, then Rejected, a few pages deep),
+  // scroll to it and pulse it once (src/hooks/useFocusItem.ts). Waits until the linked category, the whole list and a
+  // cleared search are on screen; a category this head can no longer see is "no longer in this list".
+  const listRef = useRef<FlatList<FeedRow<ApprovalItem>>>(null);
   const linkCategory = focusLink.current.category;
-  const focus = useFocusItem<ApprovalItem, ApprovalStatus>({
+  const focus = useFocusItem<ApprovalItem>({
     request: focusRequest,
     rows: loading || loadError ? undefined : items,
     idOf: (i) => i.id,
-    views: { order: legacy ? ['pending'] : APPROVAL_STATUSES, current: status, set: setStatus },
     refresh: () => (legacy ? legacyQuery.refetch() : listQuery.refetch()),
     more: legacy ? undefined : { has: !!listQuery.hasNextPage, load: () => listQuery.fetchNextPage() },
     fetching: active.isFetching,
-    ready: !!manager && (!linkCategory || category === linkCategory) && search === searchText.trim(),
+    ready:
+      !!manager && (!linkCategory || category === linkCategory) && search === searchText.trim() && filter === 'all',
     unavailable: !!manager && !!linkCategory && !categories.includes(linkCategory),
-    list: { ref: listRef, indexOf: (id) => items.findIndex((i) => i.id === id) },
+    list: { ref: listRef, indexOf: (id) => rows.findIndex((r) => r.kind === 'item' && r.item.id === id) },
   });
 
   const label = CATEGORY_LABEL[category];
-  const empty = emptyCopy(category, status, {
+  const empty = emptyCopy(category, filter, {
     search,
     hodInPipeline: hodTakesPart(approvalSummary?.[CATEGORY_WORKFLOW[category]]),
   });
@@ -306,7 +326,7 @@ export default function ApprovalsScreen() {
       />
       <View style={styles.notices}>
         {focus.missing && <FocusMissingNote onDismiss={focus.dismissMissing} />}
-        {legacy && status !== 'pending' && (
+        {legacyHistoryAsked && (
           <ApprovalNotice
             icon="update"
             text="Approved and rejected history needs the latest server update. Your pending requests are below."
@@ -325,21 +345,26 @@ export default function ApprovalsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
       <ApprovalsHeader pendingTotal={manager ? approvalsBadgeCount(manager) : null} />
 
       <View style={styles.controls}>
         <CategoryRail categories={categories} value={category} counts={categoryCounts} onChange={changeCategory} />
-        <StatusSwitcher value={status} counts={statusCounts} onChange={setStatus} />
+        <StatusSwitcher
+          value={filter}
+          counts={statusCounts}
+          onToggle={(s) => setFilter((f) => toggleFilter(f, s))}
+          onShowAll={() => setFilter('all')}
+        />
       </View>
 
       <FlatList
         ref={listRef}
-        data={items}
-        keyExtractor={(item) => `${category}-${item.id}`}
+        data={rows}
+        keyExtractor={(row) => `${category}-${row.key}`}
         onScrollToIndexFailed={focus.onScrollToIndexFailed}
         extraData={focus.activeId}
-        contentContainerStyle={[styles.list, !items.length && styles.listGrow]}
+        contentContainerStyle={[styles.list, !rows.length && styles.listGrow]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         ListHeaderComponent={listHeader}
@@ -364,7 +389,7 @@ export default function ApprovalsScreen() {
               onRetry={() => void refreshAll()}
               retrying={active.isFetching}
             />
-          ) : legacy && status !== 'pending' ? undefined : (
+          ) : legacy && filter !== 'pending' && filter !== 'all' ? undefined : (
             <ApprovalEmpty copy={empty} />
           )
         }
@@ -375,19 +400,25 @@ export default function ApprovalsScreen() {
             count={items.length}
           />
         }
-        renderItem={({ item, index }) => (
-          <Reveal index={index}>
-            <FocusFrame {...focus.frame(item.id)}>
-              <ApprovalCard
-                category={category}
-                status={status}
-                item={item}
-                now={now}
-                onOpen={(intent) => openSheet({ category, status, item }, intent)}
-              />
-            </FocusFrame>
-          </Reveal>
-        )}
+        renderItem={({ item: row, index }) =>
+          row.kind === 'header' ? (
+            <Reveal index={index}>
+              <FeedHeader status={row.status} count={row.count} empty={row.empty} />
+            </Reveal>
+          ) : (
+            <Reveal index={index}>
+              <FocusFrame {...focus.frame(row.item.id)}>
+                <ApprovalCard
+                  category={category}
+                  status={row.status}
+                  item={row.item}
+                  now={now}
+                  onOpen={(intent) => openSheet({ category, status: row.status, item: row.item }, intent)}
+                />
+              </FocusFrame>
+            </Reveal>
+          )
+        }
       />
 
       <DecisionSheet

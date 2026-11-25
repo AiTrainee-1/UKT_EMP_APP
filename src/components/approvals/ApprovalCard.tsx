@@ -24,18 +24,21 @@ import {
   empInitial,
   empName,
   itemBadge,
-  itemDateLabel,
   itemTypeLabel,
   onDutyPunchLine,
 } from '../../lib/approvalsItems';
 import { raisedByLabel, readRaisedByRole, type ClaimLike } from '../../lib/compensation';
 import { categoryMeta } from './categoryMeta';
 import { TrailStrip } from './TrailStrip';
+import { RequestTiming } from './RequestTiming';
 import type { ApprovalItem } from './types';
 
 /**
  * One request in a list: who, what and when, how long it has waited (Pending) or who decided it (Approved / Rejected),
  * its approval path, the reason, and - on Pending - Approve / Reject, which open the decision sheet as before.
+ * Owner 2026-11-25: the list mixes every status (Pending first), so `status` is this row's own; a pending row is
+ * highlighted, and every row shows the day(s) it is for, when it was submitted and how far ahead ("Applied 3 days
+ * before", RequestTiming). Tapping anywhere opens the request to approve or reject it there.
  */
 export function ApprovalCard({
   category,
@@ -45,6 +48,7 @@ export function ApprovalCard({
   now,
 }: {
   category: ApprovalCategory;
+  /** This row's own status (the list holds all three). */
   status: ApprovalStatus;
   item: ApprovalItem;
   /** Opens the decision sheet; 'reject' (the card's Reject) opens it asking for the reason for rejecting. */
@@ -78,7 +82,7 @@ export function ApprovalCard({
 
   return (
     <TouchableOpacity
-      style={[styles.card, { borderLeftColor: meta.color }]}
+      style={[styles.card, pending && styles.cardPending, { borderLeftColor: meta.color }]}
       onPress={() => onOpen()}
       activeOpacity={0.88}
       accessibilityRole="button"
@@ -112,10 +116,7 @@ export function ApprovalCard({
             {itemTypeLabel(category, item)}
           </Text>
         </View>
-        <View style={styles.when}>
-          <MaterialCommunityIcons name="calendar-blank-outline" size={13} color={Colors.textMuted} />
-          <Text style={styles.whenText} numberOfLines={1}>{itemDateLabel(category, item)}</Text>
-        </View>
+        <RequestTiming category={category} item={item} />
         {!!punchLine && (
           <View style={styles.when}>
             <MaterialCommunityIcons name="map-marker-check-outline" size={13} color={Colors.textMuted} />
@@ -204,6 +205,15 @@ const makeStyles = (Colors: Palette) =>
       ...Platform.select({
         ios: { shadowColor: '#0F172A', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6 },
         android: { elevation: 1 },
+      }),
+    },
+    // Waiting for this head's decision: an amber frame, so it stands out among the decided rows (owner 2026-11-25).
+    cardPending: {
+      borderColor: Colors.statusYellow,
+      borderWidth: 1.5,
+      ...Platform.select({
+        ios: { shadowColor: Colors.statusYellow, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 8 },
+        android: { elevation: 3 },
       }),
     },
     top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },

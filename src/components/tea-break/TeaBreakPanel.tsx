@@ -35,6 +35,24 @@ function toneFor(remark: TeaBreakLogItem['remark'], Colors: Palette) {
   return { bg: Colors.badgeGreenBg, text: Colors.badgeGreenText };
 }
 
+/** "45 min", "2 h 5 min": a break that ran for hours (never scanned back in) stays readable. */
+export function breakDuration(minutes: number): string {
+  const m = Math.max(0, Math.round(minutes));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  return rest ? `${h} h ${rest} min` : `${h} h`;
+}
+
+/** The line under the QR while a break is open. A break from an earlier day (not scanned back in) says since when. */
+export function onBreakText(outAt: string | null, elapsed: number, overAllowed: boolean, now = new Date()): string {
+  const out = outAt ? new Date(outAt) : null;
+  if (out && !Number.isNaN(out.getTime()) && out.toDateString() !== now.toDateString()) {
+    return `Out since ${format(out, 'd MMM, h:mm a')} · not scanned back in`;
+  }
+  return `On tea break · ${breakDuration(elapsed)}${overAllowed ? ' (over allowed time)' : ''}`;
+}
+
 function useElapsedMinutes(outAt: string | null) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -89,7 +107,7 @@ export function TeaBreakPanel({
             </View>
           )}
           <Text style={[styles.qrCaption, { color: Colors.textMuted }]}>
-            SHOW THIS QR AT THE GATE -FOR TEA BREAK OUT &amp; IN
+            SHOW THIS QR AT THE GATE · TEA BREAK OUT &amp; IN
           </Text>
         </View>
 
@@ -103,7 +121,7 @@ export function TeaBreakPanel({
             {statusLoading
               ? 'Checking status…'
               : status?.onBreak
-              ? `On tea break -${elapsedMinutes ?? 0} min${overAllowed ? ' (over allowed time)' : ''}`
+              ? onBreakText(status.outAt, elapsedMinutes ?? 0, overAllowed)
               : 'Not currently on a tea break'}
           </Text>
         </View>
@@ -139,7 +157,7 @@ export function TeaBreakPanel({
                     {format(new Date(log.outAt), 'dd MMM, h:mm a')}
                     {log.inAt ? ` – ${format(new Date(log.inAt), 'h:mm a')}` : ''}
                   </Text>
-                  <Text style={[styles.recentSub, { color: Colors.textMuted }]}>{log.takenMinutes} min</Text>
+                  <Text style={[styles.recentSub, { color: Colors.textMuted }]}>{breakDuration(log.takenMinutes)}</Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: tone.bg }]}>
                   <Text style={[styles.badgeText, { color: tone.text }]}>{REMARK_LABEL[log.remark]}</Text>

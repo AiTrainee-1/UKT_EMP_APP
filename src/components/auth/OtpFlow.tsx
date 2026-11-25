@@ -276,7 +276,11 @@ export function OtpFlow({
         <AuthInput
           label="Employee Code"
           placeholder="e.g. UKT-10482"
-          keyboardType="numeric"
+          // a full keyboard: codes can have letters and a dash (2026-11-25)
+          keyboardType="default"
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
           value={identifier}
           onChangeText={onIdentifierChange}
           returnKeyType="send"

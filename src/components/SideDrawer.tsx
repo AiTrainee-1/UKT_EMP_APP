@@ -10,6 +10,7 @@ import {
   ScrollView,
   Dimensions,
   Switch,
+  Modal,
 } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -189,7 +190,17 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
     setTimeout(() => router.push(route as any), 250);
   };
 
+  // In a transparent full-screen Modal (2026-11-25): drawn inside a tab screen, the bottom tab bar stayed bright and
+  // tappable above the dimmed page. The Modal also lets the phone's Back button close the menu.
   return (
+    <Modal
+      visible
+      transparent
+      animationType="none"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
     <View style={StyleSheet.absoluteFill} pointerEvents={visible ? 'auto' : 'none'}>
       {/* Backdrop */}
       <Animated.View style={[styles.backdrop, { opacity: backdropOpacity }]}>
@@ -375,7 +386,12 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
 
           <TouchableOpacity
             style={styles.logoutBtn}
-            onPress={onLogout}
+            // the menu closes first (owner 2026-11-25): the logout popup and the farewell then show over the page, not
+            // under a menu that stays open until the screen changes
+            onPress={() => {
+              onClose();
+              onLogout();
+            }}
             activeOpacity={0.8}
             accessibilityRole="button"
             accessibilityLabel="Log out"
@@ -387,6 +403,7 @@ export function SideDrawer({ visible, onClose, user, onLogout, notificationCount
         </View>
       </Animated.View>
     </View>
+    </Modal>
   );
 }
 

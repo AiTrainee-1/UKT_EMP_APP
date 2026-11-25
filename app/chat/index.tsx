@@ -15,18 +15,45 @@ import { router, useIsFocused } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { MotiView, AnimatePresence } from 'moti';
+import Animated, {
+  FadeIn,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  ZoomIn,
+  ZoomOut,
+} from 'react-native-reanimated';
+import * as ImagePicker from 'expo-image-picker';
+import * as Clipboard from 'expo-clipboard';
+import { File } from 'expo-file-system';
 
 import { KeyboardAvoider } from '../../src/components/KeyboardAvoider';
 import { useAuth } from '../../src/hooks/useAuth';
-import { useChatChannels, useChatThread, type ChatMessage } from '../../src/hooks/useChat';
+import { useChatChannels, useChatThread, type ChatMessage, type OutgoingMedia } from '../../src/hooks/useChat';
+import {
+  ensureLocalMedia,
+  MediaExpiredError,
+  pruneLocalMedia,
+  pruneStaleLocalMedia,
+  saveGifToPhone,
+  shareVoiceMessage,
+} from '../../src/hooks/useChatMedia';
+import type { Recording } from '../../src/hooks/useVoiceRecorder';
+import { deleteRecording } from '../../src/hooks/useVoiceRecorder';
 import { EmptyState } from '../../src/components/ui/EmptyState';
 import { Skeleton } from '../../src/components/ui/Skeleton';
 import { Toast } from '../../src/components/ui/Toast';
 import { MessageBubble, DayDivider, PendingBubble } from '../../src/components/chat/MessageBubble';
 import { MessageActionsSheet } from '../../src/components/chat/MessageActionsSheet';
+import { ReactionsSheet } from '../../src/components/chat/ReactionsSheet';
+import { GifViewer } from '../../src/components/chat/GifViewer';
+import { GifSendSheet, type PickedGif } from '../../src/components/chat/GifSendSheet';
+import { VoicePlaybackProvider } from '../../src/components/chat/VoicePlayback';
 import { ChannelSwitcher, type ChannelOption } from '../../src/components/chat/ChannelSwitcher';
 import { Composer } from '../../src/components/chat/Composer';
+import { chatColors } from '../../src/components/chat/chatVisuals';
 import { RetryPanel } from '../../src/components/documents/RetryPanel';
 import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
@@ -43,9 +70,11 @@ import {
   NEAR_LATEST_PX,
   type ChatRow,
 } from '../../src/lib/chatThread';
+import { gifPickProblem, messageKind, uploadErrorMessage, waveformForUpload } from '../../src/lib/chatMedia';
 
 type Row = ChatRow<ChatMessage>;
 type ChannelKey = 'company' | 'department';
+type ToastState = { message: string; type: 'success' | 'error' | 'info'; visible: boolean };
 
 /** Grey bubble outlines while the conversation loads. */
 function ChatSkeleton() {
@@ -63,19 +92,49 @@ function ChatSkeleton() {
       {shapes.map((s, i) => (
         <View key={i} style={[styles.skeletonRow, s.mine ? { justifyContent: 'flex-end' } : null]}>
           {!s.mine && <Skeleton width={28} height={28} borderRadius={14} style={{ marginRight: 6 }} />}
-          <Skeleton width={s.w} height={s.h} borderRadius={18} />
+          <Skeleton width={s.w} height={s.h} borderRadius={14} />
         </View>
       ))}
     </View>
   );
 }
 
+/** "Now", refreshed every 30 s: what expiry ("Expires in 3 days", "GIF expired") is measured against. */
+function useNow(intervalMs = 30_000): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}
+
+/** The pulsing "live" dot in the header. */
+function StatusDot({ color, pulse }: { color: string; pulse: boolean }) {
+  const styles = useThemedStyles(makeStyles);
+  const opacity = useSharedValue(1);
+  useEffect(() => {
+    opacity.value = pulse ? withRepeat(withTiming(0.35, { duration: 900 }), -1, true) : withTiming(1, { duration: 0 });
+  }, [pulse, opacity]);
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return <Animated.View style={[styles.statusDot, { backgroundColor: color }, style]} />;
+}
+
+/**
+ * Team Chat (owner 2026-11-25: a modern WhatsApp-style messaging screen). Company and department channels, text with
+ * replies and reactions, GIFs from the phone's gallery and voice messages — both expire after the days HR sets (7 by
+ * default) and can be saved on the phone while they last. New messages arrive by polling every 4 s (no realtime
+ * typing indicator).
+ */
 export default function ChatScreen() {
   const { C, isDark } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const colors = chatColors(C, isDark);
   const { user } = useAuth();
   const myId = user?.employeeId ?? null;
+  const me = useMemo(() => ({ id: myId, name: user?.name || 'You' }), [myId, user?.name]);
   const reduceMotion = useReduceMotion();
+  const now = useNow();
 
   // Poll only while this screen is on top AND the app is in front of the employee.
   const isFocused = useIsFocused();
@@ -90,6 +149,7 @@ export default function ChatScreen() {
   const channelId = activeChannel?.id ?? null;
   const deptName = deptChannel?.departmentName || 'Department';
   const channelLabel = channelType === 'company' ? 'the whole company' : deptName;
+  const expiryDays = activeChannel?.mediaExpiryDays ?? companyChannel?.mediaExpiryDays ?? null;
 
   const thread = useChatThread(channelId, { poll });
   const { messages } = thread;
@@ -97,23 +157,32 @@ export default function ChatScreen() {
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [pending, setPending] = useState<string | null>(null);
+  const [pendingMedia, setPendingMedia] = useState<OutgoingMedia | null>(null);
   const [actionsFor, setActionsFor] = useState<ChatMessage | null>(null);
+  const [reactionsFor, setReactionsFor] = useState<{ id: number; emoji: string | null } | null>(null);
+  const [viewer, setViewer] = useState<{ message: ChatMessage; uri: string } | null>(null);
+  const [pickedGif, setPickedGif] = useState<PickedGif | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const [olderFailed, setOlderFailed] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; visible: boolean }>({
-    message: '',
-    type: 'error',
-    visible: false,
-  });
+  const [toast, setToast] = useState<ToastState>({ message: '', type: 'error', visible: false });
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<FlatList<Row>>(null);
   const inputRef = useRef<TextInputInstance>(null);
 
   const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'error') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast({ message, type, visible: true });
-    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3200);
+    toastTimer.current = setTimeout(() => setToast((t) => ({ ...t, visible: false })), 3400);
   }, []);
-  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+  useEffect(
+    () => () => {
+      if (toastTimer.current) clearTimeout(toastTimer.current);
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    },
+    [],
+  );
 
   // Back in front of the employee after a while: fetch at once rather than waiting for the next tick.
   const wasActive = useRef(appActive);
@@ -129,7 +198,16 @@ export default function ChatScreen() {
   useEffect(() => {
     setReplyTo(null);
     setOlderFailed(false);
+    setHighlightId(null);
   }, [channelId]);
+
+  // The phone's copies of expired GIFs / voice messages go as soon as the chat knows they expired.
+  useEffect(() => {
+    pruneLocalMedia(messages, now);
+  }, [messages, now]);
+  useEffect(() => {
+    pruneStaleLocalMedia(new Date());
+  }, []);
 
   // ── Which messages get the "slide in" (only ones that arrive while the screen is open) ──
   const firstNewest = useRef<Record<number, number>>({});
@@ -167,7 +245,7 @@ export default function ChatScreen() {
     listRef.current?.scrollToOffset({ offset: 0, animated: !reduceMotion });
   }, [reduceMotion]);
 
-  // ── Actions ──
+  // ── Text ──
   const handleSend = async () => {
     const out = prepareOutgoing(text);
     if (!out || channelId == null || thread.send.isPending) return;
@@ -188,6 +266,91 @@ export default function ChatScreen() {
     }
   };
 
+  // ── GIFs and voice messages ──
+  const sendMedia = useCallback(
+    async (item: OutgoingMedia) => {
+      if (channelId == null) return;
+      const reply = replyTo;
+      setReplyTo(null);
+      setPendingMedia(item);
+      jumpToLatest();
+      try {
+        // on success the recording / picked GIF becomes the message's own copy (useChat), so no download follows
+        const msg = await thread.sendMedia.mutateAsync({ ...item, replyToId: reply?.id });
+        if (!(msg && typeof msg.id === 'number') && item.kind === 'voice') deleteRecording(item.uri);
+      } catch (err) {
+        setReplyTo(reply);
+        if (item.kind === 'voice') deleteRecording(item.uri);
+        showToast(uploadErrorMessage(err, item.kind), 'error');
+      } finally {
+        setPendingMedia(null);
+      }
+    },
+    [channelId, replyTo, jumpToLatest, thread.sendMedia, showToast],
+  );
+
+  const onVoiceRecorded = useCallback(
+    (rec: Recording) => {
+      const bars = waveformForUpload(rec.levels);
+      void sendMedia({
+        kind: 'voice',
+        uri: rec.uri,
+        mimeType: 'audio/mp4',
+        fileName: 'voice-message.m4a',
+        durationMs: rec.durationMs,
+        // a phone that gave no loudness readings sends none, and every phone draws a steady pattern instead
+        waveform: bars.some((v) => v > 0) ? bars : [],
+      });
+    },
+    [sendMedia],
+  );
+
+  const pickGif = useCallback(async () => {
+    try {
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        // Android keeps a GIF animated only with editing off and quality exactly 1 (expo-image-picker docs)
+        allowsEditing: false,
+        quality: 1,
+        allowsMultipleSelection: false,
+        exif: false,
+        // iOS: hand over the file as it is, not converted to JPEG
+        preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const a = res.assets[0];
+      let size = typeof a.fileSize === 'number' ? a.fileSize : null;
+      if (size == null) {
+        try {
+          size = new File(a.uri).size ?? null;
+        } catch {
+          size = null;
+        }
+      }
+      const problem = gifPickProblem({ uri: a.uri, mimeType: a.mimeType, fileName: a.fileName, fileSize: size });
+      if (problem) {
+        showToast(problem, 'error');
+        return;
+      }
+      setPickedGif({
+        uri: a.uri,
+        mimeType: 'image/gif',
+        fileName: a.fileName && /\.gif$/i.test(a.fileName) ? a.fileName : 'chat.gif',
+        fileSize: size,
+        width: a.width || 0,
+        height: a.height || 0,
+      });
+    } catch {
+      showToast('Couldn’t open your photos. Please try again.', 'error');
+    }
+  }, [showToast]);
+
+  const sendPickedGif = useCallback(() => {
+    const g = pickedGif;
+    setPickedGif(null);
+    if (g) void sendMedia({ kind: 'gif', uri: g.uri, mimeType: g.mimeType, fileName: g.fileName });
+  }, [pickedGif, sendMedia]);
+
   // Read through a ref so the row callbacks stay the same between polls (rows don't all re-render every 4 s).
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -200,12 +363,12 @@ export default function ChatScreen() {
   const handleToggleReaction = useCallback(
     async (m: ChatMessage, emoji: string) => {
       try {
-        await react(latestVersion(m), emoji);
+        await react(latestVersion(m), emoji, me);
       } catch {
         showToast('Couldn’t save your reaction. Please try again.', 'error');
       }
     },
-    [react, latestVersion, showToast],
+    [react, latestVersion, me, showToast],
   );
 
   const handleReply = useCallback((m: ChatMessage) => {
@@ -213,6 +376,72 @@ export default function ChatScreen() {
     setActionsFor(null);
     setTimeout(() => inputRef.current?.focus(), 250);
   }, []);
+
+  const handleCopy = useCallback(
+    async (m: ChatMessage) => {
+      setActionsFor(null);
+      try {
+        await Clipboard.setStringAsync(m.text);
+        showToast('Message copied.', 'success');
+      } catch {
+        showToast('Couldn’t copy the message.', 'error');
+      }
+    },
+    [showToast],
+  );
+
+  const handleSave = useCallback(
+    async (m: ChatMessage, knownUri?: string) => {
+      if (saving) return;
+      setSaving(true);
+      try {
+        const uri = knownUri ?? (await ensureLocalMedia(m));
+        const kind = messageKind(m);
+        const outcome = kind === 'gif' ? await saveGifToPhone(uri) : await shareVoiceMessage(uri, m.media?.mime);
+        if (outcome === 'saved') showToast('GIF saved to your photos.', 'success');
+        else if (outcome === 'unavailable') showToast('Saving isn’t possible on this phone. Please update the UKTextiles app.', 'error');
+        setActionsFor(null);
+      } catch (err) {
+        if (err instanceof MediaExpiredError) {
+          showToast('This has expired and can no longer be saved.', 'info');
+          void thread.refetch();
+        } else {
+          showToast('Couldn’t save it. Check your internet connection and try again.', 'error');
+        }
+      } finally {
+        setSaving(false);
+      }
+    },
+    [saving, showToast, thread],
+  );
+
+  const openReactions = useCallback((m: ChatMessage, emoji: string | null) => {
+    setActionsFor(null);
+    setReactionsFor({ id: m.id, emoji });
+  }, []);
+
+  const openGif = useCallback((m: ChatMessage, uri: string) => setViewer({ message: m, uri }), []);
+
+  // Tapping a quote jumps to the message it quotes and makes it flash.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const jumpToMessage = useCallback(
+    (id: number) => {
+      const index = rowsRef.current.findIndex((r) => r.kind === 'message' && r.message.id === id);
+      if (index < 0) {
+        showToast(
+          thread.hasOlder ? 'That message is further up. Load earlier messages to see it.' : 'That message is no longer in this chat.',
+          'info',
+        );
+        return;
+      }
+      listRef.current?.scrollToIndex({ index, viewPosition: 0.5, animated: !reduceMotion });
+      setHighlightId(id);
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+      highlightTimer.current = setTimeout(() => setHighlightId(null), 1800);
+    },
+    [reduceMotion, showToast, thread.hasOlder],
+  );
 
   const loadOlder = useCallback(async () => {
     try {
@@ -232,7 +461,9 @@ export default function ChatScreen() {
       ? 'Can’t reach chat — retrying'
       : !activeChannel
         ? 'Not available'
-        : 'Live · new messages appear automatically';
+        : channelType === 'company'
+          ? 'Everyone in your unit · live'
+          : `${deptName} team · live`;
 
   let disabledReason: string | null = null;
   if (channelsQ.isLoading) disabledReason = 'Connecting to chat…';
@@ -259,13 +490,18 @@ export default function ChatScreen() {
           startsGroup={item.startsGroup}
           endsGroup={item.endsGroup}
           animateIn={!reduceMotion && item.message.id > animateAfter}
+          highlighted={highlightId === item.message.id}
+          reduceMotion={reduceMotion}
+          now={now}
           onReply={handleReply}
           onOpenActions={setActionsFor}
-          onToggleReaction={handleToggleReaction}
+          onOpenReactions={openReactions}
+          onOpenGif={openGif}
+          onQuotePress={jumpToMessage}
         />
       );
     },
-    [reduceMotion, animateAfter, handleReply, handleToggleReaction],
+    [reduceMotion, animateAfter, highlightId, now, handleReply, openReactions, openGif, jumpToMessage],
   );
 
   // In the upside-down list the "footer" is drawn at the TOP: load-earlier or start-of-chat.
@@ -293,10 +529,22 @@ export default function ChatScreen() {
         <MaterialCommunityIcons name={channelType === 'company' ? 'domain' : 'account-group'} size={20} color={C.primary} />
       </View>
       <Text style={styles.startTitle}>Start of the {channelType === 'company' ? 'company' : deptName} chat</Text>
-      <Text style={styles.startTip}>Press and hold a message to react or reply. Swipe a message right to reply.</Text>
+      <Text style={styles.startTip}>
+        Press and hold a message to react, reply, copy or save. Swipe a message right to reply. Hold the mic to send a
+        voice message.
+      </Text>
+      {expiryDays ? (
+        <View style={styles.expiryNote}>
+          <MaterialCommunityIcons name="timer-sand" size={13} color={C.badgeYellowText} />
+          <Text style={styles.expiryNoteText}>
+            GIFs and voice messages disappear after {expiryDays} {expiryDays === 1 ? 'day' : 'days'}.
+          </Text>
+        </View>
+      ) : null}
     </View>
   );
 
+  const hasPending = !!pending || !!pendingMedia;
   let body: React.ReactNode;
   if (channelsQ.isLoading) {
     body = <ChatSkeleton />;
@@ -334,12 +582,12 @@ export default function ChatScreen() {
         onRetry={() => void thread.refetch()}
       />
     );
-  } else if (messages.length === 0 && !pending) {
+  } else if (messages.length === 0 && !hasPending) {
     body = (
       <EmptyState
         icon="message-text-outline"
         title="No messages yet"
-        subtitle={`Say hello to ${channelLabel} — type below to start the conversation.`}
+        subtitle={`Say hello to ${channelLabel} — type below, send a GIF, or hold the mic for a voice message.`}
       />
     );
   } else {
@@ -360,78 +608,93 @@ export default function ChatScreen() {
           if (thread.hasOlder && !thread.loadingOlder && !olderFailed) void loadOlder();
         }}
         onEndReachedThreshold={0.15}
-        ListHeaderComponent={pending ? <PendingBubble text={pending} /> : undefined}
+        onScrollToIndexFailed={(info) => {
+          // rows of different heights: get near it first, then try again
+          listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
+          setTimeout(() => {
+            listRef.current?.scrollToIndex({ index: info.index, viewPosition: 0.5, animated: !reduceMotion });
+          }, 120);
+        }}
+        ListHeaderComponent={
+          hasPending ? (
+            <View>
+              {pendingMedia && <PendingBubble media={pendingMedia} reduceMotion={reduceMotion} />}
+              {pending && <PendingBubble text={pending} reduceMotion={reduceMotion} />}
+            </View>
+          ) : undefined
+        }
         ListFooterComponent={topOfThread}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
         initialNumToRender={20}
+        maxToRenderPerBatch={12}
         windowSize={11}
       />
     );
   }
 
+  const reactionsMessage = reactionsFor ? messages.find((m) => m.id === reactionsFor.id) ?? null : null;
+  // the last reaction was taken away while the sheet was open: nothing left to show
+  const reactionsEmpty = !!reactionsMessage && reactionsMessage.reactions.length === 0;
+  useEffect(() => {
+    if (reactionsEmpty) setReactionsFor(null);
+  }, [reactionsEmpty]);
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-        <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      <VoicePlaybackProvider>
+        <SafeAreaView style={[styles.safe, { backgroundColor: colors.wallpaper }]} edges={['top', 'bottom']}>
+          <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => router.back()}
-            style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            hitSlop={8}
-          >
-            <MaterialCommunityIcons name="arrow-left" size={20} color={C.textPrimary} />
-          </Pressable>
-          <View style={styles.headerIcon}>
-            <MaterialCommunityIcons name="forum" size={20} color={C.onPrimary} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle} accessibilityRole="header">Team Chat</Text>
-            <View style={styles.statusRow} accessible accessibilityLabel={`Status: ${statusText}`}>
-              <MotiView
-                from={{ opacity: 0.35 }}
-                animate={{ opacity: 1 }}
-                transition={
-                  reduceMotion || offline || !activeChannel
-                    ? { type: 'timing', duration: 0 }
-                    : { type: 'timing', duration: 900, loop: true }
-                }
-                style={[
-                  styles.statusDot,
-                  { backgroundColor: offline ? C.statusYellow : activeChannel ? C.statusGreen : C.statusGrey },
-                ]}
-              />
-              <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
+          <View style={styles.header}>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              hitSlop={8}
+            >
+              <MaterialCommunityIcons name="arrow-left" size={20} color={C.textPrimary} />
+            </Pressable>
+            <View style={styles.headerIcon}>
+              <MaterialCommunityIcons name={channelType === 'company' ? 'forum' : 'account-group'} size={20} color={C.onPrimary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle} accessibilityRole="header" numberOfLines={1}>
+                {channelType === 'company' ? 'Team Chat' : `${deptName} chat`}
+              </Text>
+              <View style={styles.statusRow} accessible accessibilityLabel={`Status: ${statusText}`}>
+                <StatusDot
+                  color={offline ? C.statusYellow : activeChannel ? C.statusGreen : C.statusGrey}
+                  pulse={!reduceMotion && !offline && !!activeChannel}
+                />
+                <Text style={styles.statusText} numberOfLines={1}>{statusText}</Text>
+              </View>
             </View>
           </View>
-        </View>
 
-        {!channelsQ.isLoading && !channelsQ.isError && (
-          <ChannelSwitcher options={options} value={channelType} onChange={setChannelType} reduceMotion={reduceMotion} />
-        )}
+          {!channelsQ.isLoading && !channelsQ.isError && (
+            <View style={styles.switcherWrap}>
+              <ChannelSwitcher options={options} value={channelType} onChange={setChannelType} reduceMotion={reduceMotion} />
+            </View>
+          )}
 
-        <KeyboardAvoider style={{ flex: 1 }}>
-          <View style={{ flex: 1 }}>
-            {body}
+          <KeyboardAvoider style={{ flex: 1 }}>
+            <View style={{ flex: 1 }}>
+              {body}
 
-            {thread.isStale && (
-              <View style={styles.staleBanner} accessibilityLiveRegion="polite">
-                <MaterialCommunityIcons name="wifi-off" size={14} color={C.badgeYellowText} />
-                <Text style={styles.staleText}>Showing saved messages — reconnecting…</Text>
-              </View>
-            )}
+              {thread.isStale && (
+                <View style={styles.staleBanner} accessibilityLiveRegion="polite">
+                  <MaterialCommunityIcons name="wifi-off" size={14} color={C.badgeYellowText} />
+                  <Text style={styles.staleText}>Showing saved messages — reconnecting…</Text>
+                </View>
+              )}
 
-            <AnimatePresence>
               {!nearLatest && rows.length > 0 && (
-                <MotiView
+                <Animated.View
                   key="jump"
-                  from={{ opacity: 0, translateY: 12, scale: 0.9 }}
-                  animate={{ opacity: 1, translateY: 0, scale: 1 }}
-                  exit={{ opacity: 0, translateY: 12, scale: 0.9 }}
-                  transition={{ type: 'timing', duration: 180 }}
+                  entering={reduceMotion ? FadeIn.duration(0) : ZoomIn.duration(180)}
+                  exiting={reduceMotion ? FadeOut.duration(0) : ZoomOut.duration(150)}
                   style={styles.jumpWrap}
                   pointerEvents="box-none"
                 >
@@ -439,49 +702,95 @@ export default function ChatScreen() {
                     onPress={jumpToLatest}
                     accessibilityRole="button"
                     accessibilityLabel={unseen > 0 ? `${unseenLabel(unseen)}. Jump to latest` : 'Jump to latest messages'}
-                    style={({ pressed }) => [styles.jumpPill, unseen > 0 && styles.jumpPillNew, pressed && { opacity: 0.85 }]}
+                    style={({ pressed }) => [styles.jumpBtn, pressed && { opacity: 0.85 }]}
                   >
-                    <MaterialCommunityIcons name="arrow-down" size={16} color={unseen > 0 ? C.onPrimary : C.primary} />
-                    <Text style={[styles.jumpText, unseen > 0 && styles.jumpTextNew]}>{unseenLabel(unseen)}</Text>
+                    <MaterialCommunityIcons name="chevron-double-down" size={22} color={C.primary} />
+                    {unseen > 0 && (
+                      <View style={styles.jumpBadge}>
+                        <Text style={styles.jumpBadgeText}>{unseen > 99 ? '99+' : unseen}</Text>
+                      </View>
+                    )}
                   </Pressable>
-                </MotiView>
+                </Animated.View>
               )}
-            </AnimatePresence>
-          </View>
+            </View>
 
-          {/* Bottom safe-area clearance comes from the SafeAreaView edges above. */}
-          <Composer
-            inputRef={inputRef}
-            value={text}
-            onChange={setText}
-            onSend={handleSend}
-            sending={thread.send.isPending}
-            disabledReason={disabledReason}
-            replyTo={replyTo}
-            onCancelReply={() => setReplyTo(null)}
-            channelLabel={channelLabel}
+            {/* Bottom safe-area clearance comes from the SafeAreaView edges above. */}
+            <Composer
+              inputRef={inputRef}
+              value={text}
+              onChange={setText}
+              onSend={handleSend}
+              sending={thread.send.isPending}
+              disabledReason={disabledReason}
+              replyTo={replyTo}
+              onCancelReply={() => setReplyTo(null)}
+              channelLabel={channelLabel}
+              reduceMotion={reduceMotion}
+              expiryDays={expiryDays}
+              mediaBusy={thread.sendMedia.isPending}
+              onPickGif={pickGif}
+              onVoiceRecorded={onVoiceRecorded}
+              onNotice={showToast}
+            />
+          </KeyboardAvoider>
+
+          <MessageActionsSheet
+            message={actionsFor ? latestVersion(actionsFor) : null}
+            now={now}
+            reduceMotion={reduceMotion}
+            saving={saving}
+            onClose={() => setActionsFor(null)}
+            onReply={handleReply}
+            onReact={(m, emoji) => {
+              setActionsFor(null);
+              void handleToggleReaction(m, emoji);
+            }}
+            onCopy={handleCopy}
+            onSave={(m) => void handleSave(m)}
+            onSeeReactions={(m) => openReactions(m, null)}
           />
-        </KeyboardAvoider>
 
-        <MessageActionsSheet
-          message={actionsFor ? latestVersion(actionsFor) : null}
-          onClose={() => setActionsFor(null)}
-          onReply={handleReply}
-          onReact={(m, emoji) => {
-            setActionsFor(null);
-            void handleToggleReaction(m, emoji);
-          }}
-        />
+          <ReactionsSheet
+            message={reactionsMessage}
+            initialEmoji={reactionsFor?.emoji ?? null}
+            reduceMotion={reduceMotion}
+            onClose={() => setReactionsFor(null)}
+            onRemoveMine={(m, emoji) => void handleToggleReaction(m, emoji)}
+          />
 
-        <Toast {...toast} />
-      </SafeAreaView>
+          <GifViewer
+            item={viewer}
+            now={now}
+            saving={saving}
+            onClose={() => setViewer(null)}
+            onSave={(m, uri) => void handleSave(m, uri)}
+          />
+
+          <GifSendSheet
+            gif={pickedGif}
+            channelLabel={channelLabel}
+            replyingTo={replyTo?.senderName ?? null}
+            expiryDays={expiryDays}
+            reduceMotion={reduceMotion}
+            onCancel={() => setPickedGif(null)}
+            onPickAnother={() => {
+              setPickedGif(null);
+              setTimeout(() => void pickGif(), 250);
+            }}
+            onSend={sendPickedGif}
+          />
+
+          <Toast {...toast} />
+        </SafeAreaView>
+      </VoicePlaybackProvider>
     </GestureHandlerRootView>
   );
 }
 
 const makeStyles = (C: Palette) =>
   StyleSheet.create({
-    safe: { flex: 1, backgroundColor: C.bgLight },
+    safe: { flex: 1 },
 
     header: {
       flexDirection: 'row',
@@ -502,19 +811,21 @@ const makeStyles = (C: Palette) =>
       justifyContent: 'center',
     },
     headerIcon: {
-      width: 38,
-      height: 38,
-      borderRadius: 12,
+      width: 40,
+      height: 40,
+      borderRadius: 20,
       backgroundColor: C.primary,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    headerTitle: { color: C.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 18 },
+    headerTitle: { color: C.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 17.5 },
     statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 1 },
     statusDot: { width: 7, height: 7, borderRadius: 3.5 },
     statusText: { color: C.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 11.5, flexShrink: 1 },
 
-    listContent: { paddingTop: 10, paddingBottom: 6 },
+    switcherWrap: { backgroundColor: C.bgCard, paddingBottom: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.outlineVariant },
+
+    listContent: { paddingTop: 8, paddingBottom: 6 },
 
     skeleton: { flex: 1, padding: 12, gap: 12, justifyContent: 'flex-end' },
     skeletonRow: { flexDirection: 'row', alignItems: 'flex-end' },
@@ -530,7 +841,7 @@ const makeStyles = (C: Palette) =>
       backgroundColor: C.primaryFixed,
       minHeight: 40,
     },
-    olderText: { fontFamily: FontFamily.bodySemibold, fontSize: 13, color: C.primary },
+    olderText: { fontFamily: FontFamily.bodySemibold, fontSize: 13, color: C.onPrimaryContainer },
 
     startWrap: { alignItems: 'center', paddingHorizontal: 32, paddingTop: 18, paddingBottom: 8, gap: 6 },
     startIcon: {
@@ -544,6 +855,17 @@ const makeStyles = (C: Palette) =>
     },
     startTitle: { fontFamily: FontFamily.headlineSemibold, fontSize: 14, color: C.textSecondary, textAlign: 'center' },
     startTip: { fontFamily: FontFamily.bodyRegular, fontSize: 12, lineHeight: 17, color: C.textMuted, textAlign: 'center' },
+    expiryNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 4,
+      backgroundColor: C.badgeYellowBg,
+      borderRadius: BorderRadius.sm,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    expiryNoteText: { fontFamily: FontFamily.bodySemibold, fontSize: 11.5, color: C.badgeYellowText },
 
     staleBanner: {
       position: 'absolute',
@@ -559,25 +881,33 @@ const makeStyles = (C: Palette) =>
     },
     staleText: { fontFamily: FontFamily.bodySemibold, fontSize: 11.5, color: C.badgeYellowText },
 
-    jumpWrap: { position: 'absolute', bottom: 12, left: 0, right: 0, alignItems: 'center' },
-    jumpPill: {
-      flexDirection: 'row',
+    jumpWrap: { position: 'absolute', bottom: 12, right: 14 },
+    jumpBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       alignItems: 'center',
-      gap: 6,
+      justifyContent: 'center',
       backgroundColor: C.bgCard,
-      borderRadius: BorderRadius.full,
       borderWidth: 1,
       borderColor: C.border,
-      paddingHorizontal: 14,
-      paddingVertical: 9,
-      minHeight: 40,
       shadowColor: '#0F172A',
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.12,
       shadowRadius: 10,
       elevation: 6,
     },
-    jumpPillNew: { backgroundColor: C.primary, borderColor: C.primary },
-    jumpText: { fontFamily: FontFamily.bodySemibold, fontSize: 12.5, color: C.primary },
-    jumpTextNew: { color: C.onPrimary },
+    jumpBadge: {
+      position: 'absolute',
+      top: -6,
+      right: -4,
+      minWidth: 20,
+      height: 20,
+      borderRadius: 10,
+      paddingHorizontal: 5,
+      backgroundColor: C.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    jumpBadgeText: { fontFamily: FontFamily.bodySemibold, fontSize: 10.5, color: C.onPrimary },
   });

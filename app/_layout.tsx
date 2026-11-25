@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Component, ReactNode, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, LogBox, AppState } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useSegments } from 'expo-router';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
@@ -34,6 +34,8 @@ import { APP_VERSION } from '../src/lib/appVersion';
 LogBox.ignoreLogs(['SafeAreaView has been deprecated', '[Reanimated] Dependencies should only be used on the web']);
 
 import { UpdatePrompt } from '../src/components/UpdatePrompt';
+import { InactiveAccountGate } from '../src/components/InactiveAccountGate';
+import { AppOverlays } from '../src/components/transitions/AppOverlays';
 import { ServerStatusBanner } from '../src/components/support/ServerStatusBanner';
 import { prefetchSupportContact } from '../src/hooks/useSupportContact';
 import { pushTapHref } from '../src/lib/notificationTarget';
@@ -170,6 +172,25 @@ function ResignationGuard() {
     }
   }, [data?.status]);
 
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Signed-out guard (2026-11-25): a screen opened by a link or a notification tap while nobody is signed in drew itself
+// empty ("Good Morning, Employee", zeros) instead of asking to sign in. Only the sign-in screens, the start screen and
+// the "account deactivated" notice are open without a sign-in.
+// ---------------------------------------------------------------------------
+function SignedOutGuard() {
+  const { user, isLoading } = useAuth();
+  const segments = useSegments() as string[];
+  const path = segments.join('/');
+  useEffect(() => {
+    if (isLoading || user) return;
+    const first = segments[0];
+    if (!first || first === '(auth)' || (first === 'resignation' && segments[1] === 'deactivated')) return;
+    router.replace('/(auth)/login');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `path` stands for `segments`
+  }, [isLoading, user, path]);
   return null;
 }
 
@@ -492,8 +513,11 @@ export default function RootLayout() {
           <PermissionGate />
           <UpdatePrompt />
           <ResignationGuard />
+          {/* An inactive HRMS account: a full-screen cover, signed out after 30 s (owner 2026-11-25). */}
+          <InactiveAccountGate />
           <PushTokenRegistrar />
           <SessionKeeper />
+          <SignedOutGuard />
           <TrackingBridge />
           <LiveLocationTracker />
           <NotificationTapHandler />
@@ -530,6 +554,8 @@ export default function RootLayout() {
             <Stack.Screen name="enquiries" />
           </Stack>
           </View>
+          {/* Logout confirmation, "location is off", sign-in / sign-out transitions (owner 2026-11-25): above the screens. */}
+          <AppOverlays />
           </AuthContext.Provider>
         </PersistQueryClientProvider>
       </ThemeProvider>

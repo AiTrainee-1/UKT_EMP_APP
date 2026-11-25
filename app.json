@@ -70,14 +70,26 @@
         "expo-image-picker",
         {
           "cameraPermission": "UKTextiles needs camera access to take the verification photos (one or two, as HR requires) when you punch attendance from outside your branch's location or while On-Duty.",
-          "microphonePermission": false
+          "photosPermission": "UKTextiles opens your photos only when you pick one (your profile photo, a Team Chat GIF) and saves to them only when you tap Download or Save.",
+          "microphonePermission": "UKTextiles uses the microphone only while you record a voice message in Team Chat."
         }
       ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "UKTextiles uses the microphone only while you record a voice message in Team Chat.",
+          "recordAudioAndroid": true,
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
+        }
+      ],
+      "expo-image",
       [
         "expo-build-properties",
         {
           "android": {
-            "usesCleartextTraffic": true
+            "usesCleartextTraffic": true,
+            "extraProguardRules": "-keep class androidx.work.impl.WorkDatabase_Impl { <init>(); }\n-keep class * extends androidx.room.RoomDatabase { <init>(); }\n-keep class androidx.work.** { *; }\n-dontwarn androidx.work.**"
           }
         }
       ],
@@ -86,8 +98,8 @@
       [
         "expo-media-library",
         {
-          "savePhotosPermission": "UKTextiles saves your gate pass card to your photos when you tap Download.",
-          "photosPermission": "UKTextiles saves your gate pass card to your photos when you tap Download.",
+          "savePhotosPermission": "UKTextiles saves to your photos only when you tap Download or Save, such as your gate pass card or a Team Chat GIF.",
+          "photosPermission": "UKTextiles opens your photos only when you pick one (your profile photo, a Team Chat GIF) and saves to them only when you tap Download or Save.",
           "isAccessMediaLocationEnabled": false,
           "granularPermissions": ["photo"]
         }

@@ -1,36 +1,53 @@
-import React, { useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   FlatList,
   TouchableOpacity,
+  Pressable,
   RefreshControl,
-  StatusBar,
   Linking,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { router, type Href } from 'expo-router';
-import { formatDistanceToNow } from 'date-fns';
+import Animated, { LinearTransition, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { useAuth } from '../../src/hooks/useAuth';
 import { useConfirmSignOut } from '../../src/hooks/useSignOut';
 import {
-  useAppNotifications, useMarkNotificationRead, useMarkAllNotificationsRead, AppNotification,
+  useAppNotifications, useMarkNotificationRead, useMarkAllNotificationsRead, type AppNotification,
 } from '../../src/hooks/useAppNotifications';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { SkeletonCard } from '../../src/components/ui/Skeleton';
 import { SideDrawer } from '../../src/components/SideDrawer';
 import { HamburgerToggle } from '../../src/components/HamburgerToggle';
-import { Colors } from '../../src/constants/colors';
 import { UKTLogo } from '../../src/components/UKTLogo';
 import { viewActionFor, type TargetViewer } from '../../src/lib/notificationTarget';
+import {
+  fullTime,
+  groupNotifications,
+  notificationHeadline,
+  notificationKind,
+  previewLine,
+  rowIndexOf,
+  shortTime,
+  unreadCount as countUnread,
+  visibleNotifications,
+  type NotificationFilter,
+  type NotificationListRow,
+} from '../../src/lib/notificationList';
 import { readFocusId } from '../../src/lib/focusItem';
 import { useFocusItem, useRouteRequest } from '../../src/hooks/useFocusItem';
 import { useEmployee } from '../../src/hooks/useEmployee';
 import { FocusMissingNote } from '../../src/components/focus/FocusFrame';
-import { NotificationCard } from '../../src/components/notifications/NotificationCard';
+import {
+  NotificationGroupHeader,
+  NotificationRow,
+  NotificationRowSkeleton,
+} from '../../src/components/notifications/NotificationRow';
+import { NotificationDetailSheet } from '../../src/components/notifications/NotificationDetailSheet';
 import { describePushSetup, getPushSetup, subscribePushSetup } from '../../src/lib/pushStatus';
 import { registerPushToken } from '../../src/hooks/usePushToken';
 import { useManagerProfile } from '../../src/hooks/useManager';
@@ -38,70 +55,52 @@ import { useTheme, useThemedStyles } from '../../src/theme/ThemeProvider';
 import type { Palette } from '../../src/theme/palettes';
 import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
+import { useReduceMotion } from '../../src/lib/motionPrefs';
+import { HeaderAvatarButton } from '../../src/components/home/HeaderAvatarButton';
+import { askNotificationAccess, readNotificationAccess } from '../../src/hooks/useNotificationPermission';
+import { notificationButtonAction } from '../../src/lib/notificationNudge';
 
-function timeAgo(dateStr: string) {
-  try {
-    return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
-  } catch {
-    return dateStr;
-  }
+type Row = NotificationListRow<AppNotification>;
+
+/** Rows drawn at first; more are added as the list is scrolled to its end ("infinite" list over what the server sent). */
+const PAGE = 40;
+/** How long a just-ticked notification stays on the Unread list, so its tick can be seen before it leaves. */
+const LINGER_MS = 900;
+/** "Mark all read": the ticks ripple down this many rows, this far apart. */
+const RIPPLE_ROWS = 14;
+const RIPPLE_STEP_MS = 45;
+
+/** The time now, refreshed every minute (the rows' "5 min ago"). */
+function useMinuteClock(): Date {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
 }
 
-// A notification made from a WhatsApp message carries its own `title` (shown first). The older one-liners have none, so
-// their headline is derived here from the real `type` values the backend actually
-// creates (grep-confirmed against every Notification.objects.create() call
-// site): leave, casual_leave, permission, on_duty, missing_punch,
-// attendance, employee_request, resignation, compensation, holiday_work, general (default).
-const makeNotifMeta = (Colors: Palette): Record<string, { icon: string; bg: string; color: string; title: string }> => ({
-  leave: { icon: 'umbrella', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Leave Update' },
-  casual_leave: { icon: 'calendar-heart', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Casual Leave Update' },
-  permission: { icon: 'hand-wave', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Permission Update' },
-  on_duty: { icon: 'briefcase-check-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'On-Duty Update' },
-  missing_punch: { icon: 'fingerprint', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Missing Punch Update' },
-  attendance: { icon: 'calendar-check-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Attendance Update' },
-  employee_request: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
-  enquiry: { icon: 'message-question-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Enquiry Update' },
-  resignation: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Update' },
-  // Compensation, to the employee: the Department Head decided one of their claims, of any kind, raised by them or by HR
-  // (type "compensation"; its View opens the claim on the Compensation screen).
-  compensation: { icon: 'briefcase-clock-outline', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Compensation Update' },
-  // ... and to the Department Head: a claim is waiting for their decision (type "holiday_work"); a tap opens Approvals.
-  holiday_work: { icon: 'clipboard-clock-outline', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Compensation Approval' },
-  // The messages WhatsApp also sends (backend/api/push_messages.py): the headline comes from the notification itself.
-  advance: { icon: 'cash-fast', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Advance Update' },
-  approval: { icon: 'check-decagram-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Request Update' },
-  approval_reminder: { icon: 'bell-ring-outline', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Reminder' },
-  outpass: { icon: 'exit-run', bg: Colors.badgeYellowBg, color: Colors.statusYellow, title: 'Outpass' },
-  visitors: { icon: 'account-group-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Visitor' },
-  salary_slip: { icon: 'cash-multiple', bg: Colors.badgeGreenBg, color: Colors.statusGreen, title: 'Salary Slip' },
-  id_card: { icon: 'card-account-details-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'ID Card' },
-  offer_letter: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Offer Letter' },
-  experience_letter: { icon: 'file-document-outline', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Experience Letter' },
-  resignation_letter: { icon: 'file-sign', bg: Colors.badgeRedBg, color: Colors.statusRed, title: 'Resignation Letter' },
-  other: { icon: 'paperclip', bg: Colors.badgeBlueBg, color: Colors.primary, title: 'Document' },
-  general: { icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' },
-});
-const makeDefaultNotifMeta = (Colors: Palette) => ({ icon: 'bell', bg: Colors.primaryFixed, color: Colors.primary, title: 'Notification' });
-
-/** Takes the palette explicitly: it is a plain helper, not a component, so
- *  it cannot read the theme from a hook -and the maps it looks into are now
- *  built per-theme rather than frozen at import. */
-function notifMeta(Colors: Palette, type?: string) {
-  return makeNotifMeta(Colors)[type ?? ''] ?? makeDefaultNotifMeta(Colors);
-}
-
+/**
+ * Notifications as a to-do list (owner 2026-11-25: the old cards "looked very poor"). Grouped Today / Yesterday /
+ * Earlier; each row is compact - the round check (tick = mark read), the type icon, the headline, one line of the
+ * message, the time and an unread dot. Tapping a row opens the whole notification in a sheet, with one small link to the
+ * page it is about. All / Unread filters with counts, "Mark all read", pull to refresh, the list grows as it is scrolled.
+ * A tapped push opens this screen with `?highlight=<id>`: the list scrolls to it, pulses it and opens it.
+ */
 export default function NotificationsScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const reduceMotion = useReduceMotion();
 
   const { user } = useAuth();
   const employeeId = user?.employeeId ?? null;
-  const { data, isLoading, refetch, isRefetching, isFetching } = useAppNotifications(employeeId);
+  const { data, isLoading, isError, refetch, isFetching } = useAppNotifications(employeeId);
   const markRead = useMarkNotificationRead();
   const markAllRead = useMarkAllNotificationsRead();
-  // Who is reading decides some View buttons (src/lib/notificationTarget.ts): an approver's one opens the Approvals tab,
+  // Who is reading decides some links (src/lib/notificationTarget.ts): an approver's one opens the Approvals tab,
   // which only a Department Head has; Compensation is for staff. The same cached queries the tab bar and Home already
   // hold: no extra request.
   const { data: manager } = useManagerProfile(!!user);
@@ -111,14 +110,40 @@ export default function NotificationsScreen() {
     isStaff: employee?.employmentType ? employee.employmentType === 'staff' : null,
   };
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [filter, setFilter] = useState<'all' | 'unread'>('all');
-  const listRef = useRef<FlatList<AppNotification>>(null);
+  const [filter, setFilter] = useState<NotificationFilter>('all');
+  const [lingering, setLingering] = useState<ReadonlySet<number>>(() => new Set());
+  const [rippleUntil, setRippleUntil] = useState(0);
+  const [limit, setLimit] = useState(PAGE);
+  const [openId, setOpenId] = useState<number | null>(null);
+  const [pulling, setPulling] = useState(false);
+  const shownRef = useRef<AppNotification | null>(null);
+  const listRef = useRef<FlatList<Row>>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  const later = (fn: () => void, ms: number) => {
+    timers.current.push(setTimeout(fn, ms));
+  };
+  const now = useMinuteClock();
+
   // Whether this phone can get notifications outside the app, and what is missing when it cannot (src/lib/pushStatus.ts).
   const pushSetup = useSyncExternalStore(subscribePushSetup, getPushSetup);
   const pushBanner = describePushSetup(pushSetup);
   const [pushChecking, setPushChecking] = useState(false);
   const onPushAction = async () => {
     if (pushBanner?.action === 'settings') {
+      // Ask in the app when Android still can (never asked yet, or asked once); only a refusal Android remembers
+      // needs the phone's settings (2026-11-25: sign-in no longer asks by itself, so "never asked" is common).
+      const access = await readNotificationAccess();
+      if (access && notificationButtonAction(access) === 'ask') {
+        setPushChecking(true);
+        try {
+          await askNotificationAccess();
+          await registerPushToken();
+        } finally {
+          setPushChecking(false);
+        }
+        return;
+      }
       void Linking.openSettings();
       return;
     }
@@ -130,43 +155,199 @@ export default function NotificationsScreen() {
     }
   };
 
-  const unreadCount = data?.filter(n => !n.isRead).length ?? 0;
-  const visible = (data ?? []).filter((n) => filter === 'all' || !n.isRead);
+  const all = data ?? [];
+  const unread = countUnread(data);
+  const total = all.length;
+  const visible = useMemo(() => visibleNotifications(data, filter, lingering), [data, filter, lingering]);
+  const rows = useMemo(() => groupNotifications(visible.slice(0, limit), now), [visible, limit, now]);
+  const hasMore = visible.length > limit;
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+
+  // A new filter starts at the top with one page.
+  const changeFilter = (f: NotificationFilter) => {
+    setFilter(f);
+    setLimit(PAGE);
+  };
 
   // A tapped push opens this list with `?highlight=<id>` (app/_layout.tsx): ask the server again (the push may be newer
-  // than the list), show it under "All" if "Unread" hides it, scroll to it and pulse it once.
+  // than the list), show it under "All" if "Unread" hides it, scroll to it, pulse it once - and open it.
   const highlight = useRouteRequest('highlight', readFocusId);
-  const focus = useFocusItem<AppNotification, 'all' | 'unread'>({
+  const focus = useFocusItem<AppNotification, NotificationFilter>({
     request: highlight,
     rows: data,
     idOf: (n) => n.id,
     views: {
       order: ['all', 'unread'],
       current: filter,
-      set: setFilter,
+      set: changeFilter,
       has: (n, f) => f === 'all' || !n.isRead,
     },
     refresh: () => (employeeId ? refetch() : undefined),
     ready: !!employeeId,
     fetching: isFetching,
-    list: { ref: listRef, indexOf: (id) => visible.findIndex((n) => n.id === id) },
+    list: {
+      ref: listRef,
+      indexOf: (id) => {
+        const index = rowIndexOf(rowsRef.current, id);
+        if (index < 0) {
+          // further down than the rows drawn so far: draw down to it (the hook looks again shortly)
+          const at = visibleRef.current.findIndex((n) => n.id === id);
+          if (at >= 0) setLimit((l) => Math.max(l, at + PAGE));
+        }
+        return index;
+      },
+    },
   });
 
-  // View: marks it read, then opens the page it is about. Read: marks it read. Neither waits for the server.
-  const onRead = (item: AppNotification) => {
-    if (!item.isRead) markRead.mutate(item.id);
+  const tick = useCallback(
+    (item: AppNotification) => {
+      if (item.isRead) return;
+      markRead.mutate(item.id);
+      if (filter === 'unread') {
+        setLingering((s) => new Set(s).add(item.id));
+        later(() => setLingering((s) => {
+          const next = new Set(s);
+          next.delete(item.id);
+          return next;
+        }), LINGER_MS);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filter, markRead.mutate],
+  );
+
+  const onMarkAll = () => {
+    if (!unread || markAllRead.isPending) return;
+    const ids = all.filter((n) => !n.isRead).map((n) => n.id);
+    setRippleUntil(Date.now() + 1200);
+    if (filter === 'unread') {
+      setLingering(new Set(ids));
+      later(() => setLingering(new Set()), LINGER_MS + RIPPLE_ROWS * RIPPLE_STEP_MS);
+    }
+    markAllRead.mutate();
   };
-  const onView = (item: AppNotification, href: string) => {
-    if (!item.isRead) markRead.mutate(item.id);
-    router.push(href as Href);
+
+  const openDetail = useCallback(
+    (item: AppNotification) => {
+      shownRef.current = item;
+      setOpenId(item.id);
+      // Opening it is reading it: the row's check ticks behind the sheet.
+      if (!item.isRead) markRead.mutate(item.id);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [markRead.mutate],
+  );
+
+  // A push brought this screen here: once the list has found and scrolled to it, open it.
+  useEffect(() => {
+    if (focus.activeId == null) return;
+    const id = focus.activeId;
+    const t = setTimeout(() => {
+      const item = (data ?? []).find((n) => n.id === id);
+      if (item) openDetail(item);
+    }, 550);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus.activeId]);
+
+  const openItem = (openId != null ? all.find((n) => n.id === openId) : null) ?? shownRef.current;
+  const openView = openItem ? viewActionFor(openItem, viewer) : null;
+  const closeDetail = () => setOpenId(null);
+  const openTarget = () => {
+    if (!openView) return;
+    const href = openView.href;
+    setOpenId(null);
+    // let the sheet start closing first, so it never sits over the next screen
+    later(() => router.push(href as Href), 140);
+  };
+
+  const onRefresh = async () => {
+    setPulling(true);
+    try {
+      await refetch();
+    } finally {
+      setPulling(false);
+    }
   };
 
   // Refused while an On-Duty day is running (src/hooks/useSignOut.ts).
   const handleLogout = useConfirmSignOut();
 
+  // The read share, for the progress line under the title.
+  const progress = total ? (total - unread) / total : 0;
+  const shownProgress = useSharedValue(progress);
+  useEffect(() => {
+    shownProgress.value = reduceMotion ? progress : withTiming(progress, { duration: 450 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [progress, reduceMotion]);
+  const progressStyle = useAnimatedStyle(() => ({ width: `${shownProgress.value * 100}%` }));
+
+  const rippling = rippleUntil > Date.now();
+
+  const renderItem = ({ item: row, index: position }: { item: Row; index: number }) => {
+    if (row.kind === 'header') {
+      return <NotificationGroupHeader label={row.label} count={row.count} unread={row.unread} />;
+    }
+    const n = row.item;
+    return (
+      <NotificationRow
+        item={n}
+        kind={notificationKind(n.type)}
+        headline={notificationHeadline(n)}
+        preview={previewLine(n.message)}
+        time={shortTime(n.createdAt, now)}
+        index={position}
+        first={row.first}
+        last={row.last}
+        tickDelay={rippling ? Math.min(position, RIPPLE_ROWS) * RIPPLE_STEP_MS : 0}
+        onOpen={() => openDetail(n)}
+        onTick={() => tick(n)}
+        focus={focus.frame(n.id)}
+      />
+    );
+  };
+
+  const caughtUp = filter === 'unread' && !visible.length && total > 0;
+  const empty = isLoading ? (
+    <View style={styles.skeleton}>
+      {[0, 1, 2, 3].map((i) => <NotificationRowSkeleton key={i} first={i === 0} last={i === 3} />)}
+    </View>
+  ) : isError && !data ? (
+    <View style={styles.stateBox} testID="notifications-error">
+      <View style={[styles.stateIcon, { backgroundColor: Colors.badgeRedBg }]}>
+        <MaterialCommunityIcons name="cloud-off-outline" size={34} color={Colors.statusRed} />
+      </View>
+      <Text style={styles.stateTitle}>Couldn't load your notifications</Text>
+      <Text style={styles.stateText}>Check your internet connection and try again.</Text>
+      <TouchableOpacity style={styles.stateBtn} onPress={() => { void refetch(); }} activeOpacity={0.85}>
+        {isFetching ? <ActivityIndicator size="small" color={Colors.onPrimary} /> : <Text style={styles.stateBtnText}>Try again</Text>}
+      </TouchableOpacity>
+    </View>
+  ) : caughtUp ? (
+    <View style={styles.stateBox} testID="notifications-caught-up">
+      <View style={[styles.stateIcon, { backgroundColor: Colors.badgeGreenBg }]}>
+        <MaterialCommunityIcons name="check-all" size={36} color={Colors.statusGreen} />
+      </View>
+      <Text style={styles.stateTitle}>All caught up</Text>
+      <Text style={styles.stateText}>You've read every notification.</Text>
+      <Pressable onPress={() => changeFilter('all')} hitSlop={8} style={styles.stateLink}>
+        <Text style={styles.stateLinkText}>Show all</Text>
+      </Pressable>
+    </View>
+  ) : (
+    <EmptyState
+      icon="bell-sleep-outline"
+      title="No notifications yet"
+      subtitle="Leave updates, approvals and reminders will show up here."
+    />
+  );
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
 
       <View style={styles.topBar}>
         <HamburgerToggle open={drawerOpen} onPress={() => setDrawerOpen(v => !v)} color={Colors.textPrimary} size={20} />
@@ -176,62 +357,62 @@ export default function NotificationsScreen() {
           <Text style={styles.brandSub}>EMPLOYEE PORTAL</Text>
         </View>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity
-          style={styles.avatarBtn}
-          onPress={() => router.push('/(tabs)/profile')}
-          activeOpacity={0.85}
-        >
-          <MaterialCommunityIcons name="account" size={18} color="#fff" />
-        </TouchableOpacity>
+        {/* The person's photo, like Home's header (owner 2026-11-25). */}
+        <HeaderAvatarButton size={30} />
       </View>
 
-      <View style={styles.subHeader}>
-        <View style={{ flex: 1 }}>
-          <View style={styles.subHeaderTitleRow}>
+      <View style={styles.head}>
+        <View style={styles.headRow}>
+          <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Notifications</Text>
-            {unreadCount > 0 && (
-              <View style={styles.newPill}>
-                <Text style={styles.newPillText}>{unreadCount} New</Text>
-              </View>
-            )}
-          </View>
-          <Text style={styles.headerSub}>{unreadCount > 0 ? `${unreadCount} unread` : 'All caught up'}</Text>
-        </View>
-        {unreadCount > 0 && (
-          <TouchableOpacity
-            style={styles.markAllBtn}
-            onPress={() => markAllRead.mutate()}
-            disabled={markAllRead.isPending}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel="Mark all notifications as read"
-            hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
-          >
-            <MaterialCommunityIcons name="check-all" size={14} color={Colors.primary} />
-            <Text style={styles.markAllBtnText}>Read All</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <View style={styles.filterRow}>
-        {([
-          { key: 'all' as const, label: 'All', count: data?.length ?? 0 },
-          { key: 'unread' as const, label: 'Unread', count: unreadCount },
-        ]).map((f) => (
-          <TouchableOpacity
-            key={f.key}
-            style={[styles.filterChip, filter === f.key && styles.filterChipActive]}
-            onPress={() => setFilter(f.key)}
-            activeOpacity={0.8}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: filter === f.key }}
-            hitSlop={{ top: 6, bottom: 6 }}
-          >
-            <Text style={[styles.filterChipText, filter === f.key && styles.filterChipTextActive]}>
-              {f.label} {f.count}
+            <Text style={styles.headerSub}>
+              {total === 0 ? 'Nothing here yet' : unread > 0 ? `${unread} to read · ${total - unread} done` : 'All caught up'}
             </Text>
-          </TouchableOpacity>
-        ))}
+          </View>
+          {unread > 0 && (
+            <Pressable
+              style={({ pressed }) => [styles.markAll, pressed && styles.markAllPressed]}
+              onPress={onMarkAll}
+              disabled={markAllRead.isPending}
+              accessibilityRole="button"
+              accessibilityLabel="Mark all notifications as read"
+              hitSlop={8}
+              testID="notifications-mark-all"
+            >
+              <MaterialCommunityIcons name="check-all" size={16} color={Colors.primary} />
+              <Text style={styles.markAllText}>Mark all read</Text>
+            </Pressable>
+          )}
+        </View>
+        {total > 0 && (
+          <View style={styles.progressTrack} accessible accessibilityLabel={`${total - unread} of ${total} read`}>
+            <Animated.View style={[styles.progressFill, progressStyle]} />
+          </View>
+        )}
+
+        <View style={styles.segment} accessibilityRole="tablist">
+          {([
+            { key: 'all' as const, label: 'All', count: total },
+            { key: 'unread' as const, label: 'Unread', count: unread },
+          ]).map((f) => {
+            const on = filter === f.key;
+            return (
+              <Pressable
+                key={f.key}
+                style={[styles.segmentItem, on && styles.segmentItemOn]}
+                onPress={() => changeFilter(f.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={`${f.label}, ${f.count}`}
+              >
+                <Text style={[styles.segmentText, on && styles.segmentTextOn]}>{f.label}</Text>
+                <View style={[styles.countPill, on && styles.countPillOn]}>
+                  <Text style={[styles.countText, on && styles.countTextOn]}>{f.count}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
 
       {pushBanner && (
@@ -254,6 +435,13 @@ export default function NotificationsScreen() {
         </View>
       )}
 
+      {isError && !!data && (
+        <View style={styles.staleNote} accessibilityRole="alert">
+          <MaterialCommunityIcons name="cloud-alert" size={14} color={Colors.textMuted} />
+          <Text style={styles.staleText}>Couldn't refresh. Showing the last list saved on this phone.</Text>
+        </View>
+      )}
+
       {focus.missing && (
         <FocusMissingNote
           text="That notification is no longer in your list"
@@ -262,54 +450,52 @@ export default function NotificationsScreen() {
         />
       )}
 
-      <FlatList
+      <Animated.FlatList
         ref={listRef}
-        data={visible}
-        keyExtractor={n => String(n.id)}
+        data={rows}
+        keyExtractor={(r: Row) => r.key}
+        renderItem={renderItem}
+        itemLayoutAnimation={reduceMotion ? undefined : LinearTransition.duration(220)}
         onScrollToIndexFailed={focus.onScrollToIndexFailed}
-        extraData={[focus.activeId, markRead.isPending, markRead.variables, viewer.isManager, viewer.isStaff]}
-        contentContainerStyle={[styles.list, !visible.length && styles.listCenter]}
-        refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={() => { void refetch(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
-        }
-        ListEmptyComponent={
-          isLoading ? (
-            <View style={{ gap: 10, paddingHorizontal: 16 }}>
-              {Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)}
-            </View>
-          ) : (
-            <EmptyState
-              icon="bell-sleep-outline"
-              title={filter === 'unread' ? 'No unread notifications' : 'No notifications'}
-              subtitle="You'll see leave updates, approvals, and reminders here"
-            />
-          )
-        }
-        renderItem={({ item, index }: { item: AppNotification; index: number }) => {
-          // The server's `target` (or, from an older server, the type) decides the View button; none = nothing to open.
-          const view = viewActionFor(item, viewer);
-          return (
-            <NotificationCard
-              item={item}
-              index={index}
-              meta={notifMeta(Colors, item.type)}
-              timeText={timeAgo(item.createdAt)}
-              view={view}
-              reading={markRead.isPending && markRead.variables === item.id}
-              onRead={() => onRead(item)}
-              onView={() => view && onView(item, view.href)}
-              focus={focus.frame(item.id)}
-            />
-          );
+        extraData={[focus.activeId, viewer.isManager, viewer.isStaff, rippling, now]}
+        contentContainerStyle={[styles.list, !rows.length && styles.listCenter]}
+        initialNumToRender={14}
+        onEndReachedThreshold={0.5}
+        onEndReached={() => {
+          if (hasMore) setLimit((l) => l + PAGE);
         }}
+        ListFooterComponent={
+          hasMore ? (
+            <ActivityIndicator style={styles.footer} color={Colors.primary} />
+          ) : rows.length > 0 ? (
+            <Text style={styles.endText}>{filter === 'unread' ? 'That is everything to read' : "You've reached the end"}</Text>
+          ) : undefined
+        }
+        refreshControl={
+          <RefreshControl refreshing={pulling} onRefresh={() => { void onRefresh(); }} tintColor={Colors.primary} colors={[Colors.primary]} />
+        }
+        ListEmptyComponent={empty}
       />
+
+      {openItem && (
+        <NotificationDetailSheet
+          item={openItem}
+          visible={openId != null}
+          kind={notificationKind(openItem.type)}
+          headline={notificationHeadline(openItem)}
+          time={fullTime(openItem.createdAt, now)}
+          view={openView}
+          onClose={closeDetail}
+          onOpenTarget={openTarget}
+        />
+      )}
 
       <SideDrawer
         visible={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         user={user}
         onLogout={handleLogout}
-        notificationCount={unreadCount}
+        notificationCount={unread}
       />
     </SafeAreaView>
   );
@@ -324,39 +510,72 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   brandSub: { color: Colors.textMuted, fontSize: 8, fontWeight: '700', letterSpacing: 0.8 },
   avatarBtn: { width: 30, height: 30, borderRadius: 15, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
 
-  subHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
-  subHeaderTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 20 },
-  headerSub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
-  newPill: { backgroundColor: Colors.primary, borderRadius: BorderRadius.full, paddingHorizontal: 8, paddingVertical: 2 },
-  newPillText: { color: '#fff', fontSize: 10, fontWeight: '800' },
-  markAllBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.primaryFixed,
+  head: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 6, gap: 12 },
+  headRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 24, letterSpacing: -0.3 },
+  headerSub: { color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 13, marginTop: 2 },
+  markAll: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    minHeight: 36, paddingHorizontal: 12,
     borderRadius: BorderRadius.full,
-    paddingHorizontal: 10, paddingVertical: 7,
+    backgroundColor: Colors.primaryFixed,
   },
-  markAllBtnText: { color: Colors.primary, fontSize: 11, fontWeight: '700' },
+  markAllPressed: { opacity: 0.75 },
+  markAllText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 12.5 },
 
-  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingBottom: 10 },
-  filterChip: { backgroundColor: Colors.bgCard, borderWidth: 1, borderColor: Colors.border, borderRadius: BorderRadius.full, paddingHorizontal: 14, paddingVertical: 7 },
-  filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  filterChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
-  filterChipTextActive: { color: '#fff' },
+  progressTrack: { height: 4, borderRadius: 2, backgroundColor: Colors.bgSurfaceHigh, overflow: 'hidden' },
+  progressFill: { height: 4, borderRadius: 2, backgroundColor: Colors.primary },
+
+  segment: {
+    flexDirection: 'row', gap: 4, padding: 4,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.bgSurfaceLow,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  segmentItem: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    minHeight: 36, borderRadius: BorderRadius.full,
+  },
+  segmentItemOn: { backgroundColor: Colors.bgCard, borderWidth: 1, borderColor: Colors.border },
+  segmentText: { color: Colors.textMuted, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
+  segmentTextOn: { color: Colors.textPrimary },
+  countPill: { minWidth: 22, paddingHorizontal: 6, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bgSurfaceHigh },
+  countPillOn: { backgroundColor: Colors.primary },
+  countText: { color: Colors.textMuted, fontFamily: FontFamily.bodySemibold, fontSize: 11 },
+  countTextOn: { color: Colors.onPrimary },
 
   pushBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 10,
-    marginHorizontal: 16, marginBottom: 10, padding: 12,
+    marginHorizontal: 16, marginTop: 6, marginBottom: 4, padding: 12,
     backgroundColor: Colors.badgeYellowBg, borderRadius: BorderRadius.lg,
   },
   pushBannerBody: { flex: 1, gap: 2 },
   pushBannerTitle: { color: Colors.textPrimary, fontSize: 13, fontWeight: '800' },
   pushBannerText: { color: Colors.textSecondary, fontSize: 12, lineHeight: 17 },
   pushBannerBtn: { backgroundColor: Colors.primary, borderRadius: BorderRadius.full, paddingHorizontal: 12, paddingVertical: 8 },
-  pushBannerBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  pushBannerBtnText: { color: Colors.onPrimary, fontSize: 11, fontWeight: '800' },
 
-  missingNote: { marginHorizontal: 16 },
+  staleNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginHorizontal: 20, marginTop: 6 },
+  staleText: { flex: 1, color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 11.5 },
 
-  list: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 32, gap: 8 },
-  listCenter: { flex: 1 },
+  missingNote: { marginHorizontal: 16, marginTop: 6 },
+
+  list: { paddingHorizontal: 16, paddingBottom: 40 },
+  listCenter: { flexGrow: 1 },
+  skeleton: { paddingTop: 16 },
+  footer: { paddingVertical: 18 },
+  endText: { textAlign: 'center', color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 12, paddingVertical: 20 },
+
+  stateBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 },
+  stateIcon: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  stateTitle: { color: Colors.textPrimary, fontFamily: FontFamily.headlineSemibold, fontSize: 17, textAlign: 'center' },
+  stateText: { color: Colors.textMuted, fontFamily: FontFamily.bodyRegular, fontSize: 13.5, lineHeight: 19, textAlign: 'center' },
+  stateBtn: {
+    marginTop: 10, minHeight: 44, minWidth: 140, paddingHorizontal: 22,
+    borderRadius: BorderRadius.full, backgroundColor: Colors.primary,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stateBtnText: { color: Colors.onPrimary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
+  stateLink: { marginTop: 6, minHeight: 40, justifyContent: 'center', paddingHorizontal: 8 },
+  stateLinkText: { color: Colors.primary, fontFamily: FontFamily.bodySemibold, fontSize: 14 },
 });

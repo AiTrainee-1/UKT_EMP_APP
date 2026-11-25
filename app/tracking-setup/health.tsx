@@ -15,7 +15,8 @@ import { FontFamily } from '../../src/constants/typography';
 import { ensureTracking } from '../../src/tracking/actions';
 import { formatAgo, formatDateTime } from '../../src/tracking/format';
 import type { IssueFix, TrackingIssue } from '../../src/tracking/onboarding';
-import { openAppSettings, openLocationSettings } from '../../src/tracking/platform/intents';
+import { openAppSettings } from '../../src/tracking/platform/intents';
+import { promptLocationOn } from '../../src/hooks/useLocationServices';
 import { requestForegroundLocation, requestNotifications } from '../../src/tracking/permissions';
 import { getRuntime } from '../../src/tracking/runtime';
 import { useTrackingHealth } from '../../src/tracking/useTracking';
@@ -68,7 +69,8 @@ export default function TrackingHealthScreen() {
           else router.push(trackingRoutes.setup('background'));
           break;
         case 'location_services':
-          await openLocationSettings();
+          // the shared "location is off" popup (owner 2026-11-25): Android's one-tap dialog, or the settings
+          await promptLocationOn('tracking');
           break;
         case 'battery':
           router.push(trackingRoutes.setup('battery'));
@@ -178,7 +180,7 @@ export default function TrackingHealthScreen() {
   const fixLabel: Record<Exclude<IssueFix, null>, string> = {
     consent: 'Review notice',
     permission: 'Fix permission',
-    location_services: 'Open location settings',
+    location_services: 'Turn on location',
     battery: 'Fix battery settings',
     notifications: 'Allow notifications',
     restart: 'Restart tracking',

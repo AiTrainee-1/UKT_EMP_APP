@@ -13,9 +13,8 @@ import { hodCanAct, hodCanReject, waitingTarget, type ApprovalProgress } from '.
 import { DEFAULT_PERMISSION_MONTHLY_LIMIT, formatPermissionDuration } from '../../lib/permissions';
 import { claimDetailRows, claimPendingHint } from '../../lib/compensation';
 import { fmtDay, normalizeOutcome, outcomeLine } from '../../lib/approvalsHistory';
-import { REJECT_REMARK_MIN } from '../../lib/rejectRemark';
+import { REJECT_REMARK_MIN, cleanRejectRemark, rejectRemarkProblem } from '../../lib/rejectRemark';
 import {
-  appliedOn,
   empCode,
   empDepartment,
   empInitial,
@@ -28,6 +27,7 @@ import {
 } from '../../lib/approvalsItems';
 import { categoryMeta } from './categoryMeta';
 import { OnDutyPunchList } from './OnDutyPunchList';
+import { RequestTiming } from './RequestTiming';
 import type { SelectedApproval } from './types';
 
 // A pending list holds only what this Department Head can decide, so this is only seen when a row went stale.
@@ -38,7 +38,8 @@ function cannotDecideNote(approval: ApprovalProgress | null | undefined): string
     : 'This request has already been decided.';
 }
 
-/** The detail rows of the sheet, per category (the rows the old sheet showed, in the same order). */
+/** The detail rows of the sheet, per category (the rows the old sheet showed, in the same order). When it was
+ *  submitted and the day(s) it is for are in the timing block above them (RequestTiming, owner 2026-11-25). */
 function detailRows(sel: SelectedApproval): [string, string][] {
   const { category: c, item } = sel;
   if (c === 'onDuty') {
@@ -46,17 +47,12 @@ function detailRows(sel: SelectedApproval): [string, string][] {
       ['Destination', item.destination || '—'],
       ['Date', fmtDay(item.date ?? item.createdAt)],
       item.branchName ? ['Branch', item.branchName] : null,
-      ['Requested', fmtDay(item.createdAt, 'dd MMM yyyy, h:mm a')],
       item.employeeEndedAt ? ['Finished', fmtDay(item.employeeEndedAt, 'dd MMM, h:mm a')] : null,
     ];
     return rows.filter((r): r is [string, string] => r !== null);
   }
   if (c === 'resignation') {
-    return [
-      ['Reason', item.reason || '—'],
-      ['Last Working Day', fmtDay(item.lastWorkingDate)],
-      ['Submitted', fmtDay(item.createdAt)],
-    ];
+    return [['Reason', item.reason || '—']];
   }
   if (c === 'holidayWork') {
     // Every kind of compensation claim: its own rows (OT times, allowance minutes, birthday, the day off), then who raised
@@ -65,7 +61,6 @@ function detailRows(sel: SelectedApproval): [string, string][] {
       ['Type', itemTypeLabel(c, item)],
       ...claimDetailRows(item as any),
       ['Reason', item.reason || '—'],
-      ['Raised on', appliedOn(item)],
     ];
   }
   const rows: ([string, string] | null)[] = [
@@ -82,7 +77,6 @@ function detailRows(sel: SelectedApproval): [string, string][] {
     c === 'permission' && item.statusLabel ? ['Status', item.statusLabel] : null,
     c === 'leave' && totalDays(item) ? ['Days', totalDays(item)!] : null,
     ['Reason', item.reason || '—'],
-    ['Applied', appliedOn(item)],
   ];
   return rows.filter((r): r is [string, string] => r !== null);
 }
@@ -90,8 +84,9 @@ function detailRows(sel: SelectedApproval): [string, string][] {
 /**
  * The request's details, its approval trail, and - while it waits for this head - the comment box with Approve / Reject
  * (only the buttons HR's pipeline allows: hodCanAct / hodCanReject). Approving needs no comment; rejecting needs the
- * reason (src/lib/rejectRemark.ts): once the head is rejecting (`rejecting`, or Reject is the only button) the box is
- * labelled "Reason for rejecting (required)". A decided request (Approved / Rejected lists) shows who decided it instead.
+ * reason (src/lib/rejectRemark.ts): Reject stays disabled until at least REJECT_REMARK_MIN characters are written, and
+ * the line under the box says why (owner 2026-11-25). Once the head is rejecting (`rejecting`, or Reject is the only
+ * button) the box is labelled "Reason for rejecting (required)". A decided request shows who decided it instead.
  * An On-Duty request with a recorded route offers "View route" (`onViewRoute`).
  */
 export function DecisionSheet({
@@ -131,6 +126,9 @@ export function DecisionSheet({
   const canReject = !!selected && selected.status === 'pending' && hodCanReject(item?.approval);
   const reasonMode = canReject && (rejecting || !canApprove);
   const message = reasonError || error || null;
+  // Reject is only possible once the reason is long enough; how many characters are still missing, for the hint.
+  const reasonReady = !rejectRemarkProblem(comment);
+  const missing = Math.max(0, REJECT_REMARK_MIN - cleanRejectRemark(comment).length);
 
   // Pressing Reject without a reason puts the cursor in the box, so the head can type it straight away.
   useEffect(() => {
@@ -160,6 +158,8 @@ export function DecisionSheet({
               </Text>
             </View>
           </View>
+
+          <RequestTiming category={selected.category} item={item} variant="sheet" />
 
           {detailRows(selected).map(([label, value]) => (
             <View key={label} style={styles.row}>
@@ -240,7 +240,13 @@ export function DecisionSheet({
 
           {canApprove || canReject ? (
             <>
-              <Text style={styles.commentLabel}>{reasonMode ? 'Reason for rejecting (required)' : 'Comment (optional)'}</Text>
+              <Text style={styles.commentLabel}>
+                {reasonMode
+                  ? 'Reason for rejecting (required)'
+                  : canReject
+                    ? 'Comment (optional to approve, required to reject)'
+                    : 'Comment (optional)'}
+              </Text>
               <View style={styles.commentBlock}>
                 <TextInput
                   ref={inputRef}
@@ -253,7 +259,13 @@ export function DecisionSheet({
                   onChangeText={onCommentChange}
                   multiline
                   numberOfLines={2}
-                  accessibilityLabel={reasonMode ? 'Reason for rejecting, required' : 'Comment, optional'}
+                  accessibilityLabel={
+                    reasonMode
+                      ? 'Reason for rejecting, required'
+                      : canReject
+                        ? 'Comment, optional to approve, required to reject'
+                        : 'Comment, optional'
+                  }
                   testID="approvals-sheet-comment"
                 />
                 {message ? (
@@ -266,8 +278,16 @@ export function DecisionSheet({
                     <MaterialCommunityIcons name="alert-circle-outline" size={16} color={Colors.statusRed} />
                     <Text style={styles.messageText}>{message}</Text>
                   </View>
-                ) : canApprove && canReject && !reasonMode ? (
-                  <Text style={styles.commentHint}>Approve needs no comment. To reject, write the reason.</Text>
+                ) : canReject && !reasonReady ? (
+                  <View style={styles.lockedHint} testID="approvals-sheet-reject-locked">
+                    <MaterialCommunityIcons name="lock-outline" size={14} color={Colors.textMuted} />
+                    <Text style={styles.commentHint}>
+                      {canApprove ? 'Approve needs no comment. ' : ''}Reject unlocks once you write the reason (at least{' '}
+                      {REJECT_REMARK_MIN} characters{missing < REJECT_REMARK_MIN ? `, ${missing} more` : ''}).
+                    </Text>
+                  </View>
+                ) : canReject ? (
+                  <Text style={styles.commentHint}>The employee will see this reason if you reject.</Text>
                 ) : null}
               </View>
               <View style={styles.actions}>
@@ -285,17 +305,24 @@ export function DecisionSheet({
                   </TouchableOpacity>
                 )}
                 {canReject && (
+                  // Disabled until the reason is written (at least REJECT_REMARK_MIN characters): the line above says why.
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.reject, busy && styles.busy]}
+                    style={[styles.actionBtn, styles.reject, (busy || !reasonReady) && styles.busy, !reasonReady && styles.locked]}
                     onPress={() => onDecide('rejected')}
-                    disabled={busy}
+                    disabled={busy || !reasonReady}
                     accessibilityRole="button"
-                    accessibilityHint={`Needs the reason for rejecting, at least ${REJECT_REMARK_MIN} characters`}
-                    accessibilityState={{ disabled: busy }}
+                    accessibilityHint={
+                      reasonReady ? undefined : `Write the reason for rejecting first, at least ${REJECT_REMARK_MIN} characters`
+                    }
+                    accessibilityState={{ disabled: busy || !reasonReady }}
                     testID="approvals-sheet-reject"
                   >
-                    <MaterialCommunityIcons name="close-circle" size={18} color={Colors.statusRed} />
-                    <Text style={[styles.actionText, { color: Colors.statusRed }]}>Reject</Text>
+                    <MaterialCommunityIcons
+                      name={reasonReady ? 'close-circle' : 'lock-outline'}
+                      size={18}
+                      color={reasonReady ? Colors.statusRed : Colors.textMuted}
+                    />
+                    <Text style={[styles.actionText, { color: reasonReady ? Colors.statusRed : Colors.textMuted }]}>Reject</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -375,7 +402,8 @@ const makeStyles = (Colors: Palette) =>
     },
     commentInputError: { borderColor: Colors.statusRed },
     commentBlock: { gap: 6, marginBottom: 16 },
-    commentHint: { color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
+    commentHint: { flex: 1, color: Colors.textMuted, fontSize: 11.5, lineHeight: 16 },
+    lockedHint: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
     message: {
       flexDirection: 'row',
       alignItems: 'flex-start',
@@ -399,5 +427,6 @@ const makeStyles = (Colors: Palette) =>
     approve: { backgroundColor: Colors.badgeGreenBg, borderColor: Colors.clayGreen },
     reject: { backgroundColor: Colors.badgeRedBg, borderColor: Colors.clayRed },
     busy: { opacity: 0.6 },
+    locked: { backgroundColor: Colors.bgSurfaceLow, borderColor: Colors.outlineVariant },
     actionText: { fontSize: 14, fontWeight: '800' },
   });

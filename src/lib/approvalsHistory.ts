@@ -391,7 +391,8 @@ export interface EmptyCopy {
  */
 export function emptyCopy(
   category: ApprovalCategory,
-  status: ApprovalStatus,
+  // 'all': the list of every status together (owner 2026-11-25, src/lib/approvalsFeed.ts)
+  status: ApprovalStatus | 'all',
   opts: { search?: string; hodInPipeline?: boolean } = {},
 ): EmptyCopy {
   const what = CATEGORY_LABEL[category].toLowerCase().replace(/s$/, '');
@@ -400,8 +401,13 @@ export function emptyCopy(
     return {
       icon: 'account-search-outline',
       title: 'No match',
-      subtitle: `No ${STATUS_LABEL[status].toLowerCase()} ${what} requests for "${q}".`,
+      subtitle: `No ${status === 'all' ? '' : `${STATUS_LABEL[status].toLowerCase()} `}${what} requests for "${q}".`,
     };
+  }
+  if (status === 'all') {
+    return opts.hodInPipeline === false
+      ? { icon: 'account-tie-outline', title: 'Nothing for you here', subtitle: 'These requests go to HR only, so none come to you.' }
+      : { icon: 'check-circle-outline', title: 'All caught up!', subtitle: `No ${what} requests from your team yet.` };
   }
   if (status === 'pending') {
     return opts.hodInPipeline === false

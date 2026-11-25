@@ -8,7 +8,15 @@ import { useTheme, useThemedStyles } from '../../theme/ThemeProvider';
 import type { Palette } from '../../theme/palettes';
 import { BorderRadius, ClayElevation } from '../../constants/theme';
 import { FontFamily, TabularNums } from '../../constants/typography';
-import { dayMonth, statusGroup, statusText, windowHeadline, type WindowInfo } from '../../lib/settlement';
+import {
+  salaryAdvanceWindow,
+  statusGroup,
+  statusText,
+  termLoanWindow,
+  windowHeadline,
+  windowStrip,
+  type WindowSource,
+} from '../../lib/settlement';
 
 /** The phone's "Reduce motion" setting (the same rule src/components/Reveal.tsx follows). */
 export function useReduceMotionPref(): boolean {
@@ -27,25 +35,32 @@ export function useReduceMotionPref(): boolean {
   return reduce;
 }
 
-// ─── Window banner: a strip of the month with the 20th-to-month-end part lit ────────────────────────────────
+// ─── Window banner: the Salary Advance window (the 20th to the 22nd, owner 2026-11-25) on a strip of the month ─────
+// A Term Loan has no window any more: a line under the strip says it can be applied for on any day. An older server
+// sends one window for both forms (the 20th to the month end); the banner then shows that one, worded by the server.
 
-export function WindowBanner({ window, today }: { window: WindowInfo; today: string }) {
+export function WindowBanner({ data }: { data: WindowSource & { today: string } }) {
   const { C: Colors } = useTheme();
   const styles = useThemedStyles(makeStyles);
   const reduce = useReduceMotionPref();
 
-  const lastDay = Number(/-(\d{2})$/.exec(window.closesOn)?.[1] ?? 30);
-  const day = Number(/-(\d{2})$/.exec(today)?.[1] ?? 1);
-  const openStart = (19 / Math.max(1, lastDay - 1)) * 100;
-  const todayPos = ((day - 1) / Math.max(1, lastDay - 1)) * 100;
+  const window = salaryAdvanceWindow(data);
+  const separate = !!data.windows?.general; // the current server: each form has its own window
+  const termAnyDay = separate && termLoanWindow(data) === null;
+  const strip = windowStrip(window, data.today);
   const tone = window.isOpen ? Colors.statusGreen : Colors.statusYellow;
-  const big = window.isOpen ? window.daysLeft : window.daysUntilOpen;
+  const big = window.isOpen ? (window.daysLeft ?? 0) : window.daysUntilOpen;
+  const headline = windowHeadline(window);
+  const rule = separate
+    ? 'Salary Advance: apply from the 20th to the 22nd of each month.'
+    : window.message;
 
   return (
     <View
       style={[styles.banner, { borderColor: window.isOpen ? Colors.badgeGreenBg : Colors.badgeYellowBg }]}
       accessibilityRole="summary"
-      accessibilityLabel={`${windowHeadline(window)}. ${window.message}`}
+      accessibilityLabel={`${separate ? 'Salary Advance. ' : ''}${headline}. ${window.message}`}
+      testID="settlement-window-banner"
     >
       <View style={styles.bannerTop}>
         <View style={[styles.bannerIcon, { backgroundColor: window.isOpen ? Colors.badgeGreenBg : Colors.badgeYellowBg }]}>
@@ -56,8 +71,9 @@ export function WindowBanner({ window, today }: { window: WindowInfo; today: str
           />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.bannerTitle}>{windowHeadline(window)}</Text>
-          <Text style={styles.bannerText}>{window.message}</Text>
+          {separate && <Text style={styles.bannerKicker}>SALARY ADVANCE WINDOW</Text>}
+          <Text style={styles.bannerTitle}>{headline}</Text>
+          <Text style={styles.bannerText}>{rule}</Text>
         </View>
         <View style={styles.countBox}>
           <Text style={[styles.countNum, TabularNums, { color: tone }]}>{big}</Text>
@@ -65,24 +81,46 @@ export function WindowBanner({ window, today }: { window: WindowInfo; today: str
         </View>
       </View>
 
-      <View style={styles.strip} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        <View style={styles.track}>
-          <View style={[styles.openPart, { left: `${openStart}%`, backgroundColor: Colors.statusGreen }]} />
-          <MotiView
-            from={reduce ? undefined : { opacity: 0, scale: 0.4 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ type: 'timing', duration: reduce ? 0 : 420, delay: reduce ? 0 : 200 }}
-            style={[styles.todayDot, { left: `${todayPos}%`, borderColor: tone }]}
-          />
+      {strip && (
+        <View style={styles.strip} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <View style={styles.track}>
+            <View
+              style={[
+                styles.openPart,
+                {
+                  left: `${strip.startPct}%`,
+                  // at least a few points wide, so a 3-day window still reads as a lit stretch
+                  width: `${Math.max(strip.endPct - strip.startPct, 3)}%`,
+                  backgroundColor: Colors.statusGreen,
+                },
+              ]}
+            />
+            <MotiView
+              from={reduce ? undefined : { opacity: 0, scale: 0.4 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: 'timing', duration: reduce ? 0 : 420, delay: reduce ? 0 : 200 }}
+              style={[styles.todayDot, { left: `${strip.todayPct}%`, borderColor: tone }]}
+            />
+          </View>
+          <View style={styles.stripLabels}>
+            <Text style={styles.stripLabel}>1</Text>
+            <Text style={[styles.stripLabel, styles.stripOpenLabel, { left: `${strip.startPct}%` }]}>
+              {strip.toDay > strip.fromDay ? `${strip.fromDay}–${strip.toDay}` : `${strip.fromDay}`}
+            </Text>
+            <Text style={styles.stripLabel}>{strip.lastDay}</Text>
+          </View>
         </View>
-        <View style={styles.stripLabels}>
-          <Text style={styles.stripLabel}>1</Text>
-          <Text style={[styles.stripLabel, { position: 'absolute', left: `${openStart}%`, marginLeft: -8 }]}>
-            {dayMonth(window.opensOn)}
+      )}
+
+      {termAnyDay && (
+        <View style={styles.termLine} testID="settlement-term-any-day">
+          <MaterialCommunityIcons name="check-circle" size={15} color={Colors.statusGreen} />
+          <Text style={styles.termText}>
+            <Text style={styles.termStrong}>Term Loan: </Text>
+            you can apply on any day.
           </Text>
-          <Text style={styles.stripLabel}>{lastDay}</Text>
         </View>
-      </View>
+      )}
     </View>
   );
 }
@@ -232,6 +270,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   bannerTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   bannerIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  bannerKicker: { color: Colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 0.6, marginBottom: 1 },
   bannerTitle: { color: Colors.textPrimary, fontFamily: FontFamily.displayBold, fontSize: 15 },
   bannerText: { color: Colors.textMuted, fontSize: 12, lineHeight: 17, marginTop: 2 },
   countBox: { alignItems: 'center', minWidth: 56 },
@@ -239,7 +278,7 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   countLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '700' },
   strip: { gap: 4 },
   track: { height: 8, borderRadius: 4, backgroundColor: Colors.bgSurfaceHigh, justifyContent: 'center' },
-  openPart: { position: 'absolute', right: 0, top: 0, bottom: 0, borderRadius: 4, opacity: 0.85 },
+  openPart: { position: 'absolute', top: 0, bottom: 0, borderRadius: 4, opacity: 0.85 },
   todayDot: {
     position: 'absolute',
     width: 16,
@@ -251,6 +290,13 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   },
   stripLabels: { flexDirection: 'row', justifyContent: 'space-between', height: 14 },
   stripLabel: { color: Colors.textMuted, fontSize: 10, fontWeight: '600' },
+  stripOpenLabel: { position: 'absolute', marginLeft: -6, color: Colors.statusGreen, fontWeight: '800' },
+  termLine: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    borderTopWidth: 1, borderTopColor: Colors.outlineVariant, paddingTop: 10,
+  },
+  termText: { flex: 1, color: Colors.textSecondary, fontSize: 12.5, lineHeight: 17 },
+  termStrong: { fontFamily: FontFamily.bodySemibold, color: Colors.textPrimary },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   pillText: { fontSize: 11, fontWeight: '700' },
 });

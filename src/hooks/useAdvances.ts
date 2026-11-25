@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useAuth } from './useAuth';
-import type { AdvanceStatus, AdvanceType, ScheduleState, WindowInfo } from '../lib/settlement';
+import type { AdvanceStatus, AdvanceType, ScheduleState, WindowInfo, WindowsInfo } from '../lib/settlement';
 import type { ApprovalProgress } from '../lib/approval';
 
 // Salary Advance and Term Loan, employee self-service (backend api/mobile_settlement_views.py):
-//   GET  /my/advances/eligibility   window, salary, 60% limit, deduction months, what is already applied, the rules
+//   GET  /my/advances/eligibility   windows, salary, 60% limit, deduction months, what is already applied, the rules
+//                                   (owner 2026-11-25: a Salary Advance only from the 20th to the 22nd, a Term Loan any day)
 //   GET  /my/advances               own applications: requested vs approved, schedule, deductions, timeline
 //   GET  /my/advances/<id>          one of them
 //   POST /my/advances               { advanceType, amount, repaymentMonths?, purpose }
@@ -70,7 +71,11 @@ export interface MyAdvance {
 
 export interface AdvanceEligibility {
   today: string;
+  /** The Salary Advance window (on an older server: the one window both forms shared). */
   window: WindowInfo;
+  /** Each form's own window (2026-11-25; absent on an older server). Read through salaryAdvanceWindow / termLoanWindow
+   *  in src/lib/settlement.ts. */
+  windows?: WindowsInfo | null;
   workflowEnabled: boolean;
   workflowMessage: string | null;
   employeeActive: boolean;

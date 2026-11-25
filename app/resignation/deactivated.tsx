@@ -5,7 +5,6 @@ import {
   StyleSheet,
   Platform,
   Animated,
-  StatusBar,
   TouchableOpacity,
   ScrollView,
 } from 'react-native';
@@ -23,6 +22,7 @@ import { BorderRadius } from '../../src/constants/theme';
 import { FontFamily } from '../../src/constants/typography';
 import { useSupportContact } from '../../src/hooks/useSupportContact';
 import { contactFor } from '../../src/lib/supportContact';
+import { ThemedStatusBar } from '../../src/components/ThemedStatusBar';
 
 export default function AccountDeactivatedScreen() {
   // `Colors` shadows the module import for this component's body, so both
@@ -57,7 +57,7 @@ export default function AccountDeactivatedScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" />
+      <ThemedStatusBar />
 
       <View style={styles.header}>
         <UKTLogo size={28} />

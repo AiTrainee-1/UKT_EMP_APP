@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -30,13 +30,18 @@ import {
   purposeProblem,
   rupees,
   salaryAdvanceProblem,
+  salaryAdvanceWindow,
   termAmountProblem,
   termEmi,
+  termLoanWindow,
   termPlan,
+  windowChip,
   type AdvanceType,
 } from '../../src/lib/settlement';
 
-/** The two application forms, Salary Advance and Term Loan, with a live preview of what will be deducted. */
+/** The two application forms, Salary Advance and Term Loan, with a live preview of what will be deducted.
+ *  Owner 2026-11-25: a Salary Advance only from the 20th to the 22nd of each month (its tab is disabled outside, saying
+ *  when it opens), a Term Loan on any day. */
 export default function ApplyAdvanceScreen() {
   // `Colors` shadows the module import for this component's body, so both
   // the stylesheet and any inline JSX colour follow the active theme.
@@ -61,6 +66,20 @@ export default function ApplyAdvanceScreen() {
     setServerError(null);
     setShowErrors(false);
   };
+
+  // Each form's window: the Salary Advance's 20th-22nd, a Term Loan's none ("Any day"). A form outside its window cannot
+  // be chosen while the other one is open (an older server's one shared window closes both: then both stay choosable,
+  // to work out the amount).
+  const chips = data
+    ? { general: windowChip(salaryAdvanceWindow(data)), term: windowChip(termLoanWindow(data)) }
+    : null;
+  const tabClosed = (k: AdvanceType) => !!chips && !chips[k].open && chips[k === 'general' ? 'term' : 'general'].open;
+  // Opened on a form that is closed right now (a link, a stale screen): show the one that is open.
+  useEffect(() => {
+    if (chips && tabClosed(kind)) switchKind(kind === 'general' ? 'term' : 'general');
+    // only when the answer arrives or the form changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chips?.general.open, chips?.term.open, kind]);
 
   const amount = amountOf(amountText);
   const amountError = data
@@ -125,19 +144,37 @@ export default function ApplyAdvanceScreen() {
       <KeyboardAvoider style={{ flex: 1 }}>
         <FormScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.segment} accessibilityRole="tablist">
-            {(['general', 'term'] as const).map((k) => (
-              <TouchableOpacity
-                key={k}
-                style={[styles.segmentBtn, kind === k && styles.segmentBtnActive]}
-                onPress={() => switchKind(k)}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: kind === k }}
-              >
-                <Text style={[styles.segmentText, kind === k && styles.segmentTextActive]}>
-                  {k === 'general' ? 'Salary Advance' : 'Term Loan'}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {(['general', 'term'] as const).map((k) => {
+              const closed = tabClosed(k);
+              const chip = chips?.[k];
+              return (
+                <TouchableOpacity
+                  key={k}
+                  style={[styles.segmentBtn, kind === k && styles.segmentBtnActive, closed && styles.segmentBtnClosed]}
+                  onPress={() => switchKind(k)}
+                  disabled={closed}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: kind === k, disabled: closed }}
+                  accessibilityLabel={`${k === 'general' ? 'Salary Advance' : 'Term Loan'}${chip ? `, ${chip.text}` : ''}`}
+                  testID={`settlement-tab-${k}`}
+                >
+                  <Text style={[styles.segmentText, kind === k && styles.segmentTextActive, closed && styles.segmentTextClosed]}>
+                    {k === 'general' ? 'Salary Advance' : 'Term Loan'}
+                  </Text>
+                  {!!chip && (
+                    <View style={styles.segmentSubRow}>
+                      {closed && <MaterialCommunityIcons name="lock-clock" size={10} color={Colors.badgeYellowText} />}
+                      <Text
+                        style={[styles.segmentSub, { color: chip.open ? Colors.badgeGreenText : Colors.badgeYellowText }]}
+                        numberOfLines={1}
+                      >
+                        {chip.text}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {eligibility.isLoading ? (
@@ -157,7 +194,7 @@ export default function ApplyAdvanceScreen() {
                     <View style={{ flex: 1, gap: 2 }}>
                       <Text style={styles.blockedTitle}>You cannot send this application right now</Text>
                       <Text style={styles.blockedText}>{section.reason}</Text>
-                      {data.window.isOpen === false && (
+                      {chips && !chips[kind].open && (
                         <Text style={styles.blockedText}>You can still work out the amount below.</Text>
                       )}
                     </View>
@@ -492,6 +529,10 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   segmentBtnActive: { backgroundColor: Colors.bgCard, ...ClayElevation.low },
   segmentText: { color: Colors.textMuted, fontFamily: FontFamily.bodySemibold, fontSize: 13 },
   segmentTextActive: { color: Colors.primary },
+  segmentBtnClosed: { opacity: 0.7 },
+  segmentTextClosed: { color: Colors.textMuted },
+  segmentSubRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 1 },
+  segmentSub: { fontSize: 10, fontWeight: '700' },
 
   blocked: {
     flexDirection: 'row', gap: 10, alignItems: 'flex-start',
